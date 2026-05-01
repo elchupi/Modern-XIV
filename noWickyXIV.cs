@@ -131,12 +131,14 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         FreeCam.Update();
         PresetManager.Update();
         InputHandler.Update();
+        CameraDynamics.Update();
     }
 
     protected override void Draw()
     {
         FreeCam.Draw();
         PluginUI.Draw();
+        Crosshair.Draw();
     }
 
     private static bool didLogin = false; // Workaround

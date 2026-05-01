@@ -377,10 +377,52 @@ public static class PluginUI
             noWickyXIV.Config.Save();
     }
 
+    private static string _dynamicsSearch = string.Empty;
+
+    private static bool DynamicsSectionMatches(string name)
+    {
+        if (string.IsNullOrEmpty(_dynamicsSearch)) return true;
+        return name.IndexOf(_dynamicsSearch, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static void ResetAllDynamicsToDefaults()
+    {
+        var c = noWickyXIV.Config;
+        c.EnableRollTilt = true;
+        c.RollTiltMaxAngle = 1.92f;  c.RollTiltSensitivity = 0.2f;
+        c.RollTiltOnRate = 2.47f;    c.RollTiltOffRate = 1.0f;
+        c.EnableYawLag = false;      c.YawLagHalflife = 0.8f;
+        c.EnablePitchTilt = true;    c.PitchTiltMaxOffset = 1.24f; c.PitchTiltSmoothRate = 3.19f;
+        c.EnablePositionFloat = true;
+        c.PositionFloatLagFactor = 0.15f;  c.PositionFloatSmoothTime = 0.18f;
+        c.SwivelOnMove = false;
+        c.SwivelDelay = 0.15f;       c.SwivelSpeed = 240f;        c.SwivelMoveThreshold = 0.05f;
+        c.EnableAdsOnRmb = false;
+        c.AdsZoomFactor = 1.5f;      c.AdsTransitionSpeed = 8f;
+        c.EnableAutoShoulderSwap = false;
+        c.ShoulderLerpDuration = 0.35f;  c.ShoulderSwapSafetyMargin = 0.4f; c.ShoulderSwapCheckHz = 5f;
+        c.EnableCrosshair = false;
+        c.CrosshairSize = 8f; c.CrosshairThickness = 2f; c.CrosshairFadeSpeed = 6f;
+        c.CrosshairColorR = 1f; c.CrosshairColorG = 1f; c.CrosshairColorB = 1f; c.CrosshairColorA = 0.85f;
+        c.InstantMode = false;
+        c.HeightOffsetStep = 0.1f;   c.GlobalHeightOffset = 0f;
+        c.MouseSensitivityMul = 1f; c.GamepadSensitivityMul = 1f;
+        c.InvertMouseY = false;     c.InvertGamepadY = false;
+        c.Save();
+    }
+
     private static void DrawCameraDynamics()
     {
+        // Search + reset-all toolbar
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 180 * ImGuiHelpers.GlobalScale);
+        ImGui.InputText("Search##dynamics", ref _dynamicsSearch, 64);
+        ImGui.SameLine();
+        if (ImGui.Button("Reset all to defaults"))
+            ResetAllDynamicsToDefaults();
+        ImGui.Spacing();
+
         // Section: Roll Tilt
-        if (ImGuiEx.BeginGroupBox("Roll Tilt (bank into turns)"))
+        if (DynamicsSectionMatches("Roll Tilt") && ImGuiEx.BeginGroupBox("Roll Tilt (bank into turns)"))
         {
             ConfigCheckbox("Enable##RollTilt", ref noWickyXIV.Config.EnableRollTilt);
             ConfigSliderFloat("Max roll (deg)##RollTilt",       ref noWickyXIV.Config.RollTiltMaxAngle,    0f,    10f, 1.92f);
@@ -392,7 +434,7 @@ public static class PluginUI
 
         // Section: Yaw Lag — disabled by default until impl is rewritten as
         // damped spring (current Wicked impl whiplashes; see project memory).
-        if (ImGuiEx.BeginGroupBox("Yaw Lag (camera trails turns)"))
+        if (DynamicsSectionMatches("Yaw Lag") && ImGuiEx.BeginGroupBox("Yaw Lag (camera trails turns)"))
         {
             ImGui.TextColored(new Vector4(1f, 0.7f, 0.2f, 1f), "Reference impl whiplashes; rewrite needed.");
             ConfigCheckbox("Enable##YawLag", ref noWickyXIV.Config.EnableYawLag);
@@ -401,7 +443,7 @@ public static class PluginUI
         }
 
         // Section: Pitch Tilt
-        if (ImGuiEx.BeginGroupBox("Pitch Tilt (look-up at low angle)"))
+        if (DynamicsSectionMatches("Pitch Tilt") && ImGuiEx.BeginGroupBox("Pitch Tilt (look-up at low angle)"))
         {
             ConfigCheckbox("Enable##PitchTilt", ref noWickyXIV.Config.EnablePitchTilt);
             ConfigSliderFloat("Max height offset##PitchTilt",  ref noWickyXIV.Config.PitchTiltMaxOffset,  0f, 2f,  1.24f);
@@ -410,7 +452,7 @@ public static class PluginUI
         }
 
         // Section: Position Float (the "discreet float" feel)
-        if (ImGuiEx.BeginGroupBox("Position Float (discreet float behind player)"))
+        if (DynamicsSectionMatches("Position Float") && ImGuiEx.BeginGroupBox("Position Float (discreet float behind player)"))
         {
             ConfigCheckbox("Enable##PosFloat", ref noWickyXIV.Config.EnablePositionFloat);
             ConfigSliderFloat("Lag factor##PosFloat",     ref noWickyXIV.Config.PositionFloatLagFactor,  0f,  1f,    0.15f);
@@ -419,24 +461,160 @@ public static class PluginUI
         }
 
         // Section: Swivel-on-Move (auto-center timer)
-        if (ImGuiEx.BeginGroupBox("Swivel on Move (auto-center)"))
+        if (DynamicsSectionMatches("Swivel") && ImGuiEx.BeginGroupBox("Swivel on Move (auto-center)"))
         {
             ConfigCheckbox("Enable##Swivel", ref noWickyXIV.Config.SwivelOnMove);
             ConfigSliderFloat("Delay (s)##Swivel",          ref noWickyXIV.Config.SwivelDelay, 0f,    1f,   0.15f);
             ConfigSliderFloat("Speed (deg/s)##Swivel",      ref noWickyXIV.Config.SwivelSpeed, 30f,   720f, 240f, "%.0f");
+            ConfigSliderFloat("Movement threshold (m/s)##Swivel", ref noWickyXIV.Config.SwivelMoveThreshold, 0.01f, 1f, 0.05f);
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Auto-shoulder swap (Phase C — UI + state machine, raycast TODO)
+        if (DynamicsSectionMatches("Shoulder") && ImGuiEx.BeginGroupBox("Auto-shoulder swap"))
+        {
+            ImGui.TextColored(new Vector4(1f, 0.7f, 0.2f, 1f), "Experimental — wall raycast not wired yet (manual swap hotkey works).");
+            ConfigCheckbox("Enable##AutoShoulder", ref noWickyXIV.Config.EnableAutoShoulderSwap);
+            ConfigSliderFloat("Lerp duration (s)##AutoShoulder", ref noWickyXIV.Config.ShoulderLerpDuration,    0.05f, 1.5f, 0.35f);
+            ConfigSliderFloat("Safety margin (m)##AutoShoulder", ref noWickyXIV.Config.ShoulderSwapSafetyMargin, 0.0f,  1.5f, 0.4f);
+            ConfigSliderFloat("Probe rate (Hz)##AutoShoulder",   ref noWickyXIV.Config.ShoulderSwapCheckHz,     1f,   20f,  5f, "%.0f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Crosshair overlay (Phase D)
+        if (DynamicsSectionMatches("Crosshair") && ImGuiEx.BeginGroupBox("Crosshair overlay"))
+        {
+            ConfigCheckbox("Enable##Crosshair", ref noWickyXIV.Config.EnableCrosshair);
+            ImGui.TextDisabled("Toggle hotkey is in the Hotkeys section (default V).");
+            ConfigSliderFloat("Size (px)##Crosshair",      ref noWickyXIV.Config.CrosshairSize,      2f,  40f,  8f);
+            ConfigSliderFloat("Thickness##Crosshair",      ref noWickyXIV.Config.CrosshairThickness, 1f,  6f,   2f);
+            ConfigSliderFloat("Fade speed##Crosshair",     ref noWickyXIV.Config.CrosshairFadeSpeed, 1f,  20f,  6f);
+            // Color sliders (R/G/B/A as separate floats so they fit ConfigSliderFloat)
+            ConfigSliderFloat("Color R##Crosshair", ref noWickyXIV.Config.CrosshairColorR, 0f, 1f, 1f);
+            ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
+            ConfigSliderFloat("Color B##Crosshair", ref noWickyXIV.Config.CrosshairColorB, 0f, 1f, 1f);
+            ConfigSliderFloat("Alpha##Crosshair",   ref noWickyXIV.Config.CrosshairColorA, 0f, 1f, 0.85f);
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: ADS (zoom-on-RMB)
+        if (DynamicsSectionMatches("ADS") && ImGuiEx.BeginGroupBox("ADS (hold RMB to zoom in)"))
+        {
+            ConfigCheckbox("Enable##Ads", ref noWickyXIV.Config.EnableAdsOnRmb);
+            ConfigSliderFloat("Zoom factor##Ads",       ref noWickyXIV.Config.AdsZoomFactor,      1.05f, 4f, 1.5f);
+            ConfigSliderFloat("Transition speed##Ads",  ref noWickyXIV.Config.AdsTransitionSpeed, 1f,    20f, 8f);
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Sensitivity (Phase E)
+        if (DynamicsSectionMatches("Sensitivity") && ImGuiEx.BeginGroupBox("Input Sensitivity"))
+        {
+            ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.1f, 4f, 1f);
+            ConfigCheckbox("Invert Y axis##Sens", ref noWickyXIV.Config.InvertMouseY);
+            ImGui.TextDisabled("Note: applies to mouse + gamepad uniformly. Per-device split is deferred.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Hotkeys (Phase B)
+        if (DynamicsSectionMatches("Hotkey") && ImGuiEx.BeginGroupBox("Hotkeys"))
+        {
+            HotkeyRow("Settings panel", ref noWickyXIV.Config.SettingsHotkey,    defaultVk: 0x75 /* F6 */);
+            HotkeyRow("Crosshair",      ref noWickyXIV.Config.CrosshairHotkey,   defaultVk: 0x56 /* V */);
+            HotkeyRow("Shoulder swap",  ref noWickyXIV.Config.ShoulderSwapHotkey, defaultVk: 0);
+            ConfigCheckbox("Enable Ctrl+1..9 preset-slot hotkeys", ref noWickyXIV.Config.PresetHotkeysEnabled);
             ImGuiEx.EndGroupBox();
         }
 
         // Section: Misc / overrides
-        if (ImGuiEx.BeginGroupBox("Misc"))
+        if (DynamicsSectionMatches("Misc") && ImGuiEx.BeginGroupBox("Misc"))
         {
             ConfigCheckbox("Instant mode (zero all smoothing)", ref noWickyXIV.Config.InstantMode);
+            ImGui.TextDisabled("Note: InstantMode is currently a no-op — FFXIV's camera struct doesn't expose smoothing rates.");
             ConfigSliderFloat("Ctrl+scroll height step", ref noWickyXIV.Config.HeightOffsetStep, 0.01f, 1f, 0.1f);
             // Live global height offset (Ctrl/Alt + scroll updates this).
             // Slider also lets the user nudge it directly from the panel.
             ConfigSliderFloat("Live height offset (Ctrl/Alt+scroll)", ref noWickyXIV.Config.GlobalHeightOffset, -2f, 4f, 0f);
             ImGuiEx.EndGroupBox();
         }
+    }
+
+    // Render a hotkey row: shows current binding, "Set" button to capture next
+    // key pressed, "Clear" to unbind, "Reset" to default. Stores raw VirtualKey int.
+    private static int _hotkeyCapturingFor; // 0 = nothing, else field-id we're capturing for; we use the address-of-int via a static set-target
+    private static System.Action<int> _hotkeyCaptureCallback;
+
+    private static void HotkeyRow(string label, ref int vk, int defaultVk)
+    {
+        ImGui.TextUnformatted(label);
+        ImGui.SameLine(180 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+
+        string display = vk == 0 ? "<unbound>" : VkName(vk);
+        bool isCapturing = _hotkeyCapturingFor != 0 && _hotkeyCapturingFor == label.GetHashCode();
+        if (isCapturing)
+        {
+            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.7f, 0.2f, 1f), "press a key…");
+            // Poll Dalamud's IKeyState for any key pressed this frame.
+            int pressed = ScanFirstPressedVk();
+            if (pressed != 0)
+            {
+                vk = pressed;
+                noWickyXIV.Config.Save();
+                _hotkeyCapturingFor = 0;
+            }
+            // ESC cancels
+            try { if (DalamudApi.KeyState[0x1B]) _hotkeyCapturingFor = 0; } catch { }
+        }
+        else
+        {
+            if (ImGui.Button($"{display}##{label}"))
+                _hotkeyCapturingFor = label.GetHashCode();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"x##{label}"))
+        {
+            vk = 0;
+            noWickyXIV.Config.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"reset##{label}"))
+        {
+            vk = defaultVk;
+            noWickyXIV.Config.Save();
+        }
+    }
+
+    private static int ScanFirstPressedVk()
+    {
+        // Scan a sensible range (letters, numbers, F-keys, common others).
+        try
+        {
+            for (int v = 0x08; v <= 0xDE; v++)
+            {
+                // Skip mouse buttons (0x01..0x06) and common modifiers (handled
+                // inline by Ctrl-aware slot hotkeys), Tab+Enter+Shift left out
+                // to avoid accidental binds during Set click.
+                if (v == 0x09 || v == 0x0D || v == 0x10 || v == 0x11 || v == 0x12 || v == 0x1B) continue;
+                if (DalamudApi.KeyState[v]) return v;
+            }
+        }
+        catch { }
+        return 0;
+    }
+
+    private static string VkName(int vk)
+    {
+        // Cheap formatter for the common range; falls back to the hex code.
+        if (vk >= 0x30 && vk <= 0x39) return ((char)vk).ToString();           // 0..9
+        if (vk >= 0x41 && vk <= 0x5A) return ((char)vk).ToString();           // A..Z
+        if (vk >= 0x70 && vk <= 0x7B) return $"F{vk - 0x6F}";                 // F1..F12
+        return vk switch
+        {
+            0x08 => "Backspace", 0x14 => "CapsLock", 0x20 => "Space",
+            0xBA => ";", 0xBB => "=", 0xBC => ",", 0xBD => "-", 0xBE => ".",
+            0xBF => "/", 0xC0 => "`", 0xDB => "[", 0xDC => "\\", 0xDD => "]", 0xDE => "'",
+            _ => $"VK_0x{vk:X2}"
+        };
     }
 
     private static unsafe void DrawOtherSettings()

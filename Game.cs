@@ -95,12 +95,22 @@ public static unsafe class Game
 
             position->Y += preset.HeightOffset + noWickyXIV.Config.GlobalHeightOffset;
 
-            if (preset.SideOffset == 0 || camera->mode != 1) return;
+            // PositionFloat (the "discreet float" feel): additive offset
+            // computed in CameraDynamics from player velocity * lagFactor,
+            // smooth-damped. Cheap; no-op when EnablePositionFloat is off.
+            var floatOff = CameraDynamics.GetPositionFloatOffset();
+            position->X += floatOff.X;
+            position->Y += floatOff.Y;
+            position->Z += floatOff.Z;
+
+            // Auto-shoulder lerp may override preset.SideOffset mid-swap.
+            float effectiveSide = CameraDynamics.GetActiveSideOffset(preset.SideOffset);
+            if (effectiveSide == 0 || camera->mode != 1) return;
 
             const float halfPI = MathF.PI / 2f;
             var a = Common.CameraManager->worldCamera->currentHRotation - halfPI;
-            position->X += -preset.SideOffset * MathF.Sin(a);
-            position->Z += -preset.SideOffset * MathF.Cos(a);
+            position->X += -effectiveSide * MathF.Sin(a);
+            position->Z += -effectiveSide * MathF.Cos(a);
         }
         else
         {

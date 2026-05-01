@@ -110,4 +110,51 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // of the preset's HeightOffset so scrolling persists across preset switches
     // and across sessions. Range matches Wicked's clamp (-2..4).
     public float GlobalHeightOffset  = 0f;
+
+    // ---- Hotkeys (Phase B) ----
+    // VirtualKey int values; 0 = unbound. Default F6 matches Wicked's KeyMenu.
+    public int   SettingsHotkey      = 0x75; // VirtualKey.F6
+    public int   ShoulderSwapHotkey  = 0;    // unbound; user assigns
+    public int   CrosshairHotkey     = 0x56; // VirtualKey.V
+    // Preset slot hotkeys (Ctrl+1..9). Indexed 0..8 for slots 1..9.
+    public bool      PresetHotkeysEnabled = false;
+    public List<int> PresetHotkeys = new() { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39 };
+
+    // ---- ADS zoom on RMB (Phase B) ----
+    public bool  EnableAdsOnRmb      = false;
+    public float AdsZoomFactor       = 1.5f;
+    public float AdsTransitionSpeed  = 8f;
+
+    // ---- Crosshair (Phase D — fields added early so V hotkey toggles a real value) ----
+    public bool  EnableCrosshair     = false;
+    public float CrosshairSize       = 8f;        // half-arm length, px (scaled)
+    public float CrosshairThickness  = 2f;
+    public float CrosshairFadeSpeed  = 6f;
+    // RGBA 0..1
+    public float CrosshairColorR     = 1f;
+    public float CrosshairColorG     = 1f;
+    public float CrosshairColorB     = 1f;
+    public float CrosshairColorA     = 0.85f;
+
+    // ---- Sensitivity (Phase E — fields added early so panel can show them) ----
+    public float MouseSensitivityMul   = 1f;
+    public float GamepadSensitivityMul = 1f;
+    public bool  InvertMouseY          = false;
+    public bool  InvertGamepadY        = false;
+
+    // ---- Auto-shoulder swap (Phase C) ----
+    // STATE: state machine + UI toggle implemented; the raycast probe itself
+    // is a TODO pending verification of the BGCollisionModule API shape in
+    // the active FFXIVClientStructs version. Manual shoulder swap hotkey
+    // (Phase B) covers the immediate use case in the meantime.
+    public bool  EnableAutoShoulderSwap   = false;
+    public float ShoulderLerpDuration     = 0.35f;
+    public float ShoulderSwapSafetyMargin = 0.4f;  // metres of clearance to keep
+    public float ShoulderSwapCheckHz      = 5f;    // probe frequency
+
+    // ---- SwivelOnMove implementation knobs (Phase D) ----
+    // Wicked has SwivelOnMove/Delay/Speed already; we add a movement-magnitude
+    // threshold below which we don't auto-center, to avoid jitter when standing
+    // still or in cutscenes.
+    public float SwivelMoveThreshold = 0.05f; // m/s
 }

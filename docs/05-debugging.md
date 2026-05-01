@@ -1,6 +1,8 @@
 # Debugging
 
-> Source: [dalamud.dev/faq/debug](https://dalamud.dev/faq/debug), [dalamud.dev/faq/reverse-engineering](https://dalamud.dev/faq/reverse-engineering/)
+> Sources: [dalamud.dev/faq/debug](https://dalamud.dev/faq/debug), [dalamud.dev/plugin-development/reverse-engineering](https://dalamud.dev/plugin-development/reverse-engineering/) (canonical), [dalamud.dev/faq/reverse-engineering](https://dalamud.dev/faq/reverse-engineering/) (legacy FAQ)
+>
+> Note: the `/faq/*` pages are explicitly labeled "Development FAQ (Legacy)" on dalamud.dev. The canonical reverse-engineering content lives under `/plugin-development/reverse-engineering/` — see [08-patterns.md § Reverse engineering](08-patterns.md#reverse-engineering-tools) for the up-to-date treatment.
 
 ## Live log (your first stop)
 
@@ -70,11 +72,11 @@ If you're hot-reloading and seeing weird state, suspect: leftover hooks (Hyposta
 
 ## Reverse engineering (when you're stuck)
 
-For when a feature requires an unknown game function (e.g. wiring `BGCollisionModule.Raycast` for auto-shoulder swap):
+Full treatment is in [08-patterns.md § Reverse engineering tools](08-patterns.md#reverse-engineering-tools) — that's the canonical doc map. Quick version:
 
 1. **Open `ffxiv_dx11.exe` in IDA Pro or Ghidra** (Ghidra is free).
 2. **Apply the FFXIVClientStructs script** to populate community findings — this names known structs/functions automatically.
-3. **Find the function by signature** (a unique byte pattern of instruction bytes). Use `ISigScanner.ScanText("AA BB ?? CC DD ...")` at runtime — `??` is a wildcard for bytes that vary. Per dalamud.dev: *"addresses always change, while signatures do not."*
+3. **Find the function by signature** (a unique byte pattern of instruction bytes). Use `ISigScanner.ScanText("AA BB ?? CC DD ...")` at runtime — `??` is a wildcard for bytes that vary. Per dalamud.dev: *"a signature will only break if Square Enix changes the code the signature represents."*
 4. **Hook with `IGameInteropProvider.HookFromSignature`** (or, in our project, the Hypostasis `[HypostasisSignatureInjection]` attribute that does this declaratively).
 
 Hypostasis examples in our code:

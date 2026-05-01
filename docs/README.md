@@ -11,6 +11,7 @@ This is reading order:
 5. [Debugging](05-debugging.md) — Visual Studio attach, logs, common crash flows
 6. [Dalamud API versions](06-versions.md) — what API level we target and why
 7. [Contributing / Daily Workflow](07-contributing.md) — build → deploy → push, hot reload
+8. [Game Interaction Patterns](08-patterns.md) — polling vs hooks, calling game code, signatures vs addresses, RE workflow, addon services
 
 If you only read one file, read [`04-camera-architecture.md`](04-camera-architecture.md) — that's the heart of the fork.
 

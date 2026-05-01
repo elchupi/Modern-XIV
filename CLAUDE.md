@@ -121,8 +121,11 @@ CameraDynamics.Update()    The dynamic-feel layer ↓
 The verbose docs are in [`docs/`](docs/) (8 files). Source of truth is [dalamud.dev](https://dalamud.dev). For deep reference:
 - [`docs/04-camera-architecture.md`](docs/04-camera-architecture.md) — full per-frame architecture
 - [`docs/03-services.md`](docs/03-services.md) — every Dalamud service we use + the rest available
+- [`docs/08-patterns.md`](docs/08-patterns.md) — **canonical** Dalamud patterns: polling vs hooks, calling game code, signatures, RE workflow, AddonLifecycle / AddonEventManager. Read this before reaching for `IGameInteropProvider` directly.
 - [`docs/05-debugging.md`](docs/05-debugging.md) — VS attach, exception codes, ProcDump
 - [`docs/06-versions.md`](docs/06-versions.md) — API level + migration notes
+
+**Important:** dalamud.dev's `/faq/*` pages (debug, reverse-engineering, getting-started, etc.) are explicitly labeled "Development FAQ (Legacy)". The canonical current docs live under `/plugin-development/*`. When researching, prefer the latter — `08-patterns.md` distills it.
 
 But you'll usually be fine reading the source. Files are short. The math in `CameraDynamics.cs` is commented inline.
 

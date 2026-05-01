@@ -63,4 +63,46 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public DeathCamSetting DeathCamMode = DeathCamSetting.Disabled;
     public bool EnableAdvancedFreeCamControls = false;
     public bool FadeOutAdvancedFreeCamControls = false;
+
+    // ---- Cinematic Camera (mirrors WickedTPSConfig.cs naming + defaults) ----
+    // Dynamic-feel layer composed on top of the active preset. Independent
+    // of Cammy's preset system — these are global because they describe HOW
+    // the camera reacts to motion, not WHAT it frames. Same toggling story
+    // as Wicked: each effect has an Enable* gate and rate/magnitude knobs.
+    //
+    // YawLag: known broken in the Wicked impl (whiplashes, no soft landing).
+    // Default OFF here too. Re-design as critically-damped spring on
+    // yaw-rate-driven offset (NOT exp-decay on absolute yaw) before turning on.
+    public bool  EnableYawLag        = false;
+    public float YawLagHalflife      = 0.8f;
+
+    public bool  EnableRollTilt      = true;
+    public float RollTiltMaxAngle    = 1.92f;     // degrees
+    public float RollTiltSensitivity = 0.2f;
+    public float RollTiltOnRate      = 2.47f;
+    public float RollTiltOffRate     = 1.0f;
+
+    public bool  EnablePitchTilt     = true;
+    public float PitchTiltMaxOffset  = 1.24f;
+    public float PitchTiltSmoothRate = 3.19f;
+
+    // SwivelOnMove: auto-center the camera behind the player after a
+    // short delay when movement starts. Off by default in Wicked too.
+    public bool  SwivelOnMove        = false;
+    public float SwivelDelay         = 0.15f;
+    public float SwivelSpeed         = 240f;
+
+    // Position float behind the player (the "discreet float" feel —
+    // soft smoothing on follow that's not 1:1, not zero).
+    public bool  EnablePositionFloat = true;
+    public float PositionFloatLagFactor = 0.15f;
+    public float PositionFloatSmoothTime = 0.18f;
+
+    // InstantMode: zero ALL the smoothing (vertical lag, lock-on blend,
+    // collision smooth, etc). Wicked uses it as an emergency "remove all
+    // softness" toggle. Doesn't affect the dynamic-feel knobs above.
+    public bool  InstantMode         = false;
+
+    // Ctrl+scroll height nudge step (live, in-game).
+    public float HeightOffsetStep    = 0.1f;
 }

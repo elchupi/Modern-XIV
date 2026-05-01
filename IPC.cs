@@ -81,26 +81,26 @@ public static class IPC
 
     private static void OnMovedConditionSet(int from, int to)
     {
-        foreach (var preset in Cammy.Config.Presets)
+        foreach (var preset in noWickyXIV.Config.Presets)
         {
             if (preset.ConditionSet == from)
                 preset.ConditionSet = to;
             else if (preset.ConditionSet == to)
                 preset.ConditionSet = from;
         }
-        Cammy.Config.Save();
+        noWickyXIV.Config.Save();
     }
 
     private static void OnRemovedConditionSet(int removed)
     {
-        foreach (var preset in Cammy.Config.Presets)
+        foreach (var preset in noWickyXIV.Config.Presets)
         {
             if (preset.ConditionSet > removed)
                 preset.ConditionSet -= 1;
             else if (preset.ConditionSet == removed)
                 preset.ConditionSet = -1;
         }
-        Cammy.Config.Save();
+        noWickyXIV.Config.Save();
     }
 
     public static void Dispose()

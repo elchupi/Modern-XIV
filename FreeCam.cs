@@ -143,7 +143,7 @@ public static unsafe class FreeCam
             gameCamera->currentZoom = gameCamera->interpolatedZoom = prevZoom;
             gameCamera->currentFoV = prevFoV;
             gameCamera = null;
-            if (!Cammy.Config.EnableCameraNoClippy)
+            if (!noWickyXIV.Config.EnableCameraNoClippy)
                 Game.cameraNoClippyReplacer.Disable();
         }
 
@@ -182,7 +182,7 @@ public static unsafe class FreeCam
 
     public static void Update()
     {
-        if (Cammy.Config.DeathCamMode == Configuration.DeathCamSetting.FreeCam)
+        if (noWickyXIV.Config.DeathCamMode == Configuration.DeathCamSetting.FreeCam)
             CheckDeath();
 
         if (!Enabled) return;
@@ -288,11 +288,11 @@ public static unsafe class FreeCam
 
     public static void Draw()
     {
-        if (!Enabled || !Cammy.Config.EnableAdvancedFreeCamControls) return;
+        if (!Enabled || !noWickyXIV.Config.EnableAdvancedFreeCamControls) return;
 
         ImGui.SetNextWindowSizeConstraints(new Vector2(300, 200) * ImGuiHelpers.GlobalScale, Vector2.PositiveInfinity);
 
-        var useAlpha = Cammy.Config.FadeOutAdvancedFreeCamControls;
+        var useAlpha = noWickyXIV.Config.FadeOutAdvancedFreeCamControls;
         var dt = ImGui.GetIO().DeltaTime;
         using var _ = ImGuiEx.StyleVarBlock.Begin(ImGuiStyleVar.Alpha, advancedControlsAlpha, useAlpha);
         if (!ImGui.Begin("Advanced Controls"))
@@ -329,10 +329,10 @@ public static unsafe class FreeCam
 
         ImGui.SameLine();
 
-        if (ImGui.Checkbox("Fade Window", ref Cammy.Config.FadeOutAdvancedFreeCamControls))
+        if (ImGui.Checkbox("Fade Window", ref noWickyXIV.Config.FadeOutAdvancedFreeCamControls))
         {
             advancedControlsAlpha = 1;
-            Cammy.Config.Save();
+            noWickyXIV.Config.Save();
         }
 
         ImGui.Separator();

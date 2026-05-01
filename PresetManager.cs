@@ -53,7 +53,7 @@ public static class PresetManager
 
     public static void CheckCameraConditionSets(bool isLoggingIn)
     {
-        var preset = Cammy.Config.Presets.FirstOrDefault(preset => preset.CheckConditionSet());
+        var preset = noWickyXIV.Config.Presets.FirstOrDefault(preset => preset.CheckConditionSet());
         if (preset == null || preset == ActivePreset) return;
 
         ApplyPreset(preset, isLoggingIn);

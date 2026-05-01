@@ -86,9 +86,8 @@ Plus a `Vector3` overload `ExpDecayV` for the position float.
 | SwivelOnMove | `CameraDynamics.UpdateSwivelOnMove` | ✅ Live | Tracks player position; after `SwivelDelay` of continuous movement, rotates yaw toward `player.Rotation + π` at `SwivelSpeed` deg/s |
 | ADS-on-RMB | `CameraDynamics.UpdateAds` | ✅ Live | RMB held → exp-lerp FoV/zoom toward `base/factor`; release → lerp back to baseline. Baseline captured on rising edge |
 | Sensitivity multiplier + Y invert | `CameraDynamics.UpdateSensitivity` | ✅ Live | Delta-replay scaling on `currentHRotation`/`currentVRotation` |
-| Auto-shoulder swap (state machine) | `CameraDynamics.UpdateAutoShoulderSwap` | ✅ Live | Cubic-bezier eased lerp on `_shoulderDisplay`, writes `preset.SideOffset` on settle |
-| Auto-shoulder swap (raycast probe) | `CameraDynamics.TryProbeWall` | 🟡 Stub | Returns `false` — pending verification of `BGCollisionModule.Raycast` API shape |
-| Manual shoulder swap (hotkey) | `InputHandler.UpdateShoulderSwapHotkey` | ✅ Live | Flips active preset's `SideOffset` sign on press |
+| Auto-shoulder swap | `CameraDynamics.UpdateAutoShoulderSwap` + `TryProbeWall` | 🟡 NOT NEEDED | State machine + lerp ports cleanly, but **FFXIV's native camera already handles wall collision** (zoom auto-pulls in when geometry intrudes between camera and player). Auto-shoulder-swap was solving a problem from *No Rest For The Wicked* — that game doesn't have native wall collision, so Wicked needed to detect walls and shift the shoulder. Here it's redundant. The probe stub stays, dormant; toggle defaults off. **Don't wire the raycast.** |
+| Manual shoulder swap (hotkey) | `InputHandler.UpdateShoulderSwapHotkey` | ✅ Live | Flips active preset's `SideOffset` sign on press. The actually-useful shoulder feature here. |
 | Crosshair overlay | `Crosshair.Draw` | ✅ Live | ImGui foreground draw-list, fades per `CrosshairFadeSpeed`, hides in cutscenes |
 | F6 panel toggle | `InputHandler.UpdateSettingsHotkey` | ✅ Live | Default F6, configurable |
 | V crosshair toggle | `InputHandler.UpdateCrosshairHotkey` | ✅ Live | Default V, configurable |

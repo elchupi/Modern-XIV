@@ -83,8 +83,7 @@ CameraDynamics.Update()    The dynamic-feel layer ↓
 | Sensitivity + Y invert | ✅ Live | `CameraDynamics.UpdateSensitivity` |
 | Crosshair overlay | ✅ Live | `Crosshair.cs` (ImGui foreground draw list) |
 | Manual shoulder swap (hotkey) | ✅ Live | `InputHandler.UpdateShoulderSwapHotkey` (default unbound; user assigns) |
-| Auto-shoulder swap state machine | ✅ Live | `CameraDynamics.UpdateAutoShoulderSwap` |
-| Auto-shoulder **raycast probe** | 🟡 STUB | `CameraDynamics.TryProbeWall` returns `false`. BGCollisionModule API shape isn't documented in shipped FFXIVClientStructs XML. To wire: pick a current FFXIVClientStructs version and verify the `Raycast` signature; update the stub. |
+| Auto-shoulder swap | 🟡 NOT NEEDED | Wicked needed wall-side detection because *No Rest For The Wicked*'s camera doesn't natively pull in / shift on walls. **FFXIV's native camera already handles wall collision** (zoom auto-pulls in, etc.) so the auto-shoulder feature is solving a problem that doesn't exist here. State machine + `TryProbeWall` stub remain in `CameraDynamics.cs` as dormant code; the UI toggle in `PluginUI.cs` defaults off. **Do not implement the BGCollisionModule raycast** — there's nothing for it to fix. Manual shoulder swap (Q hotkey) is the only shoulder feature that delivers value here. |
 | Hotkeys (F6 / V / Q / Ctrl+1..9) | ✅ Live | `InputHandler.cs` |
 | Ctrl/Alt+scroll height | ✅ Live | `InputHandler.UpdateScrollHeight` + `Game.GetZoomDeltaDetour` zero-suppression |
 | YawLag | 🟡 DEFERRED | DO NOT IMPLEMENT WITHOUT REDESIGN — see "Don't violate" above |
@@ -129,9 +128,16 @@ But you'll usually be fine reading the source. Files are short. The math in `Cam
 
 ## Pending work, prioritized
 
-1. **`TryProbeWall` raycast** — the only real "missing piece". Look up current FFXIVClientStructs `BGCollisionModule.Raycast` signature, plug into `CameraDynamics.cs:TryProbeWall`. Manual shoulder swap (Q hotkey when bound) covers the use case until then.
-2. **YawLag rewrite** — if user asks. Spring-on-offset, not exp-decay-on-target.
-3. **`IPlayerState` migration** — `IClientState.LocalPlayer` is deprecated as of v14. Low priority (still works); update when Dalamud removes the compat layer.
+1. **YawLag rewrite** — if user asks. Spring-on-offset, not exp-decay-on-target.
+2. **`IPlayerState` migration** — `IClientState.LocalPlayer` is deprecated as of v14. Low priority (still works); update when Dalamud removes the compat layer.
+
+That's it. Everything else in the project is functional or intentionally inert.
+
+## Things NOT to work on
+
+- **Auto-shoulder swap raycast** — FFXIV handles wall detection natively. The `TryProbeWall` stub looks like pending work but isn't; it was ported from Wicked where the host game lacks native wall collision. Don't wire `BGCollisionModule.Raycast` here. Don't suggest it.
+- **InstantMode wiring** — the FFXIV camera struct doesn't expose smoothing-rate fields. Toggle is in the UI for symmetry with Wicked but does nothing. Don't try to "fix" it; there's nothing to fix.
+- **YawLag using Wicked's math** — see "Don't violate" rule #2.
 
 ## Memory pointers (already saved across sessions)
 

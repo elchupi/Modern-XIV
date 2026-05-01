@@ -33,7 +33,7 @@ public static unsafe class Game
     private static nint forceDisableMovementPtr;
     public static ref int ForceDisableMovement => ref *(int*)forceDisableMovementPtr; // Increments / decrements by 1 to allow multiple things to disable movement at the same time
 
-    private static float GetZoomDeltaDetour() => PresetManager.CurrentPreset.ZoomDelta;
+    private static float GetZoomDeltaDetour() => InputHandler.SuppressNextZoom ? 0f : PresetManager.CurrentPreset.ZoomDelta;
 
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused
     {
@@ -93,7 +93,7 @@ public static unsafe class Game
                 prevCameraTarget = null;
             }
 
-            position->Y += preset.HeightOffset;
+            position->Y += preset.HeightOffset + noWickyXIV.Config.GlobalHeightOffset;
 
             if (preset.SideOffset == 0 || camera->mode != 1) return;
 

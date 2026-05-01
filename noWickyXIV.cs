@@ -130,6 +130,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
 
         FreeCam.Update();
         PresetManager.Update();
+        InputHandler.Update();
     }
 
     protected override void Draw()

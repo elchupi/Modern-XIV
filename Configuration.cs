@@ -105,4 +105,9 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
 
     // Ctrl+scroll height nudge step (live, in-game).
     public float HeightOffsetStep    = 0.1f;
+
+    // Live-tweakable global height offset (Ctrl/Alt + scroll). Stacks on top
+    // of the preset's HeightOffset so scrolling persists across preset switches
+    // and across sessions. Range matches Wicked's clamp (-2..4).
+    public float GlobalHeightOffset  = 0f;
 }

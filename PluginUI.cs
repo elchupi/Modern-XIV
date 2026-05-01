@@ -432,6 +432,9 @@ public static class PluginUI
         {
             ConfigCheckbox("Instant mode (zero all smoothing)", ref noWickyXIV.Config.InstantMode);
             ConfigSliderFloat("Ctrl+scroll height step", ref noWickyXIV.Config.HeightOffsetStep, 0.01f, 1f, 0.1f);
+            // Live global height offset (Ctrl/Alt + scroll updates this).
+            // Slider also lets the user nudge it directly from the panel.
+            ConfigSliderFloat("Live height offset (Ctrl/Alt+scroll)", ref noWickyXIV.Config.GlobalHeightOffset, -2f, 4f, 0f);
             ImGuiEx.EndGroupBox();
         }
     }

@@ -70,6 +70,39 @@ public static unsafe class CameraDynamics
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int ShowCursor(bool bShow);
+
+    // Track our own hide state so we don't pump ShowCursor every frame
+    // (the Win32 counter keeps state across calls; we manage it idempotently).
+    private static bool _osCursorHidden;
+
+    private static void HideOsCursor()
+    {
+        if (_osCursorHidden) return;
+        // ShowCursor returns the new counter. Cursor is shown when counter >= 0;
+        // hidden when counter < 0. Decrement until hidden.
+        try
+        {
+            int safety = 16;
+            while (ShowCursor(false) >= 0 && --safety > 0) { }
+            _osCursorHidden = true;
+        }
+        catch { /* defensive */ }
+    }
+
+    private static void ShowOsCursor()
+    {
+        if (!_osCursorHidden) return;
+        try
+        {
+            int safety = 16;
+            while (ShowCursor(true) < 0 && --safety > 0) { }
+            _osCursorHidden = false;
+        }
+        catch { /* defensive */ }
+    }
+
     /// <summary>Toggle by F7 (or whatever the user binds via Configuration.CursorReleaseHotkey).</summary>
     public static void ToggleCursorRelease()
     {
@@ -198,21 +231,25 @@ public static unsafe class CameraDynamics
         if (!noWickyXIV.Config.EnableMouseLookAlways || !tps || _cursorReleased)
         {
             _mouseLookInit = false;
+            ShowOsCursor();
             return;
         }
 
         ImGuiIOPtr io;
-        try { io = ImGui.GetIO(); } catch { return; }
+        try { io = ImGui.GetIO(); } catch { ShowOsCursor(); return; }
 
         // Don't fight the game's own RMB-held mouselook
         bool rmbHeld;
         try { rmbHeld = io.MouseDown[1]; } catch { rmbHeld = false; }
-        if (rmbHeld) { _mouseLookInit = false; return; }
+        if (rmbHeld) { _mouseLookInit = false; ShowOsCursor(); return; }
 
         // Don't fight ImGui — if a panel captured the mouse, leave it alone.
         bool wantCaptureMouse;
         try { wantCaptureMouse = io.WantCaptureMouse; } catch { wantCaptureMouse = false; }
-        if (wantCaptureMouse) { _mouseLookInit = false; return; }
+        if (wantCaptureMouse) { _mouseLookInit = false; ShowOsCursor(); return; }
+
+        // Past all the bail-outs — we're in mouselook. Hide the cursor.
+        HideOsCursor();
 
         Vector2 curPos;
         try { curPos = io.MousePos; } catch { return; }
@@ -228,11 +265,12 @@ public static unsafe class CameraDynamics
             if (MathF.Abs(delta.X) > 0.01f || MathF.Abs(delta.Y) > 0.01f)
             {
                 float sens = MathF.Max(0.0001f, noWickyXIV.Config.MouseLookSensitivity);
+                float xSign = noWickyXIV.Config.MouseLookInvertX ? +1f : -1f; // default negate: matches FFXIV's RMB-drag direction
                 float ySign = noWickyXIV.Config.MouseLookInvertY ? +1f : -1f;
 
                 // FFXIV: positive currentVRotation = looking up. Mouse Y up
                 // = negative delta. So default mapping: mouse-up → look-up.
-                float newH = cam->currentHRotation + delta.X * sens;
+                float newH = cam->currentHRotation + delta.X * sens * xSign;
                 while (newH >  MathF.PI) newH -= 2f * MathF.PI;
                 while (newH < -MathF.PI) newH += 2f * MathF.PI;
 

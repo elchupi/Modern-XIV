@@ -525,6 +525,7 @@ public static class PluginUI
             ConfigCheckbox("Enable##Mouselook", ref noWickyXIV.Config.EnableMouseLookAlways);
             ImGui.TextDisabled("Mouse drives camera continuously. Hotkey (default F7) frees the cursor for UI.");
             ConfigSliderFloat("Sensitivity (rad/px)##Mouselook", ref noWickyXIV.Config.MouseLookSensitivity, 0.0005f, 0.02f, 0.005f, "%.4f");
+            ConfigCheckbox("Invert X##Mouselook", ref noWickyXIV.Config.MouseLookInvertX);
             ConfigCheckbox("Invert Y##Mouselook", ref noWickyXIV.Config.MouseLookInvertY);
             ConfigCheckbox("Re-center cursor each frame##Mouselook", ref noWickyXIV.Config.MouseLookCenterCursor);
             ImGuiEx.EndGroupBox();

@@ -154,6 +154,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // releases the cursor for UI interaction; press again to re-grab.
     public bool  EnableMouseLookAlways    = false;
     public float MouseLookSensitivity     = 0.005f;  // radians per pixel of delta
+    public bool  MouseLookInvertX         = false;   // mouse-right → camera-left when true
     public bool  MouseLookInvertY         = false;
     public bool  MouseLookCenterCursor    = true;    // re-center each frame so cursor never reaches screen edge
     public int   CursorReleaseHotkey      = 0x76;    // VirtualKey.F7

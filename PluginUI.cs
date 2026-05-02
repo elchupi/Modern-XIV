@@ -525,7 +525,10 @@ public static class PluginUI
         // Section: Sensitivity (Phase E)
         if (DynamicsSectionMatches("Sensitivity") && ImGuiEx.BeginGroupBox("Input Sensitivity"))
         {
-            ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.1f, 4f, 1f);
+            // Min 0.56 — below that the delta-replay code fights the game's
+            // own per-frame camera writes and the camera jitters / "tries to
+            // recenter" while you move it. 0.56 was the user-determined floor.
+            ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.56f, 4f, 1f);
             ConfigCheckbox("Invert Y axis##Sens", ref noWickyXIV.Config.InvertMouseY);
             ImGui.TextDisabled("Note: applies to mouse + gamepad uniformly. Per-device split is deferred.");
             ImGuiEx.EndGroupBox();

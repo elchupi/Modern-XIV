@@ -13,6 +13,16 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         Game.Initialize();
         IPC.Initialize();
         DalamudApi.ClientState.Login += Login;
+
+        // One-shot migration: MouseSensitivityMul values < 0.56 produce
+        // jitter/recenter behavior because the delta-replay code fights the
+        // game's own per-frame writes. Old saved configs (mine had 0.1) get
+        // bumped to 0.56 silently on load.
+        if (Config.MouseSensitivityMul < 0.56f)
+        {
+            Config.MouseSensitivityMul = 0.56f;
+            Config.Save();
+        }
         // Hypostasis base wires Draw + OpenConfigUi only. OpenMainUi was
         // added later by Dalamud as a distinct "open the plugin's primary
         // window" entrypoint (the click-to-open button in the installer);

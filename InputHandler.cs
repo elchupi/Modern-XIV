@@ -66,11 +66,12 @@ public static class InputHandler
     private static sbyte _wheelPrev;
 
     // ---- Scroll-wheel modifier matrix ----
-    //   plain scroll  → nothing (zoom suppressed in Game.GetZoomDeltaDetour)
-    //   Ctrl + scroll → height (GlobalHeightOffset)
-    //   Alt  + scroll → shoulder (active preset's SideOffset)
-    //   Shift+Ctrl    → zoom (the ONLY way to zoom; handled by game)
-    //   anything else → ignored
+    //   plain scroll  → cycle hostile NPCs (nearest-first)
+    //   Shift + scroll → cycle party members (slot order)
+    //   Ctrl  + scroll → height (GlobalHeightOffset)
+    //   Alt   + scroll → shoulder (active preset's SideOffset)
+    //   Shift+Ctrl     → zoom (the ONLY way to zoom; handled by game)
+    //   any other combo → ignored
     private static void UpdateScrollHeight()
     {
         try
@@ -88,14 +89,29 @@ public static class InputHandler
 
             bool shift = ShiftHeld, ctrl = CtrlHeld, alt = AltHeld;
 
-            // Shift+Ctrl is reserved for zoom — let the game handle it, we
-            // don't apply height/shoulder.
+            // Shift+Ctrl is reserved for zoom — let the game handle it.
             if (shift && ctrl) return;
 
-            // Ambiguous combos: skip (Ctrl+Alt, Shift+Alt, etc.)
+            // Ambiguous combos: skip
             if (ctrl && alt) return;
             if (shift && alt) return;
-            if (shift) return; // Shift alone reserved (could become a third axis later)
+
+            // Sign convention: scroll-up = +1 (next), scroll-down = -1 (prev).
+            int dir = wheel > 0 ? 1 : -1;
+
+            if (!shift && !ctrl && !alt)
+            {
+                // PLAIN scroll → cycle hostile NPC target
+                TargetCycle.CycleEnemy(dir);
+                return;
+            }
+
+            if (shift && !ctrl && !alt)
+            {
+                // SHIFT+scroll → cycle party member target
+                TargetCycle.CyclePartyMember(dir);
+                return;
+            }
 
             if (ctrl)
             {

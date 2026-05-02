@@ -61,7 +61,14 @@ public static unsafe class Game
         // unchanged. Inline write here (not Framework.Update) because this
         // detour fires INSIDE the game's per-frame camera setup; writes to
         // cam->lookAtX/Y/Z from outside got overwritten before render.
-        if (lookAtPosition != null && noWickyXIV.Config.EnablePositionFloat)
+        // Only apply on the first detour call this frame — setCameraLookAt
+        // can fire many times per tick (collision tests, transitions, etc.)
+        // and += to the same Vector3 storage compounds, parking the camera
+        // on a far-off point. TryConsumePositionFloatToken returns true once
+        // per Framework.Update tick.
+        if (lookAtPosition != null
+            && noWickyXIV.Config.EnablePositionFloat
+            && CameraDynamics.TryConsumePositionFloatToken())
         {
             var off = CameraDynamics.GetPositionFloatOffset();
             lookAtPosition->X += off.X;

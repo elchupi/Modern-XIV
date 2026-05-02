@@ -114,18 +114,21 @@ public static class ClickTranslator
                     try { DalamudApi.PluginLog.Information($"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): GetSlotById returned null"); } catch { } }
                 return false;
             }
-            byte cmdType = (byte)slot->CommandType;
-            uint cmdId   = slot->CommandId;
+            // CommandType is HotbarSlotType (slot-side enum); UseAction wants
+            // ActionType (action-system enum). They are NOT the same numeric
+            // mapping. Translate via the static helper FFXIVClientStructs ships.
+            var actionType = slot->GetActionTypeForSlotType(slot->CommandType);
+            uint cmdId = slot->CommandId;
 
             if (_fireDiagCount < 5)
             {
                 _fireDiagCount++;
                 try { DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): CommandType={cmdType} CommandId={cmdId}");
+                    $"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): SlotType={(int)slot->CommandType} ActionType={(int)actionType} CommandId={cmdId}");
                 } catch { }
             }
 
-            ActionManager.Instance()->UseAction((ActionType)cmdType, cmdId);
+            ActionManager.Instance()->UseAction(actionType, cmdId);
             return true;
         }
         catch (Exception ex)

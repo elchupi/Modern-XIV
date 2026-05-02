@@ -53,36 +53,11 @@ public static unsafe class Game
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused
     {
         if (FreeCam.Enabled) return;
-
-        // PositionFloat — shift the look-at position in the direction the
-        // player is moving. The camera then pivots toward the leading point
-        // and the character drifts off-center within the frame. Camera
-        // position is left alone so the camera-to-character distance is
-        // unchanged. Inline write here (not Framework.Update) because this
-        // detour fires INSIDE the game's per-frame camera setup; writes to
-        // cam->lookAtX/Y/Z from outside got overwritten before render.
-        // Only apply on the first detour call this frame — setCameraLookAt
-        // can fire many times per tick (collision tests, transitions, etc.)
-        // and += to the same Vector3 storage compounds, parking the camera
-        // on a far-off point. TryConsumePositionFloatToken returns true once
-        // per Framework.Update tick.
-        if (lookAtPosition != null
-            && noWickyXIV.Config.EnablePositionFloat
-            && CameraDynamics.TryConsumePositionFloatToken())
-        {
-            var off = CameraDynamics.GetPositionFloatOffset();
-            lookAtPosition->X += off.X;
-            lookAtPosition->Y += off.Y;
-            lookAtPosition->Z += off.Z;
-        }
-
-        // RollTilt — same story. cam->tilt writes from Framework.Update get
-        // overwritten before render. Apply inline here so the value sticks.
-        // Always write (even when disabled / decaying to 0) so a stale value
-        // can't linger from a previous activation.
-        if (camera != null)
-            camera->tilt = CameraDynamics.GetCurrentRollRadians();
-
+        // REVERTED 2026-05-02: detour-based PositionFloat / RollTilt application
+        // was locking the camera to a fixed direction. Pure passthrough until a
+        // safer injection point is found. Both features still RUN (math advances
+        // in CameraDynamics.Update from Framework.Update) but their writes may
+        // not be visible — preferable to a broken camera.
         camera->VTable.setCameraLookAt.Original(camera, lookAtPosition, cameraPosition, a4);
     }
 

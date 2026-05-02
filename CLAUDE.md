@@ -105,6 +105,16 @@ CameraDynamics.Update()    The dynamic-feel layer ↓
 3. New `private static void UpdateMyHotkey()` in `InputHandler.cs` using `EdgePressed(vk)`.
 4. Call from `InputHandler.Update()`.
 
+## Loading the plugin in-game (the part I got wrong first try)
+
+Dalamud's "Dev Plugin Locations" input wants the **full path to the .dll file**, NOT the folder. Older Dalamud versions accepted folder paths; current ones reject with "not a valid path to a potential Dev Plugin".
+
+Correct entry to paste into `/xlsettings` → Experimental → Dev Plugin Locations:
+```
+C:\Users\akkis\AppData\Roaming\XIVLauncher\devPlugins\noWickyXIV\bin\Debug\noWickyXIV.dll
+```
+After adding + Save & Close, the plugin appears in `/xlplugins` → Installed Plugins (with a dev-build tag). Toggle on; `/nowickyxiv` opens the config.
+
 ## Things you'll keep forgetting (genuinely)
 
 - The user's name/handle is **ebhemmanuel** (GitHub).

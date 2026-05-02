@@ -148,6 +148,16 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  InvertMouseY          = false;
     public bool  InvertGamepadY        = false;
 
+    // ---- Always-on mouselook (Phase F: FPS-style camera lock) ----
+    // When enabled, the mouse drives camera rotation continuously (as if RMB
+    // were always held). The "cursor toggle" hotkey (default F7) temporarily
+    // releases the cursor for UI interaction; press again to re-grab.
+    public bool  EnableMouseLookAlways    = false;
+    public float MouseLookSensitivity     = 0.005f;  // radians per pixel of delta
+    public bool  MouseLookInvertY         = false;
+    public bool  MouseLookCenterCursor    = true;    // re-center each frame so cursor never reaches screen edge
+    public int   CursorReleaseHotkey      = 0x76;    // VirtualKey.F7
+
     // ---- Auto-shoulder swap (Phase C) ----
     // STATE: state machine + UI toggle implemented; the raycast probe itself
     // is a TODO pending verification of the BGCollisionModule API shape in

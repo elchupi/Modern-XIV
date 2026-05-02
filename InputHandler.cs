@@ -35,7 +35,10 @@ public static class InputHandler
         UpdatePresetSlotHotkeys();
     }
 
-    // ---- Ctrl/Alt + scroll height nudge ----
+    // ---- Ctrl + scroll = height nudge; Alt + scroll = shoulder nudge ----
+    // Mirrors Wicked's bindings (Ctrl+scroll for HeightOffset). Alt+scroll
+    // drives the active preset's SideOffset (Cammy's "Camera Side Offset").
+    // Both suppress the game's normal zoom-on-scroll for the same frame.
     private static void UpdateScrollHeight()
     {
         try
@@ -43,19 +46,45 @@ public static class InputHandler
             var io = ImGui.GetIO();
             float wheel = io.MouseWheel;
             if (Math.Abs(wheel) < 0.001f) return;
-            if (!io.KeyCtrl && !io.KeyAlt) return;
 
-            float step = noWickyXIV.Config.HeightOffsetStep;
-            float next = noWickyXIV.Config.GlobalHeightOffset + wheel * step;
-            if (next < -2f) next = -2f;
-            if (next >  4f) next =  4f;
+            // Ambiguous combos: skip
+            if (io.KeyCtrl && io.KeyAlt) return;
 
-            if (Math.Abs(next - noWickyXIV.Config.GlobalHeightOffset) > 0.0001f)
+            if (io.KeyCtrl)
             {
-                noWickyXIV.Config.GlobalHeightOffset = next;
-                noWickyXIV.Config.Save();
+                // HEIGHT — global offset persisted across preset switches
+                float step = noWickyXIV.Config.HeightOffsetStep;
+                float next = noWickyXIV.Config.GlobalHeightOffset + wheel * step;
+                if (next < -2f) next = -2f;
+                if (next >  4f) next =  4f;
+
+                if (Math.Abs(next - noWickyXIV.Config.GlobalHeightOffset) > 0.0001f)
+                {
+                    noWickyXIV.Config.GlobalHeightOffset = next;
+                    noWickyXIV.Config.Save();
+                }
+                SuppressNextZoom = true;
             }
-            SuppressNextZoom = true;
+            else if (io.KeyAlt)
+            {
+                // SHOULDER — active preset's SideOffset. Reuses HeightOffsetStep
+                // for now (typical 0.1 m steps feel right for shoulder too).
+                var preset = PresetManager.CurrentPreset;
+                if (preset == null) return;
+                float step = noWickyXIV.Config.HeightOffsetStep;
+                float next = preset.SideOffset + wheel * step;
+                // Cammy's SideOffset is unbounded but +/-2 is plenty extreme.
+                if (next < -2f) next = -2f;
+                if (next >  2f) next =  2f;
+
+                if (Math.Abs(next - preset.SideOffset) > 0.0001f)
+                {
+                    preset.SideOffset = next;
+                    noWickyXIV.Config.Save();
+                    try { preset.Apply(); } catch { }
+                }
+                SuppressNextZoom = true;
+            }
         }
         catch { /* defensive */ }
     }

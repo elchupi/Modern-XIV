@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
@@ -33,7 +34,21 @@ public static unsafe class Game
     private static nint forceDisableMovementPtr;
     public static ref int ForceDisableMovement => ref *(int*)forceDisableMovementPtr; // Increments / decrements by 1 to allow multiple things to disable movement at the same time
 
-    private static float GetZoomDeltaDetour() => InputHandler.SuppressNextZoom ? 0f : PresetManager.CurrentPreset.ZoomDelta;
+    // Zoom suppression: when Ctrl or Alt is held, the user is using scroll
+    // for height/shoulder (InputHandler.UpdateScrollHeight); suppress the
+    // game's normal zoom-on-scroll. Reading modifier state HERE (called by
+    // the game when scroll happens) avoids a one-frame race vs the previous
+    // SuppressNextZoom flag pattern that was always too late.
+    private static float GetZoomDeltaDetour()
+    {
+        try
+        {
+            var io = ImGui.GetIO();
+            if (io.KeyCtrl || io.KeyAlt) return 0f;
+        }
+        catch { /* if ImGui IO not available, fall through to normal zoom */ }
+        return PresetManager.CurrentPreset.ZoomDelta;
+    }
 
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused
     {

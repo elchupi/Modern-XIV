@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Game.ClientState.Objects.Types;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 
 namespace noWickyXIV;
 
 // Scroll-wheel target cycling:
-//   plain scroll  → cycle nearby HOSTILE NPCs (nearest-first)
+//   plain scroll  → cycle THREAT-LIST mobs (engine enmity order) when one
+//                   exists; otherwise nearby HOSTILE NPCs (nearest-first)
 //   Shift + scroll → cycle PARTY members (slot order)
 //
 // Direction is the wheel sign: +1 = scroll-up = next, -1 = scroll-down = prev.
@@ -24,9 +26,21 @@ public static class TargetCycle
         {
             var lp = DalamudApi.ObjectTable.LocalPlayer;
             if (lp == null) return;
-            var lpPos = new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z);
 
-            // Hostile NPCs in object table, sorted by distance to player
+            // 1) Try the engine's enmity / threat list first. UIState->Hater
+            //    is ordered by enmity descending — exactly what we want when
+            //    actively in combat. Only mobs aggro'd on the player land in
+            //    this list, so out-of-combat it'll be empty and we fall
+            //    through to the nearest-first scan.
+            var threatList = BuildThreatList();
+            if (threatList.Count > 0)
+            {
+                CycleAndSet(threatList, direction);
+                return;
+            }
+
+            // 2) Fallback: hostile NPCs in object table, sorted by distance
+            var lpPos = new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z);
             var enemies = new List<IGameObject>();
             foreach (var obj in DalamudApi.ObjectTable)
             {
@@ -56,6 +70,30 @@ public static class TargetCycle
         {
             try { DalamudApi.PluginLog.Warning($"[noWickyXIV] CycleEnemy threw: {ex.Message}"); } catch { }
         }
+    }
+
+    // Resolve the engine's enmity table into Dalamud IGameObjects we can pass
+    // to TargetManager. Filters out dead, untargetable, or off-table entries.
+    private static unsafe List<IGameObject> BuildThreatList()
+    {
+        var result = new List<IGameObject>();
+        try
+        {
+            var ui = UIState.Instance();
+            if (ui == null) return result;
+            var haters = ui->Hater.Haters;
+            for (int i = 0; i < haters.Length; i++)
+            {
+                uint eid = haters[i].EntityId;
+                if (eid == 0 || eid == 0xE0000000) continue;
+                var obj = DalamudApi.ObjectTable.SearchById(eid);
+                if (obj == null || !obj.IsValid()) continue;
+                if (obj is IBattleNpc bn && bn.CurrentHp == 0) continue;
+                result.Add(obj);
+            }
+        }
+        catch { /* defensive */ }
+        return result;
     }
 
     public static void CyclePartyMember(int direction)

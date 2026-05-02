@@ -50,6 +50,19 @@ public static unsafe class Game
         return 0f;
     }
 
+    // Belt-and-braces: getZoomDelta isn't the only camera path that reads
+    // the wheel — when InputHandler consumes a scroll for cycling/height/
+    // shoulder there was a single notch leaking into camera zoom anyway.
+    // Hook getMouseWheelStatus and return 0 once InputHandler has flagged
+    // the wheel as consumed for the current frame, so any later game-side
+    // reads see zero. InputHandler's own read happens BEFORE it sets the
+    // flag, so it still sees the real value.
+    private static sbyte GetMouseWheelStatusDetour()
+    {
+        if (InputHandler.SuppressNextZoom) return 0;
+        return InputData.getMouseWheelStatus.Original();
+    }
+
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused
     {
         if (FreeCam.Enabled) return;
@@ -220,6 +233,7 @@ public static unsafe class Game
         GameCamera.getCameraMaxMaintainDistance.CreateHook(GetCameraMaxMaintainDistanceDetour);
         GameCamera.updateLookAtHeightOffset.CreateHook(UpdateLookAtHeightOffsetDetour);
         GameCamera.shouldDisplayObject.CreateHook(ShouldDisplayObjectDetour);
+        InputData.getMouseWheelStatus.CreateHook(GetMouseWheelStatusDetour);
 
         // Gross workaround for fixing legacy control's maintain distance
         /*var address = DalamudApi.SigScanner.ScanModule(""); // F3 0F 5D F2 48 85 D2

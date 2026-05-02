@@ -262,8 +262,11 @@ public static class ClickTranslator
         // Drive the MouseBothClick override off the same gates that would
         // allow translation to fire — only force-off when the user is
         // actually in a state where LMB+RMB would otherwise auto-walk them
-        // out from under their click.
-        bool active = IsGameForeground() && IsWeaponDrawn();
+        // out from under their click. IsLoggedIn keeps us dormant on the
+        // title / character-select / login screens.
+        bool loggedIn = false;
+        try { loggedIn = DalamudApi.ClientState.IsLoggedIn; } catch { }
+        bool active = loggedIn && IsGameForeground() && IsWeaponDrawn();
         SetBothClickOverride(active);
 
         bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;

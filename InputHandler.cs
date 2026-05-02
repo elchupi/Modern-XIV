@@ -104,6 +104,7 @@ public static class InputHandler
             {
                 // PLAIN scroll → cycle hostile NPC target
                 TargetCycle.CycleEnemy(dir);
+                SuppressNextZoom = true;
                 return;
             }
 
@@ -111,6 +112,7 @@ public static class InputHandler
             {
                 // SHIFT+scroll → cycle party member target
                 TargetCycle.CyclePartyMember(dir);
+                SuppressNextZoom = true;
                 return;
             }
 

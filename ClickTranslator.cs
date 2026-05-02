@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using FFXIVClientStructs.FFXIV.Client.Game;
-using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 
 namespace noWickyXIV;
 
@@ -10,9 +8,9 @@ namespace noWickyXIV;
 //
 // 1) LMB → Shift+<n>  (RMB acts as virtual Ctrl)
 //      LMB              → Shift+2
-//      Shift+LMB        → Shift+1   (user already holds Shift; just send 1)
-//      Ctrl +LMB        → Shift+3
-//      RMB  +LMB        → Shift+3   (RMB-as-Ctrl rule)
+//      Shift+LMB        → Shift+3
+//      Ctrl +LMB        → Shift+1
+//      RMB  +LMB        → Shift+1   (RMB-as-Ctrl rule)
 //
 // 2) Physical 1/2/3 keypress + RMB via WH_KEYBOARD_LL hook:
 //      RMB + 1          → Hotbar 3 Slot 1 (≡ Ctrl+1)
@@ -28,7 +26,40 @@ public static class ClickTranslator
     [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
     [DllImport("user32.dll")] private static extern bool   UnhookWindowsHookEx(IntPtr hhk);
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint   GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
     [DllImport("kernel32.dll", CharSet = CharSet.Auto)] private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+    // Cache our own PID once — the plugin lives in-process with FFXIV, so a
+    // foreground window owned by the same PID means FFXIV has focus.
+    private static readonly uint _selfPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+
+    private static bool IsGameForeground()
+    {
+        try
+        {
+            IntPtr fg = GetForegroundWindow();
+            if (fg == IntPtr.Zero) return false;
+            GetWindowThreadProcessId(fg, out uint pid);
+            return pid == _selfPid;
+        }
+        catch { return false; }
+    }
+
+    // Translation only fires when the player has their weapon drawn — out of
+    // combat stance, LMB should behave normally so the player can interact
+    // with NPCs / nodes / UI. StatusFlags.WeaponOut is the engine-side bit
+    // that tracks weapon-drawn vs sheathed.
+    private static bool IsWeaponDrawn()
+    {
+        try
+        {
+            var p = DalamudApi.ObjectTable.LocalPlayer;
+            if (p == null) return false;
+            return (p.StatusFlags & Dalamud.Game.ClientState.Objects.Enums.StatusFlags.WeaponOut) != 0;
+        }
+        catch { return false; }
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT { public uint type; public InputUnion u; }
@@ -92,50 +123,65 @@ public static class ClickTranslator
 
     private static int _fireDiagCount;
 
-    // Fire a hotbar slot via action-direct (RaptureHotbarModule + ActionManager).
-    // No empty-slot bail: passes the (possibly 0/0) command through to UseAction
-    // so the caller can see in logs whether the slot is unset vs whether the
-    // call path is broken.
-    private static unsafe bool FireHotbarSlot(int hotbarIdx, int slotIdx)
+    // Send a Shift+<vk> chord via SendInput. Routes through the OS input stack
+    // so FFXIV's keybind handler sees it like a physical keypress.
+    //
+    // FFXIV polls GetAsyncKeyState for modifier state on its own frame cycle,
+    // not via WM message order. If we send Shift-down + 2-down + 2-up + Shift-up
+    // in one batch, the entire chord completes in microseconds and by the time
+    // FFXIV processes the "2" message its async-state for Shift already reads
+    // FALSE. Result: game sees plain "2" instead of Shift+2 (other apps render
+    // "@" because they use message-order, which is why this looked OK there).
+    //
+    // Fix: hold each transition across enough wall time for FFXIV to poll at
+    // least once between them. Done on a worker thread so we don't block
+    // Framework.Update; ordering is preserved per-task.
+    //
+    // physicalShift = whether the user is currently holding Shift physically.
+    // If they are, we just tap the digit (game already sees Shift held).
+    private const int CHORD_HOLD_MS = 25; // ~1.5 game frames at 60fps
+
+    private static void SendShiftDigit(int digitVk, bool physicalShift)
+        => SendModifierDigit(VK_SHIFT, digitVk, physicalShift);
+
+    private static void SendCtrlDigit(int digitVk, bool physicalCtrl)
+        => SendModifierDigit(VK_CONTROL, digitVk, physicalCtrl);
+
+    private static void SendModifierDigit(int modifierVk, int digitVk, bool physicalModifier)
     {
-        try
+        if (_fireDiagCount < 8)
         {
-            var rh = RaptureHotbarModule.Instance();
-            if (rh == null)
-            {
-                if (_fireDiagCount < 5) { _fireDiagCount++;
-                    try { DalamudApi.PluginLog.Information($"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): RaptureHotbarModule.Instance() returned null"); } catch { } }
-                return false;
-            }
-            var slot = rh->GetSlotById((uint)hotbarIdx, (uint)slotIdx);
-            if (slot == null)
-            {
-                if (_fireDiagCount < 5) { _fireDiagCount++;
-                    try { DalamudApi.PluginLog.Information($"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): GetSlotById returned null"); } catch { } }
-                return false;
-            }
-            // CommandType is HotbarSlotType (slot-side enum); UseAction wants
-            // ActionType (action-system enum). They are NOT the same numeric
-            // mapping. Translate via the static helper FFXIVClientStructs ships.
-            var actionType = slot->GetActionTypeForSlotType(slot->CommandType);
-            uint cmdId = slot->CommandId;
-
-            if (_fireDiagCount < 5)
-            {
-                _fireDiagCount++;
-                try { DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): SlotType={(int)slot->CommandType} ActionType={(int)actionType} CommandId={cmdId}");
-                } catch { }
-            }
-
-            ActionManager.Instance()->UseAction(actionType, cmdId);
-            return true;
+            _fireDiagCount++;
+            try { DalamudApi.PluginLog.Information(
+                $"[noWickyXIV] SendModifierDigit(mod=0x{modifierVk:X2}, vk=0x{digitVk:X2}, physical={physicalModifier})");
+            } catch { }
         }
-        catch (Exception ex)
+
+        System.Threading.Tasks.Task.Run(() =>
         {
-            try { DalamudApi.PluginLog.Warning($"[noWickyXIV] FireHotbarSlot({hotbarIdx},{slotIdx}) threw: {ex.Message}"); } catch { }
-            return false;
-        }
+            try
+            {
+                var single = new INPUT[1];
+                if (!physicalModifier)
+                {
+                    single[0] = MakeKey(modifierVk, false);
+                    SendInput(1, single, Marshal.SizeOf<INPUT>());
+                    System.Threading.Thread.Sleep(CHORD_HOLD_MS);
+                }
+                single[0] = MakeKey(digitVk, false);
+                SendInput(1, single, Marshal.SizeOf<INPUT>());
+                System.Threading.Thread.Sleep(CHORD_HOLD_MS);
+                single[0] = MakeKey(digitVk, true);
+                SendInput(1, single, Marshal.SizeOf<INPUT>());
+                if (!physicalModifier)
+                {
+                    System.Threading.Thread.Sleep(CHORD_HOLD_MS);
+                    single[0] = MakeKey(modifierVk, true);
+                    SendInput(1, single, Marshal.SizeOf<INPUT>());
+                }
+            }
+            catch { /* worker thread; swallow */ }
+        });
     }
 
     private static bool _lmbPrev;
@@ -189,22 +235,32 @@ public static class ClickTranslator
         _lmbPrev = lmb;
         if (!risingEdge) return;
 
+        // Don't synthesize keyboard input unless FFXIV is the foreground
+        // window — SendInput goes to whichever app has focus, so without this
+        // gate clicks in other apps would type "@" (Shift+2) etc.
+        if (!IsGameForeground()) return;
+
+        // Only translate while the player has their weapon drawn. Out of
+        // combat stance, LMB should behave like a normal click (UI, target,
+        // etc). Bail out — no translation, no synthetic keys.
+        if (!IsWeaponDrawn()) return;
+
         bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
         bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
         // RMB is a virtual Ctrl modifier (per user spec).
         bool ctrlLike = kbCtrl || rmb;
 
-        // All LMB outputs are Shift+<n> = Hotbar 2 slot N.
-        //   plain LMB   → Hotbar 2 Slot 2 (Shift+2)
-        //   Shift+LMB   → Hotbar 2 Slot 1 (Shift+1)
-        //   Ctrl/RMB+LMB → Hotbar 2 Slot 3 (Shift+3)
-        int slotIdx;
-        if      (kbShift)  slotIdx = 0;  // Slot 1
-        else if (ctrlLike) slotIdx = 2;  // Slot 3
-        else               slotIdx = 1;  // Slot 2
+        // All LMB outputs are Shift+<digit>:
+        //   plain LMB    → Shift+2
+        //   Shift+LMB    → Shift+3 (user already holds Shift; just send 3)
+        //   Ctrl/RMB+LMB → Shift+1
+        int digitVk;
+        if      (kbShift)  digitVk = VK_3;
+        else if (ctrlLike) digitVk = VK_1;
+        else               digitVk = VK_2;
 
-        FireHotbarSlot(HOTBAR_SHIFT, slotIdx);
+        SendShiftDigit(digitVk, kbShift);
     }
 
     // ---- Low-level keyboard hook: physical "2" + forward/back → transform ----
@@ -233,12 +289,15 @@ public static class ClickTranslator
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
         bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
 
-        // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → fire Hotbar 3 slot --
-        if (rmb)
+        // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → Ctrl+<n>.
+        // Gate on FFXIV-foreground + weapon-drawn so the chord doesn't leak
+        // into other apps and doesn't trigger out of combat stance (where
+        // plain hotbar slots are usually what the player wants).
+        if (rmb && IsGameForeground() && IsWeaponDrawn())
         {
-            int slotIdx = isOne ? 0 : (isTwo ? 1 : 2);
-            FireHotbarSlot(HOTBAR_CTRL, slotIdx);
-            return new IntPtr(1); // suppress original
+            int digitVk = isOne ? VK_1 : (isTwo ? VK_2 : VK_3);
+            SendCtrlDigit(digitVk, kbCtrl);
+            return new IntPtr(1); // suppress original digit
         }
 
         // (forward/back + 2 rule removed — redundant with RMB-as-Ctrl above.)

@@ -33,6 +33,16 @@ public static class InputHandler
         UpdateCrosshairHotkey();
         UpdateShoulderSwapHotkey();
         UpdatePresetSlotHotkeys();
+        UpdateCursorReleaseHotkey();
+    }
+
+    // ---- F7 (configurable): toggle cursor between mouselook + UI mode ----
+    private static void UpdateCursorReleaseHotkey()
+    {
+        int vk = noWickyXIV.Config.CursorReleaseHotkey;
+        if (vk == 0) return;
+        if (EdgePressed(vk))
+            CameraDynamics.ToggleCursorRelease();
     }
 
     // ---- Ctrl + scroll = height nudge; Alt + scroll = shoulder nudge ----

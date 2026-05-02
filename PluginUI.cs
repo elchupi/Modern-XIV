@@ -408,6 +408,10 @@ public static class PluginUI
         c.HeightOffsetStep = 0.1f;   c.GlobalHeightOffset = 0f;
         c.MouseSensitivityMul = 1f; c.GamepadSensitivityMul = 1f;
         c.InvertMouseY = false;     c.InvertGamepadY = false;
+        c.EnableMouseLookAlways = false;
+        c.MouseLookSensitivity = 0.005f; c.MouseLookInvertY = false;
+        c.MouseLookCenterCursor = true;
+        c.CursorReleaseHotkey = 0x76; // F7
         c.Save();
     }
 
@@ -515,10 +519,22 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
+        // Section: Always-on Mouselook (FPS-style camera lock)
+        if (DynamicsSectionMatches("Mouselook") && ImGuiEx.BeginGroupBox("Always-on Mouselook (FPS-style)"))
+        {
+            ConfigCheckbox("Enable##Mouselook", ref noWickyXIV.Config.EnableMouseLookAlways);
+            ImGui.TextDisabled("Mouse drives camera continuously. Hotkey (default F7) frees the cursor for UI.");
+            ConfigSliderFloat("Sensitivity (rad/px)##Mouselook", ref noWickyXIV.Config.MouseLookSensitivity, 0.0005f, 0.02f, 0.005f, "%.4f");
+            ConfigCheckbox("Invert Y##Mouselook", ref noWickyXIV.Config.MouseLookInvertY);
+            ConfigCheckbox("Re-center cursor each frame##Mouselook", ref noWickyXIV.Config.MouseLookCenterCursor);
+            ImGuiEx.EndGroupBox();
+        }
+
         // Section: Hotkeys (Phase B)
         if (DynamicsSectionMatches("Hotkey") && ImGuiEx.BeginGroupBox("Hotkeys"))
         {
             HotkeyRow("Settings panel", ref noWickyXIV.Config.SettingsHotkey,    defaultVk: 0x75 /* F6 */);
+            HotkeyRow("Cursor toggle",  ref noWickyXIV.Config.CursorReleaseHotkey, defaultVk: 0x76 /* F7 */);
             HotkeyRow("Crosshair",      ref noWickyXIV.Config.CrosshairHotkey,   defaultVk: 0x56 /* V */);
             HotkeyRow("Shoulder swap",  ref noWickyXIV.Config.ShoulderSwapHotkey, defaultVk: 0);
             ConfigCheckbox("Enable Ctrl+1..9 preset-slot hotkeys", ref noWickyXIV.Config.PresetHotkeysEnabled);

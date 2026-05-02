@@ -62,6 +62,27 @@ public static unsafe class CameraDynamics
     private static float _sensLastVrot;
     private static bool  _sensInit;
 
+    // --- Always-on mouselook state (FPS-style camera lock) ---
+    private static bool    _cursorReleased; // true = cursor free for UI; false = mouse drives camera
+    private static bool    _mouseLookInit;
+    private static Vector2 _mouseLookPrevPos;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
+    /// <summary>Toggle by F7 (or whatever the user binds via Configuration.CursorReleaseHotkey).</summary>
+    public static void ToggleCursorRelease()
+    {
+        _cursorReleased = !_cursorReleased;
+        // Re-init delta tracking on toggle so we don't apply a phantom delta
+        // accumulated during the released period.
+        _mouseLookInit = false;
+        try { DalamudApi.PluginLog.Debug($"[noWickyXIV] Cursor release toggled -> {(_cursorReleased ? "RELEASED (UI mode)" : "GRABBED (mouselook)")}"); } catch { }
+    }
+
+    public static bool IsMouseLookActive
+        => noWickyXIV.Config.EnableMouseLookAlways && !_cursorReleased;
+
     private static bool _instantModeNoteLogged;
 
     public static Vector3 GetPositionFloatOffset() => _floatOffset;
@@ -92,6 +113,10 @@ public static unsafe class CameraDynamics
         // the corrected H/V rotation and don't get inadvertently scaled by
         // the next-frame delta-replay.
         UpdateSensitivity(cam, tps);
+
+        // Mouselook BEFORE Swivel so its yaw write is the final word the
+        // user feels, but after Sensitivity so it operates on un-scaled deltas.
+        UpdateMouseLook(cam, tps);
 
         UpdateRollTilt(cam, tps, dt);
         UpdatePitchTilt(cam, tps, dt);
@@ -155,6 +180,87 @@ public static unsafe class CameraDynamics
 
         _sensLastHrot = newH;
         _sensLastVrot = newV;
+    }
+
+    // ---- Always-on mouselook (FPS-style camera lock) ----
+    // When enabled and cursor is "grabbed" (default; F7 toggles to release):
+    //   - Read mouse delta vs our tracked previous position
+    //   - Apply to currentHRotation (yaw) + currentVRotation (pitch)
+    //   - Recenter cursor via Win32 SetCursorPos so the cursor never reaches
+    //     a screen edge. We track the recentered position internally so the
+    //     next frame's delta is user-input only (not our own recenter move).
+    //
+    // Bypassed while RMB is held — let FFXIV's own mouselook take over so
+    // we don't double-rotate. Bypassed when an ImGui window has captured
+    // the mouse so the user can still click panels.
+    private static void UpdateMouseLook(GameCamera* cam, bool tps)
+    {
+        if (!noWickyXIV.Config.EnableMouseLookAlways || !tps || _cursorReleased)
+        {
+            _mouseLookInit = false;
+            return;
+        }
+
+        ImGuiIOPtr io;
+        try { io = ImGui.GetIO(); } catch { return; }
+
+        // Don't fight the game's own RMB-held mouselook
+        bool rmbHeld;
+        try { rmbHeld = io.MouseDown[1]; } catch { rmbHeld = false; }
+        if (rmbHeld) { _mouseLookInit = false; return; }
+
+        // Don't fight ImGui — if a panel captured the mouse, leave it alone.
+        bool wantCaptureMouse;
+        try { wantCaptureMouse = io.WantCaptureMouse; } catch { wantCaptureMouse = false; }
+        if (wantCaptureMouse) { _mouseLookInit = false; return; }
+
+        Vector2 curPos;
+        try { curPos = io.MousePos; } catch { return; }
+
+        if (!_mouseLookInit)
+        {
+            _mouseLookPrevPos = curPos;
+            _mouseLookInit = true;
+        }
+        else
+        {
+            var delta = curPos - _mouseLookPrevPos;
+            if (MathF.Abs(delta.X) > 0.01f || MathF.Abs(delta.Y) > 0.01f)
+            {
+                float sens = MathF.Max(0.0001f, noWickyXIV.Config.MouseLookSensitivity);
+                float ySign = noWickyXIV.Config.MouseLookInvertY ? +1f : -1f;
+
+                // FFXIV: positive currentVRotation = looking up. Mouse Y up
+                // = negative delta. So default mapping: mouse-up → look-up.
+                float newH = cam->currentHRotation + delta.X * sens;
+                while (newH >  MathF.PI) newH -= 2f * MathF.PI;
+                while (newH < -MathF.PI) newH += 2f * MathF.PI;
+
+                float newV = cam->currentVRotation + delta.Y * sens * ySign;
+                if (newV < cam->minVRotation) newV = cam->minVRotation;
+                if (newV > cam->maxVRotation) newV = cam->maxVRotation;
+
+                cam->currentHRotation = newH;
+                cam->currentVRotation = newV;
+            }
+            _mouseLookPrevPos = curPos;
+        }
+
+        // Recenter cursor for next-frame delta tracking. Sync our tracked
+        // prev-pos to the new center so the next read sees pure user delta
+        // (not the recenter move).
+        if (noWickyXIV.Config.MouseLookCenterCursor)
+        {
+            try
+            {
+                var vp = ImGui.GetMainViewport();
+                var center = new Vector2(vp.Pos.X + vp.Size.X * 0.5f,
+                                         vp.Pos.Y + vp.Size.Y * 0.5f);
+                if (SetCursorPos((int)center.X, (int)center.Y))
+                    _mouseLookPrevPos = center;
+            }
+            catch { /* defensive */ }
+        }
     }
 
     // ---- SwivelOnMove: auto-center camera behind player after delay ----

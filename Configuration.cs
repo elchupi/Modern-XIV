@@ -148,6 +148,14 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  InvertMouseY          = false;
     public bool  InvertGamepadY        = false;
 
+    // ---- Combat zoom (auto-pull-back during fights) ----
+    // When enabled, currentZoom lerps toward CombatZoomDistance while the
+    // ConditionFlag.InCombat is set, then back to the captured baseline
+    // (the zoom you had right before combat started) when combat ends.
+    public bool  EnableCombatZoom         = false;
+    public float CombatZoomDistance       = 12f;   // target distance during combat
+    public float CombatZoomTransitionSpeed = 4f;   // exp-lerp rate; bigger = snappier
+
     // ---- Always-on mouselook (Phase F: FPS-style camera lock) ----
     // When enabled, the mouse drives camera rotation continuously (as if RMB
     // were always held). The "cursor toggle" hotkey (default F7) temporarily

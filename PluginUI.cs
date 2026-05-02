@@ -399,6 +399,8 @@ public static class PluginUI
         c.SwivelDelay = 0.15f;       c.SwivelSpeed = 240f;        c.SwivelMoveThreshold = 0.05f;
         c.EnableAdsOnRmb = false;
         c.AdsZoomFactor = 1.5f;      c.AdsTransitionSpeed = 8f;
+        c.EnableCombatZoom = false;
+        c.CombatZoomDistance = 12f;  c.CombatZoomTransitionSpeed = 4f;
         c.EnableAutoShoulderSwap = false;
         c.ShoulderLerpDuration = 0.35f;  c.ShoulderSwapSafetyMargin = 0.4f; c.ShoulderSwapCheckHz = 5f;
         c.EnableCrosshair = false;
@@ -498,6 +500,16 @@ public static class PluginUI
             ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
             ConfigSliderFloat("Color B##Crosshair", ref noWickyXIV.Config.CrosshairColorB, 0f, 1f, 1f);
             ConfigSliderFloat("Alpha##Crosshair",   ref noWickyXIV.Config.CrosshairColorA, 0f, 1f, 0.85f);
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Combat Zoom
+        if (DynamicsSectionMatches("Combat") && ImGuiEx.BeginGroupBox("Combat Zoom (auto-pull-back in combat)"))
+        {
+            ConfigCheckbox("Enable##CombatZoom", ref noWickyXIV.Config.EnableCombatZoom);
+            ConfigSliderFloat("Combat distance##CombatZoom",     ref noWickyXIV.Config.CombatZoomDistance,        1.5f, 40f, 12f, "%.1f");
+            ConfigSliderFloat("Transition speed##CombatZoom",    ref noWickyXIV.Config.CombatZoomTransitionSpeed, 0.5f, 20f, 4f);
+            ImGui.TextDisabled("Captures baseline zoom on combat enter; restores on exit.");
             ImGuiEx.EndGroupBox();
         }
 

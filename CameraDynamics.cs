@@ -54,6 +54,11 @@ public static unsafe class CameraDynamics
     private static float _adsBaseZoom;
     private static bool  _adsActive;
 
+    // --- Combat zoom state ---
+    private static float _combatZoomBase;      // zoom captured on combat enter
+    private static bool  _combatZoomActive;    // currently lerping to combat zoom
+    private static bool  _combatZoomWasInCombat; // last-frame condition for edge detect
+
     // --- Auto-shoulder swap state ---
     private static float _shoulderStart;     // SideOffset value at lerp start
     private static float _shoulderTarget;    // SideOffset value at lerp end (= -start)
@@ -165,6 +170,7 @@ public static unsafe class CameraDynamics
         UpdatePitchTilt(cam, tps, dt);
         UpdatePositionFloat(cam, dt);
         UpdateAds(cam, tps, dt);
+        UpdateCombatZoom(cam, tps, dt);
         UpdateAutoShoulderSwap(cam, tps, dt);
         UpdateSwivelOnMove(cam, tps, dt);
         UpdateInstantModeNote();
@@ -504,6 +510,54 @@ public static unsafe class CameraDynamics
                 MathF.Abs(cam->currentZoom - _adsBaseZoom) < 0.005f)
             {
                 _adsActive = false;
+            }
+        }
+    }
+
+    // ---- Combat zoom: auto-pull-back when in combat ----
+    // Watches ConditionFlag.InCombat. On rising edge, capture baseline zoom
+    // and lerp toward CombatZoomDistance. On falling edge, lerp back to
+    // baseline. Bypassed while ADS is active (RMB held) so ADS owns zoom.
+    private static void UpdateCombatZoom(GameCamera* cam, bool tps, float dt)
+    {
+        if (!noWickyXIV.Config.EnableCombatZoom || !tps || _adsActive)
+        {
+            // Reset edge state so a re-enable doesn't capture a wrong baseline
+            // mid-combat — first frame after re-enable will re-capture.
+            _combatZoomActive = false;
+            _combatZoomWasInCombat = false;
+            return;
+        }
+
+        bool inCombat;
+        try { inCombat = DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]; }
+        catch { return; }
+
+        // Rising edge: combat just started → capture baseline
+        if (inCombat && !_combatZoomWasInCombat)
+        {
+            _combatZoomBase = cam->currentZoom;
+            _combatZoomActive = true;
+        }
+        _combatZoomWasInCombat = inCombat;
+
+        if (!_combatZoomActive) return;
+
+        float k = 1f - MathF.Exp(-MathF.Max(0.1f, noWickyXIV.Config.CombatZoomTransitionSpeed) * dt);
+
+        if (inCombat)
+        {
+            float target = MathF.Max(cam->minZoom,
+                           MathF.Min(cam->maxZoom, noWickyXIV.Config.CombatZoomDistance));
+            cam->currentZoom = cam->currentZoom + (target - cam->currentZoom) * k;
+        }
+        else
+        {
+            // Out of combat — lerp back to baseline
+            cam->currentZoom = cam->currentZoom + (_combatZoomBase - cam->currentZoom) * k;
+            if (MathF.Abs(cam->currentZoom - _combatZoomBase) < 0.01f)
+            {
+                _combatZoomActive = false;
             }
         }
     }

@@ -82,8 +82,14 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float RollTiltOnRate      = 2.47f;
     public float RollTiltOffRate     = 1.0f;
 
-    public bool  EnablePitchTilt     = true;
-    public float PitchTiltMaxOffset  = 1.24f;
+    // PitchTilt: was defaulted to true with Wicked's PitchTiltMaxOffset=1.24,
+    // but FFXIV's pitch convention is INVERTED from Unity (positive
+    // currentVRotation = looking up; Wicked treats negative as up). At default
+    // forward gaze that math produces a constant ~0.6m upward look-at offset
+    // = "camera always looks up" bug. Default off until the formula in
+    // CameraDynamics.UpdatePitchTilt is reworked for FFXIV's sign convention.
+    public bool  EnablePitchTilt     = false;
+    public float PitchTiltMaxOffset  = 0.4f;   // smaller default for FFXIV's tighter pitch range
     public float PitchTiltSmoothRate = 3.19f;
 
     // SwivelOnMove: auto-center the camera behind the player after a

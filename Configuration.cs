@@ -148,6 +148,15 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  InvertMouseY          = false;
     public bool  InvertGamepadY        = false;
 
+    // ---- Third-person click translator ----
+    // Routes LMB to hotbar-style numeric keys with modifier-driven slot selection.
+    //   LMB                → 2
+    //   Shift + LMB        → 1
+    //   Ctrl  + LMB        → 3
+    //   S (back) + LMB     → Shift+1
+    //   W (fwd)  + LMB     → Shift+3   (W wins if user holds W+Shift+LMB)
+    public bool EnableThirdPersonClickTranslation = false;
+
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the
     // ConditionFlag.InCombat is set, then back to the captured baseline

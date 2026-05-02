@@ -36,6 +36,7 @@ public static class InputHandler
         UpdateShoulderSwapHotkey();
         UpdatePresetSlotHotkeys();
         UpdateCursorReleaseHotkey();
+        ClickTranslator.Update();
     }
 
     // ---- F7 (configurable): toggle cursor between mouselook + UI mode ----

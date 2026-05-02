@@ -401,6 +401,7 @@ public static class PluginUI
         c.AdsZoomFactor = 1.5f;      c.AdsTransitionSpeed = 8f;
         c.EnableCombatZoom = false;
         c.CombatZoomDistance = 12f;  c.CombatZoomTransitionSpeed = 4f;
+        c.EnableThirdPersonClickTranslation = false;
         c.EnableAutoShoulderSwap = false;
         c.ShoulderLerpDuration = 0.35f;  c.ShoulderSwapSafetyMargin = 0.4f; c.ShoulderSwapCheckHz = 5f;
         c.EnableCrosshair = false;
@@ -500,6 +501,20 @@ public static class PluginUI
             ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
             ConfigSliderFloat("Color B##Crosshair", ref noWickyXIV.Config.CrosshairColorB, 0f, 1f, 1f);
             ConfigSliderFloat("Alpha##Crosshair",   ref noWickyXIV.Config.CrosshairColorA, 0f, 1f, 0.85f);
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Third-Person Click Translator
+        if (DynamicsSectionMatches("Click") && ImGuiEx.BeginGroupBox("Third-person LMB → hotbar translator"))
+        {
+            ConfigCheckbox("Enable##ClickTranslate", ref noWickyXIV.Config.EnableThirdPersonClickTranslation);
+            ImGui.TextDisabled(
+                "Mapping (priority order):\n" +
+                "  forward + LMB  → Shift+3   (W or stick-up)\n" +
+                "  back    + LMB  → Shift+1   (S or stick-down)\n" +
+                "  Shift   + LMB  → 1\n" +
+                "  Ctrl    + LMB  → 3\n" +
+                "  LMB            → 2");
             ImGuiEx.EndGroupBox();
         }
 

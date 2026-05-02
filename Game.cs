@@ -69,6 +69,13 @@ public static unsafe class Game
             lookAtPosition->Z += off.Z;
         }
 
+        // RollTilt — same story. cam->tilt writes from Framework.Update get
+        // overwritten before render. Apply inline here so the value sticks.
+        // Always write (even when disabled / decaying to 0) so a stale value
+        // can't linger from a previous activation.
+        if (camera != null)
+            camera->tilt = CameraDynamics.GetCurrentRollRadians();
+
         camera->VTable.setCameraLookAt.Original(camera, lookAtPosition, cameraPosition, a4);
     }
 

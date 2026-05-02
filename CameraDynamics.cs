@@ -144,6 +144,11 @@ public static unsafe class CameraDynamics
 
     public static Vector3 GetPositionFloatOffset() => _floatOffset;
 
+    /// <summary>Current roll value in radians, ready to write into cam->tilt.
+    /// Applied from Game.SetCameraLookAtDetour (inline) because writes from
+    /// Framework.Update get clobbered by the game's per-frame camera setup.</summary>
+    public static float GetCurrentRollRadians() => _rollCurrent * (MathF.PI / 180f);
+
     // Returns the SideOffset value Game.GetCameraPositionDetour should apply
     // for this frame. During an auto-swap lerp, this returns the lerped
     // _shoulderDisplay; otherwise the preset's static SideOffset.
@@ -575,6 +580,9 @@ public static unsafe class CameraDynamics
     // with asymmetric on/off rates (snappy onset, gentle recovery).
     private static void UpdateRollTilt(GameCamera* cam, bool tps, float dt)
     {
+        // NOTE: cam->tilt write is in Game.SetCameraLookAtDetour (inline detour
+        // that runs during the game's per-frame camera setup). Writing tilt
+        // from here got overwritten before render. We just compute _rollCurrent.
         if (noWickyXIV.Config.EnableRollTilt && tps)
         {
             float yaw = cam->currentHRotation;
@@ -592,18 +600,13 @@ public static unsafe class CameraDynamics
                 ? noWickyXIV.Config.RollTiltOnRate
                 : noWickyXIV.Config.RollTiltOffRate;
             _rollCurrent = ExpDecay(_rollCurrent, target, rate, dt);
-
-            cam->tilt = _rollCurrent * (MathF.PI / 180f);  // game expects radians
         }
         else
         {
-            // Disabled or out of TPS — decay back to zero so the camera
-            // doesn't sit at whatever roll we'd written last.
+            // Disabled or out of TPS — decay toward zero so re-enabling
+            // doesn't snap from a stale value.
             if (MathF.Abs(_rollCurrent) > 0.001f)
-            {
                 _rollCurrent = ExpDecay(_rollCurrent, 0f, 4f, dt);
-                if (cam != null) cam->tilt = _rollCurrent * (MathF.PI / 180f);
-            }
             else _rollCurrent = 0f;
             _rollSmoothedYawVel = 0f;
             _rollInit = false;

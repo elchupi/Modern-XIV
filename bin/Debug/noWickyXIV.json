@@ -1,0 +1,29 @@
+{
+  "Author": "ebhemmanuel",
+  "Name": "noWickyXIV",
+  "InternalName": "noWickyXIV",
+  "AssemblyVersion": "2.1.1.1",
+  "Description": "Fork of Cammy adding yaw lag, roll tilt, and position float for the third-person camera. Personal use.",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/ebhemmanuel/noWickyXIV",
+  "Tags": [
+    "camera",
+    "tps",
+    "third person",
+    "fov",
+    "zoom",
+    "cammy",
+    "free cam"
+  ],
+  "CategoryTags": [
+    "utility"
+  ],
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "Punchline": "Personal-use camera fork (Cammy + dynamic feel layer)",
+  "Changelog": "Initial fork from Cammy.",
+  "AcceptsFeedback": true
+}

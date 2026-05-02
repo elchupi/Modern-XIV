@@ -3,8 +3,13 @@ obj/
 
 .vs/
 
-bin/
+# Keep Debug DLL + manifest committed so reverts restore working binaries.
+# Personal-use repo; we explicitly WANT prior-build binaries on hand.
+bin/*
+!bin/Debug/
+bin/Debug/*
+!bin/Debug/noWickyXIV.dll
+!bin/Debug/noWickyXIV.json
+!bin/Debug/noWickyXIV.deps.json
 
 Publish/
-bin/
-obj/

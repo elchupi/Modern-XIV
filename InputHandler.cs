@@ -1,6 +1,8 @@
 using System;
+using System.Runtime.InteropServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
+using Hypostasis.Game.Structures;
 
 namespace noWickyXIV;
 
@@ -45,6 +47,24 @@ public static class InputHandler
             CameraDynamics.ToggleCursorRelease();
     }
 
+    // ---- Wheel + modifier readers (game-side, ImGui-independent) ----
+    // ImGui IO.MouseWheel was unreliable from Framework.Update — Dalamud's
+    // ImGui input pump may not have populated it for the current tick. Using
+    // the game's own wheel reader (InputData.GetMouseWheelStatus) and Win32
+    // GetAsyncKeyState for modifiers makes both reads real-time and removes
+    // the ordering dependency entirely.
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+    private static bool KeyHeld(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
+    private static bool ShiftHeld => KeyHeld(0x10) || KeyHeld(0xA0) || KeyHeld(0xA1);
+    private static bool CtrlHeld  => KeyHeld(0x11) || KeyHeld(0xA2) || KeyHeld(0xA3);
+    private static bool AltHeld   => KeyHeld(0x12) || KeyHeld(0xA4) || KeyHeld(0xA5);
+
+    // De-dup wheel ticks: GetMouseWheelStatus may report the same direction
+    // across consecutive frames after a single notch; we want one apply per
+    // event. Track the previous-frame value and only fire on transitions /
+    // first non-zero.
+    private static sbyte _wheelPrev;
+
     // ---- Scroll-wheel modifier matrix ----
     //   plain scroll  → nothing (zoom suppressed in Game.GetZoomDeltaDetour)
     //   Ctrl + scroll → height (GlobalHeightOffset)
@@ -55,20 +75,29 @@ public static class InputHandler
     {
         try
         {
-            var io = ImGui.GetIO();
-            float wheel = io.MouseWheel;
-            if (Math.Abs(wheel) < 0.001f) return;
+            sbyte wheelStatus;
+            try { wheelStatus = InputData.GetMouseWheelStatus(); }
+            catch { return; }
+            // Edge-detect: only fire when wheel transitions from 0 (or sign-flip).
+            sbyte prev = _wheelPrev;
+            _wheelPrev = wheelStatus;
+            if (wheelStatus == 0) return;
+            if (wheelStatus == prev) return; // already fired for this hold
+
+            float wheel = wheelStatus; // -1, 0, +1
+
+            bool shift = ShiftHeld, ctrl = CtrlHeld, alt = AltHeld;
 
             // Shift+Ctrl is reserved for zoom — let the game handle it, we
             // don't apply height/shoulder.
-            if (io.KeyShift && io.KeyCtrl) return;
+            if (shift && ctrl) return;
 
             // Ambiguous combos: skip (Ctrl+Alt, Shift+Alt, etc.)
-            if (io.KeyCtrl && io.KeyAlt) return;
-            if (io.KeyShift && io.KeyAlt) return;
-            if (io.KeyShift) return; // Shift alone reserved (could become a third axis later)
+            if (ctrl && alt) return;
+            if (shift && alt) return;
+            if (shift) return; // Shift alone reserved (could become a third axis later)
 
-            if (io.KeyCtrl)
+            if (ctrl)
             {
                 // HEIGHT — global offset persisted across preset switches
                 float step = noWickyXIV.Config.HeightOffsetStep;
@@ -83,7 +112,7 @@ public static class InputHandler
                 }
                 SuppressNextZoom = true;
             }
-            else if (io.KeyAlt)
+            else if (alt)
             {
                 // SHOULDER — active preset's SideOffset. Reuses HeightOffsetStep
                 // for now (typical 0.1 m steps feel right for shoulder too).

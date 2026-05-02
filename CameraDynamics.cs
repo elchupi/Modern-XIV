@@ -263,10 +263,13 @@ public static unsafe class CameraDynamics
         ImGuiIOPtr io;
         try { io = ImGui.GetIO(); } catch { ShowOsCursor(); return; }
 
-        // Don't fight the game's own RMB-held mouselook
-        bool rmbHeld;
-        rmbHeld = RmbHeldNow;
-        if (rmbHeld) { _mouseLookInit = false; ShowOsCursor(); return; }
+        // Don't fight the game's own RMB-held mouselook — skip OUR drive but
+        // KEEP the cursor hidden. Prior code called ShowOsCursor() here which
+        // produced a brief cursor flash whenever the user pressed RMB during
+        // mouselook mode. We only need to stop our delta application; the
+        // cursor stays hidden because the user is still in mouselook intent.
+        bool rmbHeld = RmbHeldNow;
+        if (rmbHeld) { _mouseLookInit = false; HideOsCursor(); return; }
 
         // Don't fight ImGui — if a panel captured the mouse, leave it alone.
         bool wantCaptureMouse;

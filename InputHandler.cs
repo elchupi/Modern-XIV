@@ -45,10 +45,12 @@ public static class InputHandler
             CameraDynamics.ToggleCursorRelease();
     }
 
-    // ---- Ctrl + scroll = height nudge; Alt + scroll = shoulder nudge ----
-    // Mirrors Wicked's bindings (Ctrl+scroll for HeightOffset). Alt+scroll
-    // drives the active preset's SideOffset (Cammy's "Camera Side Offset").
-    // Both suppress the game's normal zoom-on-scroll for the same frame.
+    // ---- Scroll-wheel modifier matrix ----
+    //   plain scroll  → nothing (zoom suppressed in Game.GetZoomDeltaDetour)
+    //   Ctrl + scroll → height (GlobalHeightOffset)
+    //   Alt  + scroll → shoulder (active preset's SideOffset)
+    //   Shift+Ctrl    → zoom (the ONLY way to zoom; handled by game)
+    //   anything else → ignored
     private static void UpdateScrollHeight()
     {
         try
@@ -57,8 +59,14 @@ public static class InputHandler
             float wheel = io.MouseWheel;
             if (Math.Abs(wheel) < 0.001f) return;
 
-            // Ambiguous combos: skip
+            // Shift+Ctrl is reserved for zoom — let the game handle it, we
+            // don't apply height/shoulder.
+            if (io.KeyShift && io.KeyCtrl) return;
+
+            // Ambiguous combos: skip (Ctrl+Alt, Shift+Alt, etc.)
             if (io.KeyCtrl && io.KeyAlt) return;
+            if (io.KeyShift && io.KeyAlt) return;
+            if (io.KeyShift) return; // Shift alone reserved (could become a third axis later)
 
             if (io.KeyCtrl)
             {

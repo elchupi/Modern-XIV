@@ -34,20 +34,20 @@ public static unsafe class Game
     private static nint forceDisableMovementPtr;
     public static ref int ForceDisableMovement => ref *(int*)forceDisableMovementPtr; // Increments / decrements by 1 to allow multiple things to disable movement at the same time
 
-    // Zoom suppression: when Ctrl or Alt is held, the user is using scroll
-    // for height/shoulder (InputHandler.UpdateScrollHeight); suppress the
-    // game's normal zoom-on-scroll. Reading modifier state HERE (called by
-    // the game when scroll happens) avoids a one-frame race vs the previous
-    // SuppressNextZoom flag pattern that was always too late.
+    // Zoom-on-scroll is GATED: only fires when Shift+Ctrl are held. Anything
+    // else (plain scroll, Ctrl-only, Alt-only, Shift-only, etc.) returns 0 so
+    // the game doesn't zoom. This lets InputHandler own scroll for height/
+    // shoulder/etc. without the game's zoom firing alongside, while still
+    // giving the user an explicit zoom path via Shift+Ctrl+scroll.
     private static float GetZoomDeltaDetour()
     {
         try
         {
             var io = ImGui.GetIO();
-            if (io.KeyCtrl || io.KeyAlt) return 0f;
+            if (io.KeyShift && io.KeyCtrl) return PresetManager.CurrentPreset.ZoomDelta;
         }
-        catch { /* if ImGui IO not available, fall through to normal zoom */ }
-        return PresetManager.CurrentPreset.ZoomDelta;
+        catch { /* if ImGui IO not available, fall through to suppression */ }
+        return 0f;
     }
 
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused

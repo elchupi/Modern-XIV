@@ -6,18 +6,21 @@ namespace noWickyXIV;
 
 // Two layered input translators for "third-person mode":
 //
-// 1) LMB → numeric hotbar key (Shift/Ctrl modifiers only)
-//      LMB         → 2
-//      Shift+LMB   → 1
-//      Ctrl +LMB   → 3
-//    Modifier reconcile: SendKey temporarily releases user-held Shift/Ctrl
-//    so Shift+LMB→1 actually arrives as plain "1" not Shift+1.
+// 1) LMB → Shift+<n>  (RMB acts as virtual Ctrl)
+//      LMB              → Shift+2
+//      Shift+LMB        → Shift+1   (user already holds Shift; just send 1)
+//      Ctrl +LMB        → Shift+3
+//      RMB  +LMB        → Shift+3   (RMB-as-Ctrl rule)
 //
-// 2) Physical "2" keypress + forward/back → Shift+1 / Shift+3
-//    Forward/back source = W/S keyboard OR gamepad LeftStick Y axis.
-//    Implemented via WH_KEYBOARD_LL low-level hook because we need to
-//    SUPPRESS the original "2" keypress, not just send extra keys on top.
-//    Synthetic-event recursion is avoided via a dwExtraInfo sentinel.
+// 2) Physical 1/2/3 keypress + modifiers via WH_KEYBOARD_LL hook:
+//      RMB + 1          → Ctrl+1
+//      RMB + 2          → Ctrl+2
+//      RMB + 3          → Ctrl+3
+//      forward + 2      → Shift+3   (W or LeftStick.Y > +0.5)
+//      back    + 2      → Shift+1   (S or LeftStick.Y < -0.5)
+//    Priority: RMB > forward > back. Plain 1/3 keypresses (no modifier)
+//    pass through unchanged. Synthetic-event recursion avoided via a
+//    dwExtraInfo sentinel.
 public static class ClickTranslator
 {
     // ---- Win32 imports + structs ----
@@ -62,6 +65,7 @@ public static class ClickTranslator
     private const int  WM_SYSKEYDOWN    = 0x0104;
 
     private const int VK_LBUTTON = 0x01;
+    private const int VK_RBUTTON = 0x02;
     private const int VK_SHIFT   = 0x10;
     private const int VK_CONTROL = 0x11;
     private const int VK_W       = 0x57;
@@ -131,14 +135,22 @@ public static class ClickTranslator
 
         bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+        // RMB is a virtual Ctrl modifier (per user spec).
+        bool ctrlLike = kbCtrl || rmb;
 
+        // Outputs are all Shift+<n>. So we synthesize Shift around the key
+        // unless the user is already physically holding Shift (in which case
+        // "Shift+1" naturally arrives because we just send 1 with their Shift
+        // still down).
         int  vk;
-        bool wantShift, wantCtrl;
-        if      (kbShift) { vk = VK_1; wantShift = false; wantCtrl = false; }
-        else if (kbCtrl)  { vk = VK_3; wantShift = false; wantCtrl = false; }
-        else              { vk = VK_2; wantShift = false; wantCtrl = false; }
+        if      (kbShift)  vk = VK_1;
+        else if (ctrlLike) vk = VK_3;
+        else               vk = VK_2;
 
-        SendKey(vk, wantShift, wantCtrl, kbShift, kbCtrl);
+        // wantShift = true: ensure Shift is down around the key. If user
+        // already holds Shift physically, SendKey skips the redundant press.
+        SendKey(vk, wantShift: true, wantCtrl: false, kbShift, kbCtrl);
     }
 
     // ---- Low-level keyboard hook: physical "2" + forward/back → transform ----
@@ -156,9 +168,28 @@ public static class ClickTranslator
 
         // Don't transform our own synthetic events
         if (kb.dwExtraInfo == SYNTHETIC_TAG) goto pass;
-        if (kb.vkCode != VK_2) goto pass;
 
-        // Decide forward/back from EITHER keyboard W/S OR gamepad stick.
+        // Only intercept number row 1/2/3
+        bool isOne   = kb.vkCode == VK_1;
+        bool isTwo   = kb.vkCode == VK_2;
+        bool isThree = kb.vkCode == VK_3;
+        if (!isOne && !isTwo && !isThree) goto pass;
+
+        bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
+        bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+
+        // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → Ctrl+<n> --
+        if (rmb)
+        {
+            int outVk = isOne ? VK_1 : (isTwo ? VK_2 : VK_3);
+            SendKey(outVk, wantShift: false, wantCtrl: true, kbShift, kbCtrl);
+            return new IntPtr(1); // suppress original
+        }
+
+        // -- forward/back rule: applies ONLY to the "2" key --
+        if (!isTwo) goto pass;
+
         bool kbW = (GetAsyncKeyState(VK_W) & 0x8000) != 0;
         bool kbS = (GetAsyncKeyState(VK_S) & 0x8000) != 0;
 
@@ -178,12 +209,9 @@ public static class ClickTranslator
 
         if (!forward && !back) goto pass;
 
-        // Suppress the original 2, then synthesize Shift+1 (back) or Shift+3 (forward)
-        bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
-        bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        int  outVk   = forward ? VK_3 : VK_1;
-        SendKey(outVk, wantShift: true, wantCtrl: false, kbShift, kbCtrl);
-        return new IntPtr(1); // non-zero = swallow the original event
+        int  fwdVk  = forward ? VK_3 : VK_1;
+        SendKey(fwdVk, wantShift: true, wantCtrl: false, kbShift, kbCtrl);
+        return new IntPtr(1);
 
     pass:
         return CallNextHookEx(_hookHandle, nCode, wParam, lParam);

@@ -14,15 +14,12 @@ namespace noWickyXIV;
 //      Ctrl +LMB        → Shift+3
 //      RMB  +LMB        → Shift+3   (RMB-as-Ctrl rule)
 //
-// 2) Physical 1/2/3 keypress + modifiers via WH_KEYBOARD_LL hook:
-//      RMB + 1          → Ctrl+1
-//      RMB + 2          → Ctrl+2
-//      RMB + 3          → Ctrl+3
-//      forward + 2      → Shift+3   (W or LeftStick.Y > +0.5)
-//      back    + 2      → Shift+1   (S or LeftStick.Y < -0.5)
-//    Priority: RMB > forward > back. Plain 1/3 keypresses (no modifier)
-//    pass through unchanged. Synthetic-event recursion avoided via a
-//    dwExtraInfo sentinel.
+// 2) Physical 1/2/3 keypress + RMB via WH_KEYBOARD_LL hook:
+//      RMB + 1          → Hotbar 3 Slot 1 (≡ Ctrl+1)
+//      RMB + 2          → Hotbar 3 Slot 2 (≡ Ctrl+2)
+//      RMB + 3          → Hotbar 3 Slot 3 (≡ Ctrl+3)
+//    Plain 1/2/3 keypresses (no modifier) pass through unchanged.
+//    Synthetic-event recursion avoided via a dwExtraInfo sentinel.
 public static class ClickTranslator
 {
     // ---- Win32 imports + structs ----
@@ -93,20 +90,42 @@ public static class ClickTranslator
     private const int HOTBAR_SHIFT = 1;
     private const int HOTBAR_CTRL  = 2;
 
+    private static int _fireDiagCount;
+
     // Fire a hotbar slot via action-direct (RaptureHotbarModule + ActionManager).
-    // This is the bulletproof path: no keyboard synthesis, no modifier
-    // conflicts. Returns false if the slot is empty or the modules aren't
-    // accessible (caller can fall back to SendInput).
+    // No empty-slot bail: passes the (possibly 0/0) command through to UseAction
+    // so the caller can see in logs whether the slot is unset vs whether the
+    // call path is broken.
     private static unsafe bool FireHotbarSlot(int hotbarIdx, int slotIdx)
     {
         try
         {
             var rh = RaptureHotbarModule.Instance();
-            if (rh == null) return false;
+            if (rh == null)
+            {
+                if (_fireDiagCount < 5) { _fireDiagCount++;
+                    try { DalamudApi.PluginLog.Information($"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): RaptureHotbarModule.Instance() returned null"); } catch { } }
+                return false;
+            }
             var slot = rh->GetSlotById((uint)hotbarIdx, (uint)slotIdx);
-            if (slot == null) return false;
-            if (slot->CommandType == 0 && slot->CommandId == 0) return false;
-            ActionManager.Instance()->UseAction((ActionType)slot->CommandType, slot->CommandId);
+            if (slot == null)
+            {
+                if (_fireDiagCount < 5) { _fireDiagCount++;
+                    try { DalamudApi.PluginLog.Information($"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): GetSlotById returned null"); } catch { } }
+                return false;
+            }
+            byte cmdType = (byte)slot->CommandType;
+            uint cmdId   = slot->CommandId;
+
+            if (_fireDiagCount < 5)
+            {
+                _fireDiagCount++;
+                try { DalamudApi.PluginLog.Information(
+                    $"[noWickyXIV] Fire(h={hotbarIdx},s={slotIdx}): CommandType={cmdType} CommandId={cmdId}");
+                } catch { }
+            }
+
+            ActionManager.Instance()->UseAction((ActionType)cmdType, cmdId);
             return true;
         }
         catch (Exception ex)
@@ -219,32 +238,7 @@ public static class ClickTranslator
             return new IntPtr(1); // suppress original
         }
 
-        // -- forward/back rule: applies ONLY to the "2" key --
-        if (!isTwo) goto pass;
-
-        bool kbW = (GetAsyncKeyState(VK_W) & 0x8000) != 0;
-        bool kbS = (GetAsyncKeyState(VK_S) & 0x8000) != 0;
-
-        float stickY = 0f;
-        try { stickY = DalamudApi.GamepadState.LeftStick.Y; } catch { }
-
-        if (!_stickDiagLogged)
-        {
-            _stickDiagLogged = true;
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] First 2-key transform attempt: kbW={kbW} kbS={kbS} stick.Y={stickY:F3} threshold=±{STICK_THRESHOLD}");
-            } catch { }
-        }
-
-        bool forward = kbW || stickY >  STICK_THRESHOLD;
-        bool back    = kbS || stickY < -STICK_THRESHOLD;
-
-        if (!forward && !back) goto pass;
-
-        // forward → Shift+3 = Hotbar 2 Slot 3; back → Shift+1 = Hotbar 2 Slot 1
-        int fwdSlot = forward ? 2 : 0;
-        FireHotbarSlot(HOTBAR_SHIFT, fwdSlot);
-        return new IntPtr(1);
+        // (forward/back + 2 rule removed — redundant with RMB-as-Ctrl above.)
 
     pass:
         return CallNextHookEx(_hookHandle, nCode, wParam, lParam);

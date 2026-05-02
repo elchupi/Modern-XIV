@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using Dalamud.Game.ClientState.Objects.Enums;
-using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 
 namespace noWickyXIV;
@@ -33,8 +31,11 @@ public static class TargetCycle
             foreach (var obj in DalamudApi.ObjectTable)
             {
                 if (obj == null || !obj.IsValid()) continue;
+                // BattleNpcSubKind enum members vary across Dalamud versions.
+                // Underlying value 5 = "BattleNpcEnemy" — compare numerically
+                // to avoid enum-name drift breaking builds.
                 if (obj is IBattleNpc bn
-                    && bn.BattleNpcKind == BattleNpcSubKind.BattleNpcEnemy
+                    && (byte)bn.BattleNpcKind == 5
                     && bn.IsTargetable
                     && bn.CurrentHp > 0)
                 {

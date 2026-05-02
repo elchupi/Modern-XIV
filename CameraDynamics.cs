@@ -25,6 +25,13 @@ public static unsafe class CameraDynamics
 
     // --- PitchTilt state ---
     private static float _pitchTiltCurrent;
+    // Tracks the offset we LAST WROTE into cam->lookAtHeightOffset, so we
+    // can subtract it before adding the new value. Without this, += each
+    // frame produces a runaway accumulator (field grows unboundedly until
+    // the game's own UpdateLookAtHeightOffset call resets it — which
+    // happens infrequently). The accumulator was the actual cause of the
+    // 'camera stuck looking up' bug + the 'persists after disable' bug.
+    private static float _pitchTiltLastApplied;
 
     // --- PositionFloat state ---
     private static Vector3 _floatOffset = Vector3.Zero;
@@ -390,6 +397,11 @@ public static unsafe class CameraDynamics
     // ---- PitchTilt: ports PlayerCameraPatch.cs:384-398 ----
     // When pitched DOWN (looking down), nudge lookAtHeightOffset UP so
     // the framing widens; identity at full pitch-up.
+    //
+    // CRITICAL: write must SUBTRACT the previous frame's contribution
+    // before adding the new one. Otherwise the += compounds frame-over-
+    // frame because cam->lookAtHeightOffset isn't reset by the game every
+    // frame — only when the game itself invokes UpdateLookAtHeightOffset.
     private static void UpdatePitchTilt(GameCamera* cam, bool tps, float dt)
     {
         if (noWickyXIV.Config.EnablePitchTilt && tps)
@@ -403,12 +415,23 @@ public static unsafe class CameraDynamics
             float targetOffset = noWickyXIV.Config.PitchTiltMaxOffset * (1f - pNorm);
             _pitchTiltCurrent = ExpDecay(_pitchTiltCurrent, targetOffset,
                                          noWickyXIV.Config.PitchTiltSmoothRate, dt);
-            // Additive on top of whatever the preset / native code wrote.
+
+            // Undo previous, apply new — net contribution per frame = current.
+            cam->lookAtHeightOffset -= _pitchTiltLastApplied;
             cam->lookAtHeightOffset += _pitchTiltCurrent;
+            _pitchTiltLastApplied = _pitchTiltCurrent;
         }
-        else if (MathF.Abs(_pitchTiltCurrent) > 0.001f)
+        else
         {
-            _pitchTiltCurrent = ExpDecay(_pitchTiltCurrent, 0f, 4f, dt);
+            // Disabled (or not in TPS): undo any leftover contribution and stop.
+            // This is what guarantees the "camera unsticks" the moment the user
+            // toggles the feature off.
+            if (MathF.Abs(_pitchTiltLastApplied) > 0.0001f)
+            {
+                cam->lookAtHeightOffset -= _pitchTiltLastApplied;
+                _pitchTiltLastApplied = 0f;
+            }
+            _pitchTiltCurrent = 0f;
         }
     }
 
@@ -496,6 +519,10 @@ public static unsafe class CameraDynamics
         _rollSmoothedYawVel = 0f;
         _rollInit = false;
         _pitchTiltCurrent = 0f;
+        // Note: not subtracting _pitchTiltLastApplied here because cam pointer
+        // isn't trusted in the FreeCam-active path; the next UpdatePitchTilt
+        // tick (with FreeCam off) will handle the undo via its else branch.
+        _pitchTiltLastApplied = 0f;
         _floatOffset = Vector3.Zero;
         _floatVelocity = Vector3.Zero;
         _floatInit = false;

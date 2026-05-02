@@ -88,6 +88,15 @@ public static unsafe class CameraDynamics
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern int ShowCursor(bool bShow);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    // Real-time RMB read. ImGui IO MouseDown is only reliable when an ImGui
+    // window is forcing the input pump; from plain Framework.Update it stays
+    // 0 unless a panel is open. Win32 read is OS-level → always live.
+    private const int VK_RBUTTON = 0x02;
+    private static bool RmbHeldNow => (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+
     // Track our own hide state so we don't pump ShowCursor every frame
     // (the Win32 counter keeps state across calls; we manage it idempotently).
     private static bool _osCursorHidden;
@@ -256,7 +265,7 @@ public static unsafe class CameraDynamics
 
         // Don't fight the game's own RMB-held mouselook
         bool rmbHeld;
-        try { rmbHeld = io.MouseDown[1]; } catch { rmbHeld = false; }
+        rmbHeld = RmbHeldNow;
         if (rmbHeld) { _mouseLookInit = false; ShowOsCursor(); return; }
 
         // Don't fight ImGui — if a panel captured the mouse, leave it alone.
@@ -481,8 +490,7 @@ public static unsafe class CameraDynamics
             return;
         }
 
-        bool held;
-        try { held = ImGui.GetIO().MouseDown[1]; } catch { return; }
+        bool held = RmbHeldNow;
 
         float k = 1f - MathF.Exp(-noWickyXIV.Config.AdsTransitionSpeed * dt);
         float factor = MathF.Max(1.01f, noWickyXIV.Config.AdsZoomFactor);

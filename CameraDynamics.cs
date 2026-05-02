@@ -531,14 +531,20 @@ public static unsafe class CameraDynamics
     // baseline. Bypassed while ADS is active (RMB held) so ADS owns zoom.
     private static void UpdateCombatZoom(GameCamera* cam, bool tps, float dt)
     {
-        if (!noWickyXIV.Config.EnableCombatZoom || !tps || _adsActive)
+        // Hard-disabled paths: reset state. Re-enable → next frame re-captures
+        // baseline cleanly.
+        if (!noWickyXIV.Config.EnableCombatZoom || !tps)
         {
-            // Reset edge state so a re-enable doesn't capture a wrong baseline
-            // mid-combat — first frame after re-enable will re-capture.
             _combatZoomActive = false;
             _combatZoomWasInCombat = false;
             return;
         }
+
+        // ADS owns zoom briefly while RMB is held. SUSPEND combat zoom — no
+        // writes — but DO NOT reset edge-detect state. Otherwise a transition
+        // out of combat that happens during ADS gets dropped (rising-edge state
+        // wiped, falling-edge lerp never runs, camera stuck at combat zoom).
+        if (_adsActive) return;
 
         bool inCombat;
         try { inCombat = DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]; }

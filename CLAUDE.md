@@ -142,7 +142,7 @@ But you'll usually be fine reading the source. Files are short. The math in `Cam
 ## Pending work, prioritized
 
 1. **YawLag rewrite** — if user asks. Spring-on-offset, not exp-decay-on-target.
-2. **`IPlayerState` migration** — `IClientState.LocalPlayer` is deprecated as of v14. Low priority (still works); update when Dalamud removes the compat layer.
+2. ~~`IPlayerState` migration~~ — DONE 2026-05-02. `IClientState.LocalPlayer` is GONE in current Dalamud (compat shim removed). Use `DalamudApi.ObjectTable.LocalPlayer` (returns `IPlayerCharacter?`). Both `CameraDynamics.UpdateSwivelOnMove` and `CameraDynamics.UpdatePositionFloat` migrated. If a future Dalamud bump breaks more APIs, search for `DalamudApi.ClientState.*` first — that interface lost the most members.
 
 That's it. Everything else in the project is functional or intentionally inert.
 

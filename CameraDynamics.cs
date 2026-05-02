@@ -161,9 +161,19 @@ public static unsafe class CameraDynamics
             return;
         }
 
-        var lp = DalamudApi.ClientState.LocalPlayer;
-        if (lp == null) return;
-        var pos = new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z);
+        // Defensive (same reasoning as UpdatePositionFloat): LocalPlayer
+        // access can throw during transient client states even when the
+        // wrapper isn't null. No-op for the frame and re-try next.
+        Vector3 pos;
+        float lpRotation;
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) return;
+            pos = new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z);
+            lpRotation = lp.Rotation;
+        }
+        catch { return; }
 
         if (!_swivelInit)
         {
@@ -186,7 +196,7 @@ public static unsafe class CameraDynamics
 
         // Camera yaw to look at player from behind: player.Rotation + π,
         // wrapped to [-π, π] like cam->currentHRotation.
-        float targetYaw = lp.Rotation + MathF.PI;
+        float targetYaw = lpRotation + MathF.PI;
         while (targetYaw >  MathF.PI) targetYaw -= 2f * MathF.PI;
         while (targetYaw < -MathF.PI) targetYaw += 2f * MathF.PI;
 
@@ -405,6 +415,7 @@ public static unsafe class CameraDynamics
     // ---- PositionFloat: discreet float behind player ----
     // Tracks player velocity, computes a small opposite offset, smooth-damps
     // it. Applied additively in Game.GetCameraPositionDetour.
+    private static bool _positionFloatErrorLogged;
     private static void UpdatePositionFloat(float dt)
     {
         if (!noWickyXIV.Config.EnablePositionFloat)
@@ -418,10 +429,27 @@ public static unsafe class CameraDynamics
             return;
         }
 
-        var lp = DalamudApi.ClientState.LocalPlayer;
-        if (lp == null) { _floatInit = false; return; }
-
-        var pos = new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z);
+        // Defensive: ClientState.LocalPlayer can throw on access during login
+        // screen / zone transitions / between-areas state even when the prop
+        // returns a non-null wrapper (IL2CPP fake-null pattern). Whole body is
+        // wrapped — feature gracefully no-ops for one frame and re-tries next.
+        Vector3 pos;
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) { _floatInit = false; return; }
+            pos = new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z);
+        }
+        catch (Exception ex)
+        {
+            _floatInit = false;
+            if (!_positionFloatErrorLogged)
+            {
+                _positionFloatErrorLogged = true;
+                try { DalamudApi.PluginLog.Warning($"[noWickyXIV] PositionFloat: LocalPlayer access threw ({ex.GetType().Name}: {ex.Message}). Suppressing further logs."); } catch { }
+            }
+            return;
+        }
         if (!_floatInit)
         {
             _lastPlayerPos = pos;

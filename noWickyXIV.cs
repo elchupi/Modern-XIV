@@ -13,6 +13,11 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         Game.Initialize();
         IPC.Initialize();
         DalamudApi.ClientState.Login += Login;
+        // Hypostasis base wires Draw + OpenConfigUi only. OpenMainUi was
+        // added later by Dalamud as a distinct "open the plugin's primary
+        // window" entrypoint (the click-to-open button in the installer);
+        // without it Dalamud emits a validation warning. Reuse ToggleConfig.
+        DalamudApi.PluginInterface.UiBuilder.OpenMainUi += ToggleConfig;
     }
 
     protected override void ToggleConfig() => PluginUI.IsVisible ^= true;

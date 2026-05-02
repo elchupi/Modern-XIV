@@ -7,6 +7,15 @@
   "CategoryTags": [
     "utility"
   ],
+  "Tags": [
+    "camera",
+    "tps",
+    "third person",
+    "fov",
+    "zoom",
+    "cammy",
+    "free cam"
+  ],
   "InternalName": "noWickyXIV",
   "AssemblyVersion": "0.1.0.0",
   "Changelog": "Initial fork from Cammy."

@@ -53,6 +53,22 @@ public static unsafe class Game
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused
     {
         if (FreeCam.Enabled) return;
+
+        // PositionFloat — shift the look-at position in the direction the
+        // player is moving. The camera then pivots toward the leading point
+        // and the character drifts off-center within the frame. Camera
+        // position is left alone so the camera-to-character distance is
+        // unchanged. Inline write here (not Framework.Update) because this
+        // detour fires INSIDE the game's per-frame camera setup; writes to
+        // cam->lookAtX/Y/Z from outside got overwritten before render.
+        if (lookAtPosition != null && noWickyXIV.Config.EnablePositionFloat)
+        {
+            var off = CameraDynamics.GetPositionFloatOffset();
+            lookAtPosition->X += off.X;
+            lookAtPosition->Y += off.Y;
+            lookAtPosition->Z += off.Z;
+        }
+
         camera->VTable.setCameraLookAt.Original(camera, lookAtPosition, cameraPosition, a4);
     }
 

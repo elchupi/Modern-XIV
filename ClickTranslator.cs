@@ -80,25 +80,44 @@ public static class ClickTranslator
         // AND back somehow asserted (impossible on a stick, possible if user
         // holds W and S on keyboard), forward wins.
         int  vk;
-        bool addShift;
-        if      (forward) { vk = VK_3; addShift = true; }
-        else if (back)    { vk = VK_1; addShift = true; }
-        else if (kbShift) { vk = VK_1; addShift = false; }   // user already holds Shift
-        else if (kbCtrl)  { vk = VK_3; addShift = false; }
-        else              { vk = VK_2; addShift = false; }
+        bool wantShift;
+        bool wantCtrl;
+        if      (forward) { vk = VK_3; wantShift = true;  wantCtrl = false; }
+        else if (back)    { vk = VK_1; wantShift = true;  wantCtrl = false; }
+        else if (kbShift) { vk = VK_1; wantShift = false; wantCtrl = false; }  // explicit: NO shift around the 1
+        else if (kbCtrl)  { vk = VK_3; wantShift = false; wantCtrl = false; }  // explicit: NO ctrl around the 3
+        else              { vk = VK_2; wantShift = false; wantCtrl = false; }
 
-        SendKey(vk, addShift && !kbShift);
+        SendKey(vk, wantShift, wantCtrl, kbShift, kbCtrl);
     }
 
-    private static void SendKey(int vk, bool wrapWithShift)
+    // Reconcile each modifier between what the user is currently holding and
+    // what the synthetic keypress NEEDS to be wrapped in:
+    //   user=Y, want=Y → no-op (already held)
+    //   user=N, want=Y → press before, release after
+    //   user=Y, want=N → release before, press after  ← the case the user hit
+    //                                                   when Shift+LMB still
+    //                                                   produced Shift+1
+    //   user=N, want=N → no-op
+    private static void SendKey(int vk, bool wantShift, bool wantCtrl, bool userShift, bool userCtrl)
     {
-        var inputs = new List<INPUT>(4);
-        if (wrapWithShift)
-            inputs.Add(MakeKey(VK_SHIFT, false));
+        var inputs = new List<INPUT>(8);
+
+        // PRE: get modifier state to match wantX
+        if (userShift && !wantShift) inputs.Add(MakeKey(VK_SHIFT,   true));   // release
+        if (!userShift && wantShift) inputs.Add(MakeKey(VK_SHIFT,   false));  // press
+        if (userCtrl  && !wantCtrl)  inputs.Add(MakeKey(VK_CONTROL, true));
+        if (!userCtrl && wantCtrl)   inputs.Add(MakeKey(VK_CONTROL, false));
+
+        // The key itself
         inputs.Add(MakeKey(vk, false));
         inputs.Add(MakeKey(vk, true));
-        if (wrapWithShift)
-            inputs.Add(MakeKey(VK_SHIFT, true));
+
+        // POST: restore the user's original modifier state
+        if (userShift && !wantShift) inputs.Add(MakeKey(VK_SHIFT,   false));  // re-press
+        if (!userShift && wantShift) inputs.Add(MakeKey(VK_SHIFT,   true));   // re-release
+        if (userCtrl  && !wantCtrl)  inputs.Add(MakeKey(VK_CONTROL, false));
+        if (!userCtrl && wantCtrl)   inputs.Add(MakeKey(VK_CONTROL, true));
 
         SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
     }

@@ -34,10 +34,20 @@ public static unsafe class CameraDynamics
     private static float _pitchTiltLastApplied;
 
     // --- PositionFloat state ---
+    // Offset is applied to the camera's LOOK-AT point (cam->lookAtX/Y/Z),
+    // not the camera position. Offsetting only camera position leaves the
+    // look-at glued to the player → camera angle silently re-centers the
+    // character. Offsetting look-at instead lets the character drift
+    // off-center within the frame as they strafe — the actual "discreet
+    // float" feel.
+    //
+    // Subtract-previous-then-add pattern (same as PitchTilt) so we don't
+    // accumulate frame-over-frame.
     private static Vector3 _floatOffset = Vector3.Zero;
     private static Vector3 _floatVelocity = Vector3.Zero;
     private static Vector3 _lastPlayerPos = Vector3.Zero;
     private static bool    _floatInit;
+    private static Vector3 _floatLastApplied = Vector3.Zero;
 
     // --- ADS state ---
     private static float _adsBaseFoV;     // baseline captured on RMB press
@@ -153,7 +163,7 @@ public static unsafe class CameraDynamics
 
         UpdateRollTilt(cam, tps, dt);
         UpdatePitchTilt(cam, tps, dt);
-        UpdatePositionFloat(dt);
+        UpdatePositionFloat(cam, dt);
         UpdateAds(cam, tps, dt);
         UpdateAutoShoulderSwap(cam, tps, dt);
         UpdateSwivelOnMove(cam, tps, dt);
@@ -583,8 +593,18 @@ public static unsafe class CameraDynamics
     // Tracks player velocity, computes a small opposite offset, smooth-damps
     // it. Applied additively in Game.GetCameraPositionDetour.
     private static bool _positionFloatErrorLogged;
-    private static void UpdatePositionFloat(float dt)
+    private static void UpdatePositionFloat(GameCamera* cam, float dt)
     {
+        // Always undo previous lookAt offset first (regardless of feature
+        // state) so toggling off / changing presets doesn't leave a residual.
+        if (_floatLastApplied.LengthSquared() > 1e-8f)
+        {
+            cam->lookAtX -= _floatLastApplied.X;
+            cam->lookAtY -= _floatLastApplied.Y;
+            cam->lookAtZ -= _floatLastApplied.Z;
+            _floatLastApplied = Vector3.Zero;
+        }
+
         if (!noWickyXIV.Config.EnablePositionFloat)
         {
             if (_floatOffset.LengthSquared() > 1e-5f)
@@ -596,10 +616,8 @@ public static unsafe class CameraDynamics
             return;
         }
 
-        // Defensive: ClientState.LocalPlayer can throw on access during login
-        // screen / zone transitions / between-areas state even when the prop
-        // returns a non-null wrapper (IL2CPP fake-null pattern). Whole body is
-        // wrapped — feature gracefully no-ops for one frame and re-tries next.
+        // Defensive: ObjectTable.LocalPlayer access can throw on transient client
+        // states (login, zone transitions). Wrap whole read.
         Vector3 pos;
         try
         {
@@ -627,16 +645,25 @@ public static unsafe class CameraDynamics
         var vel = (pos - _lastPlayerPos) / dt;
         _lastPlayerPos = pos;
 
-        // Target offset = -velocity * lagFactor. Smooth-damped via critically
-        // damped spring approximation (exp-lerp on offset toward target).
-        var target = -vel * noWickyXIV.Config.PositionFloatLagFactor;
-        // Convert smoothTime (s to "63% in") into rate for exp-lerp.
+        // Target = velocity * lagFactor (SAME direction as motion). Applying
+        // this to lookAt makes the look-at "lead" the player slightly in the
+        // direction they're moving → camera angle pivots so the character
+        // appears DRIFTED OFF-CENTER opposite to motion (e.g. strafe right,
+        // character slides left in frame). Exactly the "moves slightly freely"
+        // feel the user wants.
+        var target = vel * noWickyXIV.Config.PositionFloatLagFactor;
         float rate = 1f / MathF.Max(0.01f, noWickyXIV.Config.PositionFloatSmoothTime);
         _floatOffset = ExpDecayV(_floatOffset, target, rate, dt);
 
-        // Keep magnitude sane — clamp ±0.5m so a long jump doesn't yank.
-        if (_floatOffset.Length() > 0.5f)
-            _floatOffset = Vector3.Normalize(_floatOffset) * 0.5f;
+        // Magnitude clamp so a sudden teleport / mount-up doesn't yank.
+        if (_floatOffset.Length() > 1.5f)
+            _floatOffset = Vector3.Normalize(_floatOffset) * 1.5f;
+
+        // Apply to look-at. Track what we wrote so next frame's undo is exact.
+        cam->lookAtX += _floatOffset.X;
+        cam->lookAtY += _floatOffset.Y;
+        cam->lookAtZ += _floatOffset.Z;
+        _floatLastApplied = _floatOffset;
     }
 
     // ---- InstantMode: documented no-op for now ----

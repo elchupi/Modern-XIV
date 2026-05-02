@@ -110,13 +110,10 @@ public static unsafe class Game
 
             position->Y += preset.HeightOffset + noWickyXIV.Config.GlobalHeightOffset;
 
-            // PositionFloat (the "discreet float" feel): additive offset
-            // computed in CameraDynamics from player velocity * lagFactor,
-            // smooth-damped. Cheap; no-op when EnablePositionFloat is off.
-            var floatOff = CameraDynamics.GetPositionFloatOffset();
-            position->X += floatOff.X;
-            position->Y += floatOff.Y;
-            position->Z += floatOff.Z;
+            // PositionFloat is applied in CameraDynamics now (writes to
+            // cam->lookAtX/Y/Z, not camera position) so the character appears
+            // to drift within the frame instead of being re-centered by the
+            // camera angle. No-op here.
 
             // Auto-shoulder lerp may override preset.SideOffset mid-swap.
             float effectiveSide = CameraDynamics.GetActiveSideOffset(preset.SideOffset);

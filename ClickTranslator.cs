@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 
 namespace noWickyXIV;
 
@@ -82,6 +84,38 @@ public static class ClickTranslator
     // Stick deflection threshold. Adjusted so light drift doesn't trigger.
     private const float STICK_THRESHOLD = 0.5f;
 
+    // Hotbar mapping — assumes FFXIV-default keybinds:
+    //   plain numbers   → Hotbar 1 (idx 0)
+    //   Shift+numbers   → Hotbar 2 (idx 1)
+    //   Ctrl +numbers   → Hotbar 3 (idx 2)
+    // Slots are 0-indexed (slot 1 = idx 0, slot 2 = idx 1, slot 3 = idx 2).
+    private const int HOTBAR_PLAIN = 0;
+    private const int HOTBAR_SHIFT = 1;
+    private const int HOTBAR_CTRL  = 2;
+
+    // Fire a hotbar slot via action-direct (RaptureHotbarModule + ActionManager).
+    // This is the bulletproof path: no keyboard synthesis, no modifier
+    // conflicts. Returns false if the slot is empty or the modules aren't
+    // accessible (caller can fall back to SendInput).
+    private static unsafe bool FireHotbarSlot(int hotbarIdx, int slotIdx)
+    {
+        try
+        {
+            var rh = RaptureHotbarModule.Instance();
+            if (rh == null) return false;
+            var slot = rh->GetSlotById((uint)hotbarIdx, (uint)slotIdx);
+            if (slot == null) return false;
+            if (slot->CommandType == 0 && slot->CommandId == 0) return false;
+            ActionManager.Instance()->UseAction((ActionType)slot->CommandType, slot->CommandId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            try { DalamudApi.PluginLog.Warning($"[noWickyXIV] FireHotbarSlot({hotbarIdx},{slotIdx}) threw: {ex.Message}"); } catch { }
+            return false;
+        }
+    }
+
     private static bool _lmbPrev;
     private static IntPtr _hookHandle = IntPtr.Zero;
     private static LowLevelKeyboardProc? _hookProc; // keep alive — Win32 holds raw fnptr
@@ -139,18 +173,16 @@ public static class ClickTranslator
         // RMB is a virtual Ctrl modifier (per user spec).
         bool ctrlLike = kbCtrl || rmb;
 
-        // Outputs are all Shift+<n>. So we synthesize Shift around the key
-        // unless the user is already physically holding Shift (in which case
-        // "Shift+1" naturally arrives because we just send 1 with their Shift
-        // still down).
-        int  vk;
-        if      (kbShift)  vk = VK_1;
-        else if (ctrlLike) vk = VK_3;
-        else               vk = VK_2;
+        // All LMB outputs are Shift+<n> = Hotbar 2 slot N.
+        //   plain LMB   → Hotbar 2 Slot 2 (Shift+2)
+        //   Shift+LMB   → Hotbar 2 Slot 1 (Shift+1)
+        //   Ctrl/RMB+LMB → Hotbar 2 Slot 3 (Shift+3)
+        int slotIdx;
+        if      (kbShift)  slotIdx = 0;  // Slot 1
+        else if (ctrlLike) slotIdx = 2;  // Slot 3
+        else               slotIdx = 1;  // Slot 2
 
-        // wantShift = true: ensure Shift is down around the key. If user
-        // already holds Shift physically, SendKey skips the redundant press.
-        SendKey(vk, wantShift: true, wantCtrl: false, kbShift, kbCtrl);
+        FireHotbarSlot(HOTBAR_SHIFT, slotIdx);
     }
 
     // ---- Low-level keyboard hook: physical "2" + forward/back → transform ----
@@ -179,11 +211,11 @@ public static class ClickTranslator
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
         bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
 
-        // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → Ctrl+<n> --
+        // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → fire Hotbar 3 slot --
         if (rmb)
         {
-            int outVk = isOne ? VK_1 : (isTwo ? VK_2 : VK_3);
-            SendKey(outVk, wantShift: false, wantCtrl: true, kbShift, kbCtrl);
+            int slotIdx = isOne ? 0 : (isTwo ? 1 : 2);
+            FireHotbarSlot(HOTBAR_CTRL, slotIdx);
             return new IntPtr(1); // suppress original
         }
 
@@ -209,8 +241,9 @@ public static class ClickTranslator
 
         if (!forward && !back) goto pass;
 
-        int  fwdVk  = forward ? VK_3 : VK_1;
-        SendKey(fwdVk, wantShift: true, wantCtrl: false, kbShift, kbCtrl);
+        // forward → Shift+3 = Hotbar 2 Slot 3; back → Shift+1 = Hotbar 2 Slot 1
+        int fwdSlot = forward ? 2 : 0;
+        FireHotbarSlot(HOTBAR_SHIFT, fwdSlot);
         return new IntPtr(1);
 
     pass:

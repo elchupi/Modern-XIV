@@ -217,12 +217,41 @@ public static class ClickTranslator
         _hookProc = null;
     }
 
+    // While the translator is active we force FFXIV's "MouseBothClick" config
+    // off, otherwise LMB+RMB (used for the Ctrl/RMB-modifier path) would also
+    // make the character run forward. Track the original value so we restore
+    // it whenever the active state ends (weapon sheathed, focus lost, plugin
+    // disabled, or unload).
+    private static bool _bothClickForcedOff;
+    private static bool _bothClickOriginal;
+
+    private static void SetBothClickOverride(bool forceOff)
+    {
+        try
+        {
+            if (forceOff && !_bothClickForcedOff)
+            {
+                if (DalamudApi.GameConfig.System.TryGet("MouseBothClick", out bool original))
+                    _bothClickOriginal = original;
+                DalamudApi.GameConfig.System.Set("MouseBothClick", false);
+                _bothClickForcedOff = true;
+            }
+            else if (!forceOff && _bothClickForcedOff)
+            {
+                DalamudApi.GameConfig.System.Set("MouseBothClick", _bothClickOriginal);
+                _bothClickForcedOff = false;
+            }
+        }
+        catch { /* GameConfig not ready (e.g. not logged in); retry next tick */ }
+    }
+
     // ---- Per-frame: LMB rising-edge handler ----
     public static void Update()
     {
         if (!noWickyXIV.Config.EnableThirdPersonClickTranslation)
         {
             _lmbPrev = false;
+            SetBothClickOverride(false);
             UninstallHook();
             return;
         }
@@ -230,20 +259,19 @@ public static class ClickTranslator
         // Lazy-install the keyboard hook on first frame the feature is on
         EnsureHookInstalled();
 
+        // Drive the MouseBothClick override off the same gates that would
+        // allow translation to fire — only force-off when the user is
+        // actually in a state where LMB+RMB would otherwise auto-walk them
+        // out from under their click.
+        bool active = IsGameForeground() && IsWeaponDrawn();
+        SetBothClickOverride(active);
+
         bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         bool risingEdge = lmb && !_lmbPrev;
         _lmbPrev = lmb;
         if (!risingEdge) return;
 
-        // Don't synthesize keyboard input unless FFXIV is the foreground
-        // window — SendInput goes to whichever app has focus, so without this
-        // gate clicks in other apps would type "@" (Shift+2) etc.
-        if (!IsGameForeground()) return;
-
-        // Only translate while the player has their weapon drawn. Out of
-        // combat stance, LMB should behave like a normal click (UI, target,
-        // etc). Bail out — no translation, no synthetic keys.
-        if (!IsWeaponDrawn()) return;
+        if (!active) return;
 
         bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;

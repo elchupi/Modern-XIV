@@ -133,10 +133,12 @@ public static class InputHandler
             {
                 // SHOULDER — active preset's SideOffset. Reuses HeightOffsetStep
                 // for now (typical 0.1 m steps feel right for shoulder too).
+                // Inverted relative to height: scroll-down = +SideOffset (right
+                // shoulder), scroll-up = -SideOffset (left).
                 var preset = PresetManager.CurrentPreset;
                 if (preset == null) return;
                 float step = noWickyXIV.Config.HeightOffsetStep;
-                float next = preset.SideOffset + wheel * step;
+                float next = preset.SideOffset - wheel * step;
                 // Cammy's SideOffset is unbounded but +/-2 is plenty extreme.
                 if (next < -2f) next = -2f;
                 if (next >  2f) next =  2f;

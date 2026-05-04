@@ -230,6 +230,43 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // point when the target is another player.
     public int   JobAuraTargetBoneIndexPlayer = 4;   // higher up the body for player targets
 
+    // ---- Hotbar Fader (cascade fade-in/out on weapon-drawn) ----
+    // Hotbars 1, 7, 10 fade in cascade order when the weapon is drawn,
+    // and reverse-cascade fade out when sheathed. CascadeDelay is the
+    // gap between each slot starting (default 0.95s ~= one bar fully
+    // resolves before the next begins). Rate is the exponential lerp
+    // rate per second (higher = snappier within each slot's fade).
+    public bool  EnableHotbarFader        = false;
+    public float HotbarFaderRate          = 6.0f;     // exp rate per second
+    public float HotbarFaderCascadeDelay  = 0.95f;    // seconds between slot starts
+    public float HotbarFaderDrawnAlpha    = 1.0f;     // target when weapon out
+    public float HotbarFaderSheathedAlpha = 0.0f;     // target when sheathed
+    // When true, hovering the cursor over a faded bar's rect forces it
+    // back to DrawnAlpha (overrides cascade hold + sheathed target).
+    public bool  HotbarFaderHoverActivates = true;
+    // Hotbar number (1..10) of the bar to fade in whenever an active
+    // combo lands on one of its slots. 0 = disabled. The bar fades
+    // back out as soon as the combo ends (ability used or combo timer
+    // expires) since the override condition flips false.
+    public int   HotbarFaderComboPromptBar  = 0;
+    // Hotbar number (1..10) of the bar to flash in whenever any of its
+    // action slots transitions from "on cooldown" to "ready". 0 =
+    // disabled. The flash holds for HotbarFaderAvailabilityFlashSeconds
+    // and then fades back out via the same exp rate.
+    public int   HotbarFaderAvailabilityBar = 0;
+    public float HotbarFaderAvailabilityFlashSeconds = 1.5f;
+
+    // Hide the chevron/arrow indicator above the current target.
+    // Pure presentation toggle — no gameplay impact. Restored on
+    // toggle-off and on plugin Dispose.
+    public bool  HideTargetArrow = false;
+
+    // Diagnostic: log every damage effect entry (type, Param0/1,
+    // value, action id, fromMe/toMe, crit/dh decision) so we can
+    // verify the bit positions used by NormalHit/CritHit detection
+    // when something stops triggering. Off in normal play.
+    public bool  LogCombatHitDiagnostics = false;
+
     // ---- JobAura Kenki tier ring colors ----
     // The three concentric Kenki rings (33% / 66% / 100%) drawn around
     // the anchor. Defaults match the original hard-coded ramp: pale

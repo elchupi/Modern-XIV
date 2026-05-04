@@ -139,6 +139,17 @@ public static unsafe class CombatEvents
                     //   p0=0x60 → crit + DH   (~3900 dmg, both stacked)
                     bool crit = (entry.Param0 & 0x20) != 0;
                     bool dh   = (entry.Param0 & 0x40) != 0;
+
+                    // Diagnostic logging for verifying Param0 bit
+                    // positions and Type values per damage entry.
+                    // Toggleable via Config so we don't spam the log
+                    // during normal play.
+                    if (noWickyXIV.Config.LogCombatHitDiagnostics && (fromMe || toMe))
+                    {
+                        try { DalamudApi.PluginLog.Information(
+                            $"[noWickyXIV] hit etype={etype} p0=0x{entry.Param0:X2} p1=0x{entry.Param1:X2} val={entry.Value} actionId={actionId} spellId={spellId} fromMe={fromMe} toMe={toMe} auto={isAutoAttack} crit={crit} dh={dh}"); } catch { }
+                    }
+
                     if (fromMe && !toMe)
                     {
                         if (isAutoAttack)

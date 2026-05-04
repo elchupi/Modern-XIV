@@ -823,6 +823,17 @@ public static class PluginUI
                 noWickyXIV.Config.Save();
             }
 
+            // Suppress while another layer's vfx is presumed playing.
+            // Useful for the Stopped trigger so it doesn't fire on top
+            // of a gap-closer's own effect when the player's motion
+            // momentarily settles during the action animation.
+            bool supp = layer.SuppressWhileOthersFiring;
+            if (ImGui.Checkbox("Suppress while another effect is running##suppress", ref supp))
+            {
+                layer.SuppressWhileOthersFiring = supp;
+                noWickyXIV.Config.Save();
+            }
+
             ImGui.Separator();
             ImGui.PopID();
         }
@@ -1283,6 +1294,45 @@ public static class PluginUI
                 "  Shift   + LMB  → 1\n" +
                 "  Ctrl    + LMB  → 3\n" +
                 "  LMB            → 2");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Hotbar Fader (cascade fade-in/out on weapon-drawn).
+        if (ImGuiEx.BeginGroupBox("Hotbar Fader (weapon-drawn cascade)"))
+        {
+            ConfigCheckbox("Enable##HotbarFader", ref noWickyXIV.Config.EnableHotbarFader);
+            ImGui.TextDisabled(
+                "Fades hotbars 1, 7, 10 in cascade order on weapon draw,\n" +
+                "and reverse-cascade fades them out on sheath.\n" +
+                "Cascade delay = gap between each bar starting (default 0.95s).");
+            ConfigSliderFloat("Cascade delay (s)##HotbarFader", ref noWickyXIV.Config.HotbarFaderCascadeDelay, 0f,   3f,   0.95f, "%.2f");
+            ConfigSliderFloat("Fade rate (1/s)##HotbarFader",   ref noWickyXIV.Config.HotbarFaderRate,         1f,   20f,  6.0f,  "%.1f");
+            ConfigSliderFloat("Drawn alpha##HotbarFader",       ref noWickyXIV.Config.HotbarFaderDrawnAlpha,   0f,   1f,   1.0f,  "%.2f");
+            ConfigSliderFloat("Sheathed alpha##HotbarFader",    ref noWickyXIV.Config.HotbarFaderSheathedAlpha,0f,   1f,   0.0f,  "%.2f");
+            ConfigCheckbox   ("Hover fades a bar back in##HotbarFader", ref noWickyXIV.Config.HotbarFaderHoverActivates);
+            ImGui.Separator();
+            ImGui.TextDisabled("Conditional bars (0 = disabled, 1..10 = hotbar number)");
+            ConfigSliderInt  ("Combo-prompt bar##HotbarFader",          ref noWickyXIV.Config.HotbarFaderComboPromptBar,  0, 10, 0);
+            ImGui.TextDisabled("Fades in while a combo is active and lands on one of its slots; fades out when the combo ends.");
+            ConfigSliderInt  ("Availability-flash bar##HotbarFader",    ref noWickyXIV.Config.HotbarFaderAvailabilityBar, 0, 10, 0);
+            ConfigSliderFloat("Flash hold (s)##HotbarFader",            ref noWickyXIV.Config.HotbarFaderAvailabilityFlashSeconds, 0.1f, 5f, 1.5f, "%.2f");
+            ImGui.TextDisabled("Flashes in for the hold duration each time a slot transitions from cooldown to ready, then fades out.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Hide target arrow (the chevron above the current target).
+        if (ImGuiEx.BeginGroupBox("Target indicators"))
+        {
+            ConfigCheckbox("Hide arrow above target##TargetArrow", ref noWickyXIV.Config.HideTargetArrow);
+            ImGui.TextDisabled("Pins the _TargetCursor / _TargetCursorParent addon alpha to 0 each frame. Restored on toggle-off.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Combat-event diagnostics for verifying NormalHit/CritHit/IncomingDamage bit positions.
+        if (ImGuiEx.BeginGroupBox("Diagnostics"))
+        {
+            ConfigCheckbox("Log combat hit details##CombatDiag", ref noWickyXIV.Config.LogCombatHitDiagnostics);
+            ImGui.TextDisabled("Logs every damage effect entry (type, Param0/Param1, action id, crit/dh decision).\nLeave off in normal play — it spams the log fast.");
             ImGuiEx.EndGroupBox();
         }
 

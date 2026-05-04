@@ -96,6 +96,14 @@ public class JobAuraVfxLayer
     // against the Path of every other layer when those layers fire.
     public string ChainSourcePath = "";
 
+    // When true, this layer's rising-edge schedule is suppressed if any
+    // OTHER configured + enabled layer fired within its RunTimeSeconds
+    // window. Use it to prevent the Stopped layer from firing during
+    // gap-closer animations (the player's motion settles for a moment
+    // while the gap closer's own effect is still running, which would
+    // otherwise stack a "stopped" feedback on top of the action effect).
+    public bool SuppressWhileOthersFiring = false;
+
     // Natural runtime of one "shot" of the avfx, in seconds. The
     // engine plays the avfx for its own internal duration regardless,
     // but we use this value for our refire/finish tracking:

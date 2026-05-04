@@ -14,6 +14,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         IPC.Initialize();
         JobAura.Initialize();
         CombatEvents.Initialize();
+        TargetArrowHider.Initialize();
         DalamudApi.ClientState.Login += Login;
 
         // One-shot migration: MouseSensitivityMul values < 0.56 produce
@@ -151,6 +152,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         CameraDynamics.Update();
         JobAura.Update();
         HpRing.Update();
+        HotbarFader.Update();
+        TargetArrowHider.Update();
     }
 
     protected override void Draw()
@@ -187,6 +190,10 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
     {
         if (!disposing) return;
         IPC.Dispose();
+        // Restore hotbars to fully opaque so toggling the plugin off
+        // doesn't leave the user with faded/invisible bars.
+        try { HotbarFader.RestoreOpaque(); } catch { }
+        try { TargetArrowHider.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;
 

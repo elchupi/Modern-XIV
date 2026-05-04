@@ -560,15 +560,23 @@ public static class JobAura
             }
         }
 
-        // Hide in cutscenes / between zones — same gates as the crosshair
+        // Hide in cutscenes / between zones — same gates as the crosshair.
+        // Between-zones path also INSTANTLY zeroes the smoothed alphas and
+        // drops the cached target anchor so the loading screen doesn't
+        // show a fading ring on top of it, and so we don't reattach to a
+        // stale target when the new zone loads.
         try
         {
             var cond = DalamudApi.Condition;
+            bool loading = cond[ConditionFlag.BetweenAreas] || cond[ConditionFlag.BetweenAreas51];
+            if (loading)
+            {
+                ClearVisualState();
+                return;
+            }
             if (cond[ConditionFlag.OccupiedInCutSceneEvent] ||
                 cond[ConditionFlag.WatchingCutscene]        ||
-                cond[ConditionFlag.WatchingCutscene78]      ||
-                cond[ConditionFlag.BetweenAreas]            ||
-                cond[ConditionFlag.BetweenAreas51])
+                cond[ConditionFlag.WatchingCutscene78])
                 return;
         }
         catch { }
@@ -856,7 +864,15 @@ public static class JobAura
                     //   - lowercase forward-slashes (FFXIV convention)
                     //   - ends with .avfx
                     //   - no whitespace runs
-                    if (!IsLikelyValidVfxPath(layer.Path)) continue;
+                    if (!IsLikelyValidVfxPath(layer.Path))
+                    {
+                        // Log once per layer-id+path so the user can
+                        // see WHY a configured layer is silently
+                        // skipped (most common cause: trailing space,
+                        // backslashes, or wrong extension).
+                        WarnPathRejectedOnce(layer);
+                        continue;
+                    }
 
                     // Default-mode layers fire from their own Trigger.
                     // Chain/Chained-mode layers ignore Trigger for firing
@@ -871,9 +887,14 @@ public static class JobAura
                     if (isChain)
                     {
                         // Rising edge for chain layers = source path fired
-                        // since we last consumed an event from it.
+                        // since we last consumed an event from it. Gating
+                        // by layer.Enabled here is critical — without it,
+                        // unchecking Enabled doesn't produce a falling
+                        // edge, so the in-flight vfx never gets the
+                        // end-trigger and keeps emitting forever.
                         active = false;
-                        if (!string.IsNullOrEmpty(layer.ChainSourcePath)
+                        if (layer.Enabled
+                            && !string.IsNullOrEmpty(layer.ChainSourcePath)
                             && _layerPathLastFire.TryGetValue(layer.ChainSourcePath, out var srcAt))
                         {
                             double consumed = _layerChainConsumedAt.TryGetValue(layer.Id, out var cAt) ? cAt : double.MinValue;
@@ -892,7 +913,13 @@ public static class JobAura
                     bool falling = !active && prev;
                     _layerPrev[layer.Id] = active;
 
-                    if (!layer.Enabled) continue;
+                    // NOTE: do NOT `continue` here on !layer.Enabled.
+                    // The falling-edge block below needs to run when the
+                    // user unchecks Enabled mid-fire so the live handle
+                    // gets its end-trigger and any pending scheduled fire
+                    // is cancelled. Skipping to the next layer here was
+                    // the cause of "toggle off doesn't actually stop the
+                    // effect".
 
                     // Chain layers consume the source-fire timestamp on
                     // their rising edge so they don't keep re-firing while
@@ -917,18 +944,29 @@ public static class JobAura
                     // collision with VFXEditor.
                     // EndTriggerId < 0 means "don't dispatch anything"
                     // (vfx plays its natural duration to completion).
-                    if (falling && _layerHandles.TryGetValue(layer.Id, out var hExisting)
-                        && hExisting != IntPtr.Zero && layer.EndTriggerId >= 0)
+                    if (falling)
                     {
-                        try { DalamudApi.PluginLog.Information(
-                            $"[noWickyXIV] JobAura layer '{layer.Name}' falling — Trigger({layer.EndTriggerId}) on handle=0x{hExisting.ToInt64():X}"); } catch { }
-                        VfxBridge.Trigger(hExisting, (uint)layer.EndTriggerId);
-                        _layerHandles.Remove(layer.Id);
-                    }
-                    else if (falling)
-                    {
-                        // Layer fell with no end-trigger configured (or
-                        // no live handle) — just drop our reference.
+                        // Cancel pending scheduled fire ONLY when the
+                        // user explicitly disabled the layer mid-fire.
+                        // Natural edge-trigger falls (rising edge frame
+                        // → trigger goes false the next frame, e.g.
+                        // NormalHit/CritHit which clear after one
+                        // frame) MUST NOT kill a fire that's still
+                        // waiting on its DelaySeconds window. That
+                        // regression dropped every delayed combat-
+                        // event fire on the floor.
+                        if (!layer.Enabled)
+                            _layerScheduledFireAt.Remove(layer.Id);
+
+                        if (_layerHandles.TryGetValue(layer.Id, out var hExisting)
+                            && hExisting != IntPtr.Zero && layer.EndTriggerId >= 0)
+                        {
+                            try { DalamudApi.PluginLog.Information(
+                                $"[noWickyXIV] JobAura layer '{layer.Name}' falling — Trigger({layer.EndTriggerId}) on handle=0x{hExisting.ToInt64():X}"); } catch { }
+                            VfxBridge.Trigger(hExisting, (uint)layer.EndTriggerId);
+                        }
+                        // Drop our handle reference unconditionally on
+                        // falling — even when no end-trigger is configured.
                         _layerHandles.Remove(layer.Id);
                     }
 
@@ -937,14 +975,31 @@ public static class JobAura
                     // actual fire DelaySeconds in the future (0 = next
                     // line). Stacked layers can stagger themselves by
                     // setting different delays.
-                    if (rising && minIntervalMet
+                    //
+                    // SuppressWhileOthersFiring: when on, skip the
+                    // schedule if ANY other enabled layer is still
+                    // inside its RunTimeSeconds window. The Stopped
+                    // layer is the obvious case — gap-closer actions
+                    // settle the player's motion for a frame while the
+                    // gap closer's own effect is still playing, and
+                    // without this gate the Stopped layer fires on top
+                    // of it and reads as jitter.
+                    bool suppressedByOthers =
+                        layer.SuppressWhileOthersFiring
+                        && AnyOtherEnabledLayerFiring(layers, layer.Id, now);
+
+                    if (rising && minIntervalMet && !suppressedByOthers
                         && !_layerScheduledFireAt.ContainsKey(layer.Id))
                     {
                         _layerScheduledFireAt[layer.Id] = now + Math.Max(0.0, layer.DelaySeconds);
                     }
 
                     // ---- Execute scheduled fires whose time has come ----
-                    if (_layerScheduledFireAt.TryGetValue(layer.Id, out var fireAt) && now >= fireAt)
+                    // Belt-and-braces: even though falling-edge clears any
+                    // pending schedule, gate execution by layer.Enabled so
+                    // a same-frame disable can't slip a fire through.
+                    if (layer.Enabled
+                        && _layerScheduledFireAt.TryGetValue(layer.Id, out var fireAt) && now >= fireAt)
                     {
                         _layerScheduledFireAt.Remove(layer.Id);
 
@@ -1110,6 +1165,22 @@ public static class JobAura
     public static unsafe void Draw()
     {
         if (!noWickyXIV.Config.EnableJobAura) return;
+
+        // Hard gate: loading screen → drop everything instantly so the
+        // target ring (and any other smoothed visual) doesn't render on
+        // top of the loading image and doesn't keep a cached anchor that
+        // would re-bind to whatever was previously targeted on zone-in.
+        try
+        {
+            var cond = DalamudApi.Condition;
+            if (cond[ConditionFlag.BetweenAreas] || cond[ConditionFlag.BetweenAreas51])
+            {
+                ClearVisualState();
+                return;
+            }
+        }
+        catch { }
+
         // Bail only when nothing is visible: every smoothed alpha at zero,
         // no fading burst, and no active flags.
         float maxA = MathF.Max(MathF.Max(_tierAlpha[0], _tierAlpha[1]), _tierAlpha[2]);
@@ -1518,7 +1589,67 @@ public static class JobAura
     }
 
     private static double Now() => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
+
+    // True if any OTHER enabled layer in the list fired within its
+    // RunTimeSeconds window — i.e. its visual is presumed still
+    // playing. Used by layers with SuppressWhileOthersFiring set so
+    // they don't pile their effect on top of an in-flight one.
+    private static bool AnyOtherEnabledLayerFiring(
+        System.Collections.Generic.List<JobAuraVfxLayer> layers,
+        Guid selfId, double now)
+    {
+        if (layers == null) return false;
+        foreach (var l in layers)
+        {
+            if (l == null || !l.Enabled || l.Id == selfId) continue;
+            if (!_layerLastFire.TryGetValue(l.Id, out var lastFire)) continue;
+            // RunTimeSeconds is the user-configured nominal duration of
+            // a single shot — not a hard guarantee but a good proxy for
+            // "still playing". Floor 50ms so a misconfigured 0 doesn't
+            // disable the gate entirely.
+            float window = MathF.Max(0.05f, l.RunTimeSeconds);
+            if (now - lastFire < window) return true;
+        }
+        return false;
+    }
+
+    // De-duplication for path-rejection warnings so we don't spam the
+    // log every frame. Re-warns when the path string actually changes.
+    private static readonly System.Collections.Generic.Dictionary<Guid, string> _layerPathRejectWarned = new();
+    private static void WarnPathRejectedOnce(JobAuraVfxLayer layer)
+    {
+        try
+        {
+            if (_layerPathRejectWarned.TryGetValue(layer.Id, out var seen)
+                && seen == layer.Path) return;
+            _layerPathRejectWarned[layer.Id] = layer.Path;
+            DalamudApi.PluginLog.Warning(
+                $"[noWickyXIV] JobAura layer '{layer.Name}' path rejected by validator: '{layer.Path}' (must be forward-slashed, end in .avfx, no spaces, ≥8 chars).");
+        }
+        catch { }
+    }
     private static float MathHelpers_Lerp(float a, float b, float t) => a + (b - a) * MathF.Max(0f, MathF.Min(1f, t));
+
+    // Instantly zero every smoothed visual state and drop the cached
+    // anchor — used when a loading screen comes up so the target ring
+    // doesn't render above it and we don't re-bind to whatever was
+    // targeted before the zone change.
+    private static void ClearVisualState()
+    {
+        for (int i = 0; i < _tierAlpha.Length; i++) _tierAlpha[i] = 0f;
+        for (int i = 0; i < _senAlpha.Length;  i++) _senAlpha[i]  = 0f;
+        _allSenAlpha    = 0f;
+        _meditateAlpha  = 0f;
+        _higanbanaAlpha = 0f;
+        _fukaAlpha      = 0f;
+        _fugetsuAlpha   = 0f;
+        _hpAlpha        = 0f;
+        _targetAlpha    = 0f;
+        _combatAlpha    = 0f;
+        _oocAlpha       = 0f;
+        _haveLastAnchor = false;
+        _lastAnchorWorld = default;
+    }
 
     // Cheap path validator. The game's resource loader (especially
     // through Penumbra/VFXEditor's hooks) chokes on malformed input —

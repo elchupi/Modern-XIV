@@ -151,9 +151,14 @@ public static unsafe class Game
                 prevCameraTarget = null;
             }
 
-            // Use PresetManager.EffectiveHeightOffset so a preset
-            // activation smoothly lerps the height instead of snapping.
-            position->Y += PresetManager.EffectiveHeightOffset + noWickyXIV.Config.GlobalHeightOffset;
+            // CameraDynamics.Display* are exp-lerped copies of the
+            // height / side / global offsets when EnableCamera-
+            // PositionSmoothing is on; otherwise they just pass through
+            // EffectiveHeightOffset / EffectiveSideOffset / Config.
+            // GlobalHeightOffset directly. Using these getters means
+            // a slider drag or Ctrl+scroll height tweak smoothly rides
+            // into place instead of snapping.
+            position->Y += CameraDynamics.DisplayHeightOffset + CameraDynamics.DisplayGlobalHeightOffset;
 
             // PositionFloat is applied in CameraDynamics now (writes to
             // cam->lookAtX/Y/Z, not camera position) so the character appears
@@ -161,10 +166,19 @@ public static unsafe class Game
             // camera angle. No-op here.
 
             // Auto-shoulder lerp may override the side offset mid-swap.
-            // EffectiveSideOffset feeds the lerped value during a preset
-            // transition; CameraDynamics.GetActiveSideOffset further
-            // overrides during an auto-shoulder-swap animation.
-            float effectiveSide = CameraDynamics.GetActiveSideOffset(PresetManager.EffectiveSideOffset);
+            // GetActiveSideOffset returns the lerp-active value during
+            // an auto-shoulder-swap animation; otherwise it returns
+            // the smoothed Display value (which itself passes through
+            // EffectiveSideOffset when smoothing is off).
+            // Lateral camera shift on the horizontal rail (original
+            // Cammy/Wicked behavior). Reads the smoothed side offset
+            // so slider drags lerp into place when position smoothing
+            // is on. The geometric perspective effects this can produce
+            // (apparent zoom-out and vertical tilt due to the camera-
+            // to-character vector lengthening when the camera moves
+            // off the look axis) are inherent to lateral camera
+            // movement; the smoothing softens them across frames.
+            float effectiveSide = CameraDynamics.GetActiveSideOffset(CameraDynamics.DisplaySideOffset);
             if (effectiveSide == 0 || camera->mode != 1) return;
 
             const float halfPI = MathF.PI / 2f;

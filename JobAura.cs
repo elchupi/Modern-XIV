@@ -33,6 +33,32 @@ public static class JobAura
     private static double _burstStartT;   // wall-clock seconds since plugin load
     private static double _bornAt = -1;
     private static float _combatAlpha = 1f; // OOC fade only — applied to player-anchored visuals
+
+    // Cascade-reveal bookkeeping for Sen markers. _overlayRiseT is set
+    // when _combatAlpha crosses up through 0.01 from below; Sen markers
+    // gate their fade-in by (now - _overlayRiseT >= JobAuraSenCascadeDelay)
+    // so the rings / HP indicator land first and the markers cascade
+    // in after.
+    private static double _overlayRiseT = double.MinValue;
+    private static bool   _overlayWasVisible;
+
+    // Hostile-target cascade. Kenki + Sen visuals are gated by these
+    // per-slot multipliers so they fade out (and back in) in sequence
+    // when the player switches between enemy and friendly targets.
+    //   slot 0: Sen markers
+    //   slot 1: AllSen double ring
+    //   slot 2: Kenki Tier 3 (incl. burst + meditate)
+    //   slot 3: Kenki Tier 2
+    //   slot 4: Kenki Tier 1
+    // On fade-OUT (hostile→friendly) slot 0 starts immediately, slot 4
+    // last. On fade-IN (friendly→hostile) the order reverses so the
+    // outermost ring lands first and the Sen markers cascade in last
+    // — same intuition as the JobAuraSenCascadeDelay reveal.
+    private const int HOSTILE_SLOT_COUNT = 5;
+    private static readonly float[] _hostileCascadeAlpha = new float[HOSTILE_SLOT_COUNT];
+    private static bool   _targetHostile;
+    private static bool   _targetHostilePrev;
+    private static double _hostileTransitionT = double.MinValue;
     private static float _oocAlpha    = 1f; // smoothed OOC component
     private static float _targetAlpha = 1f; // smoothed target-presence — applied ONLY to target-dependent visuals (HP indicator)
     // When target-anchor is on and the target was just lost, keep rendering
@@ -1116,6 +1142,45 @@ public static class JobAura
             // hard-cut while only HP faded — that was a deliberate
             // decoupling that turned out to feel inconsistent.
             _combatAlpha = _oocAlpha * _targetAlpha;
+
+            // Stamp the overlay rise time on the rising edge of "any
+            // visibility at all" so the Sen marker cascade delay is
+            // measured from the moment the overlay becomes visible.
+            bool nowVisible = _combatAlpha > 0.01f;
+            if (nowVisible && !_overlayWasVisible)
+                _overlayRiseT = Now();
+            _overlayWasVisible = nowVisible;
+
+            // ---- Hostile-target cascade ----
+            // Kenki + Sen visuals are gated by per-slot multipliers
+            // that fade in cascade order when the target is hostile,
+            // and reverse-cascade fade out when targeting a friendly
+            // (player, ally NPC, self, etc.). Falls through to all
+            // slots = 0 (everything hidden) when there's no target at
+            // all, but in that case _combatAlpha is already 0 anyway.
+            bool hostile = IsTargetHostile();
+            if (hostile != _targetHostilePrev)
+            {
+                _hostileTransitionT = Now();
+                _targetHostilePrev = hostile;
+            }
+            _targetHostile = hostile;
+
+            double cascadeDelay = MathF.Max(0f, noWickyXIV.Config.JobAuraHostileCascadeDelay);
+            for (int i = 0; i < HOSTILE_SLOT_COUNT; i++)
+            {
+                // Cascade order: on fade-OUT (friendly), slot 0 (Sen)
+                // starts immediately and slot 4 (Tier1 ring) starts last.
+                // On fade-IN (hostile), reverse — Tier1 first, Sen last.
+                int order = hostile ? (HOSTILE_SLOT_COUNT - 1 - i) : i;
+                double kickoff = _hostileTransitionT + order * cascadeDelay;
+                if (Now() < kickoff) continue; // hold this slot until its turn
+
+                float target = hostile ? 1f : 0f;
+                _hostileCascadeAlpha[i] += (target - _hostileCascadeAlpha[i]) * kk;
+                if (MathF.Abs(target - _hostileCascadeAlpha[i]) < 0.002f)
+                    _hostileCascadeAlpha[i] = target;
+            }
         }
         catch { _combatAlpha = 1f; }
     }
@@ -1320,7 +1385,11 @@ public static class JobAura
                     col.W *= 0.65f + 0.35f * pulse;
                     r *= 1.0f + 0.07f * pulse;
                 }
-                col.W *= a * _combatAlpha;
+                // Hostile cascade gate: Tier i (1..3) maps to slot
+                // (5 - i) so Tier 1 (innermost) is slot 4 and fades
+                // OUT last on friendly-target / fades IN first on
+                // hostile-target.
+                col.W *= a * _combatAlpha * _hostileCascadeAlpha[5 - i];
                 if (col.W < 0.01f) continue;
                 dl.AddCircle(screen, r, ImGui.GetColorU32(col), 64, thick);
             }
@@ -1332,7 +1401,10 @@ public static class JobAura
             {
                 float k = (float)(bAge / 0.6);
                 float bR = baseR * (0.8f + 4.5f * k);
-                float bA = (1f - k) * 0.85f * _combatAlpha;
+                // Burst rides the Tier 3 cascade slot (2) so it
+                // disappears with the rest of the Kenki feedback when
+                // we're on a friendly target.
+                float bA = (1f - k) * 0.85f * _combatAlpha * _hostileCascadeAlpha[2];
                 var bCol = new Vector4(1f, 0.55f, 0.15f, bA);
                 if (bA >= 0.01f)
                     dl.AddCircle(screen, bR, ImGui.GetColorU32(bCol), 96, 5f * uiScale * groupScale);
@@ -1346,7 +1418,9 @@ public static class JobAura
                 double mph = (Now() - _bornAt) % 1.6;
                 float mpulse = 0.5f + 0.5f * MathF.Sin((float)(mph * Math.PI * 2.0 / 1.6));
                 float mR = baseR * (2.1f + 0.06f * mpulse);
-                float mA = (0.55f + 0.35f * mpulse) * _combatAlpha * _meditateAlpha;
+                // Meditate rides the Tier 3 cascade slot (2) — same
+                // visual layer as Kenki Tier 3.
+                float mA = (0.55f + 0.35f * mpulse) * _combatAlpha * _meditateAlpha * _hostileCascadeAlpha[2];
                 if (mA >= 0.01f)
                 {
                     var mInner = new Vector4(1.0f, 0.92f, 0.45f, mA);
@@ -1370,7 +1444,9 @@ public static class JobAura
                 double sph = (Now() - _bornAt) % 0.9;
                 float spulse = 0.5f + 0.5f * MathF.Sin((float)(sph * Math.PI * 2.0 / 0.9));
                 float sR = baseR * (2.45f + 0.09f * spulse);
-                float pulseA = (0.6f + 0.35f * spulse) * _combatAlpha;
+                // AllSen rings ride cascade slot 1 — fades just before
+                // the Sen markers (slot 0) on friendly target.
+                float pulseA = (0.6f + 0.35f * spulse) * _combatAlpha * _hostileCascadeAlpha[1];
                 largestRingR = sR;
 
                 // Phase split based on the smoothed _allSenAlpha. When
@@ -1425,71 +1501,65 @@ public static class JobAura
             {
                 float hpA = _hpAlpha * _combatAlpha;
                 if (hpA >= 0.01f)
+                    DrawHpRingsAt(dl, screen, baseR, _targetHpPct, hpA, uiScale, drawText: true);
+            }
+
+            // Party HP rings — mirror the player/target HP indicator on
+            // every party member (excluding self). Anchored to the same
+            // bone slot the user has configured for ally targets so the
+            // ring lands where the head/upper-spine sits, regardless of
+            // race skeleton differences.
+            if (noWickyXIV.Config.JobAuraPartyHpRings && _combatAlpha >= 0.01f)
+            {
+                try
                 {
-                    float pct = _targetHpPct;
-                    var cfg = noWickyXIV.Config;
-                    // ---- Outer (backdrop) ring — persistent ----
-                    float backdropR = baseR * cfg.JobAuraHpBackdropRadiusFactor;
-                    var backdrop = new Vector4(
-                        cfg.JobAuraHpBackdropColorR, cfg.JobAuraHpBackdropColorG, cfg.JobAuraHpBackdropColorB,
-                        hpA * cfg.JobAuraHpBackdropAlpha);
-                    dl.AddCircleFilled(screen, backdropR, ImGui.GetColorU32(backdrop), 64);
-
-                    // ---- Inner core — radius + alpha scale with HP ----
-                    float coreR = baseR * cfg.JobAuraHpInnerRadiusFactor * pct;
-                    float coreA = hpA * cfg.JobAuraHpInnerAlpha * MathF.Max(0.05f, pct);
-                    if (coreR > 0.5f && coreA >= 0.01f)
+                    var party = DalamudApi.PartyList;
+                    var lpId  = DalamudApi.ObjectTable.LocalPlayer?.GameObjectId ?? 0;
+                    if (party != null && party.Length > 0)
                     {
-                        var core = new Vector4(
-                            cfg.JobAuraHpInnerColorR, cfg.JobAuraHpInnerColorG, cfg.JobAuraHpInnerColorB,
-                            coreA);
-                        dl.AddCircleFilled(screen, coreR, ImGui.GetColorU32(core), 64);
-                    }
-
-                    if (!noWickyXIV.Config.JobAuraShowHpText) goto SkipHpText;
-
-                    // Text — uses configured system font if loaded, else default.
-                    string label = $"{(int)MathF.Round(pct * 100f)}%";
-                    EnsureHpFont();
-                    bool pushed = false;
-                    try
-                    {
-                        if (_hpFontHandle != null && _hpFontHandle.Available)
+                        int boneIdx = noWickyXIV.Config.JobAuraTargetBoneIndexPlayer;
+                        foreach (var pm in party)
                         {
-                            _hpFontHandle.Push();
-                            pushed = true;
-                        }
-                        var ts = ImGui.CalcTextSize(label);
-                        var textPos = new Vector2(screen.X - ts.X * 0.5f, screen.Y - ts.Y * 0.5f);
-                        var shadow = new Vector4(0f, 0f, 0f, hpA * 0.9f);
-                        var fg     = new Vector4(1f, 1f, 1f, hpA);
-                        dl.AddText(new Vector2(textPos.X + 1, textPos.Y + 1), ImGui.GetColorU32(shadow), label);
-                        dl.AddText(textPos, ImGui.GetColorU32(fg), label);
-                    }
-                    finally
-                    {
-                        if (pushed) _hpFontHandle?.Pop();
-                    }
-                    SkipHpText: ;
+                            if (pm == null) continue;
+                            var go = pm.GameObject;
+                            if (go == null || !go.IsValid()) continue;
+                            if (go.GameObjectId == lpId) continue;
 
-                    // Pulse ring emanating from the HP backdrop. Period is
-                    // driven by HP%: low HP → faster, full HP → slower.
-                    // Each cycle a ring expands outward from baseline radius
-                    // and fades to 0; alpha falls with phase so it reads
-                    // like a pulse rather than a static halo.
-                    float pulseT = (float)_hpPulsePhase;
-                    float pulseRStart = backdropR;
-                    float pulseREnd   = backdropR * cfg.JobAuraHpPulseExpandFactor;
-                    float pulseR = pulseRStart + (pulseREnd - pulseRStart) * pulseT;
-                    float pulseA = (1f - pulseT) * cfg.JobAuraHpPulseAlpha * hpA;
-                    if (pulseA >= 0.01f)
-                    {
-                        var pCol = new Vector4(
-                            cfg.JobAuraHpPulseColorR, cfg.JobAuraHpPulseColorG, cfg.JobAuraHpPulseColorB,
-                            pulseA);
-                        dl.AddCircle(screen, pulseR, ImGui.GetColorU32(pCol), 96, cfg.JobAuraHpPulseThickness * uiScale);
+                            // Resolve world position the same way the
+                            // primary anchor does — bone if configured,
+                            // root otherwise. Add the user's offsets so
+                            // the ring sits where the player wants.
+                            Vector3 mw = new Vector3(go.Position.X, go.Position.Y, go.Position.Z);
+                            if (noWickyXIV.Config.JobAuraAnchorToBone)
+                            {
+                                try
+                                {
+                                    var cgo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)go.Address;
+                                    if (cgo != null && cgo->DrawObject != null
+                                        && Hypostasis.Game.Common.getWorldBonePosition.IsValid)
+                                    {
+                                        var bw = Hypostasis.Game.Common.GetBoneWorldPosition(
+                                            cgo, (uint)Math.Max(0, boneIdx));
+                                        if (bw != Vector3.Zero) mw = bw;
+                                    }
+                                }
+                                catch { /* fall back to root */ }
+                            }
+                            mw.X += noWickyXIV.Config.JobAuraOffsetX;
+                            mw.Y += noWickyXIV.Config.JobAuraOffsetY;
+                            mw.Z += noWickyXIV.Config.JobAuraOffsetZ;
+
+                            if (!DalamudApi.GameGui.WorldToScreen(mw, out var memberScreen)) continue;
+
+                            float memberPct = 1f;
+                            if (go is Dalamud.Game.ClientState.Objects.Types.IBattleChara ibc && ibc.MaxHp > 0)
+                                memberPct = MathF.Max(0f, MathF.Min(1f, ibc.CurrentHp / (float)ibc.MaxHp));
+
+                            DrawHpRingsAt(dl, memberScreen, baseR, memberPct, _combatAlpha, uiScale, drawText: false);
+                        }
                     }
                 }
+                catch { /* defensive — party iteration shouldn't break the rest of Draw */ }
             }
 
             // Top-cluster buff indicators — small triangle FLOATING ABOVE
@@ -1567,9 +1637,25 @@ public static class JobAura
                     new Vector4(0.45f, 1.00f, 0.75f, 1f), // light cyan-green → Ka (bottom-left)
                     new Vector4(0.35f, 0.55f, 1.00f, 1f), // blue → Getsu (bottom-right)
                 };
+                // Sen cascade gate: markers wait JobAuraSenCascadeDelay
+                // after the overlay first becomes visible before they
+                // begin showing, so they read as appearing AFTER the
+                // rings / HP indicator. Linear ramp over 0.25s once the
+                // delay has elapsed.
+                float cascadeDelay = MathF.Max(0f, noWickyXIV.Config.JobAuraSenCascadeDelay);
+                float sinceRise = (float)(Now() - _overlayRiseT);
+                float cascadeGate;
+                if (sinceRise <= cascadeDelay)        cascadeGate = 0f;
+                else if (sinceRise >= cascadeDelay + 0.25f) cascadeGate = 1f;
+                else                                  cascadeGate = (sinceRise - cascadeDelay) / 0.25f;
+
                 for (int i = 0; i < 3; i++)
                 {
-                    float sa = _senAlpha[i] * _combatAlpha;
+                    // Sen markers ride hostile cascade slot 0 (fades
+                    // OUT first on friendly target, IN last on hostile)
+                    // in addition to the existing initial-overlay
+                    // cascadeGate.
+                    float sa = _senAlpha[i] * _combatAlpha * cascadeGate * _hostileCascadeAlpha[0];
                     if (sa < 0.01f) continue;
                     var pos = new Vector2(
                         screen.X + dirs[i].X * markerR,
@@ -1589,6 +1675,105 @@ public static class JobAura
     }
 
     private static double Now() => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
+
+    // True if the current target is a hostile combat entity. Friendly
+    // NPCs, player characters (incl. self via target-self macro),
+    // pets / chocobos, event NPCs, etc. all count as "not hostile" so
+    // the Kenki + Sen cascade fades out on them.
+    private static bool IsTargetHostile()
+    {
+        try
+        {
+            var t = DalamudApi.TargetManager?.Target;
+            if (t == null) return false;
+            // Players are always non-hostile in PvE; PvP doesn't
+            // currently distinguish via ObjectKind alone, so accept
+            // the false-negative there for simplicity.
+            if (t.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc)
+                return false;
+            if (t is Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn)
+                // Dalamud's BattleNpcSubKind enum values for friendlies
+                // are 1..3 (Pet / Chocobo / Buddy). Enemy/Combatant
+                // sits at 5; use the numeric value to dodge enum
+                // member-name churn between Dalamud versions.
+                return (int)bn.BattleNpcKind == 5;
+        }
+        catch { }
+        return false;
+    }
+
+    // Draws the 3-layer HP indicator (backdrop + core + pulse) at the
+    // given screen position. Extracted so the same draw runs for the
+    // primary anchor (target/player) AND for every party member when
+    // JobAuraPartyHpRings is enabled. drawText controls the "XX%"
+    // overlay — primary anchor uses it, party rings skip it because
+    // the on-screen clutter would be too much.
+    private static unsafe void DrawHpRingsAt(
+        Dalamud.Bindings.ImGui.ImDrawListPtr dl,
+        Vector2 screen, float baseR, float hpPct, float hpA, float uiScale,
+        bool drawText)
+    {
+        var cfg = noWickyXIV.Config;
+        // Outer (backdrop) ring — persistent.
+        float backdropR = baseR * cfg.JobAuraHpBackdropRadiusFactor;
+        var backdrop = new Vector4(
+            cfg.JobAuraHpBackdropColorR, cfg.JobAuraHpBackdropColorG, cfg.JobAuraHpBackdropColorB,
+            hpA * cfg.JobAuraHpBackdropAlpha);
+        dl.AddCircleFilled(screen, backdropR, Dalamud.Bindings.ImGui.ImGui.GetColorU32(backdrop), 64);
+
+        // Inner core — radius + alpha scale with HP.
+        float coreR = baseR * cfg.JobAuraHpInnerRadiusFactor * hpPct;
+        float coreA = hpA * cfg.JobAuraHpInnerAlpha * MathF.Max(0.05f, hpPct);
+        if (coreR > 0.5f && coreA >= 0.01f)
+        {
+            var core = new Vector4(
+                cfg.JobAuraHpInnerColorR, cfg.JobAuraHpInnerColorG, cfg.JobAuraHpInnerColorB,
+                coreA);
+            dl.AddCircleFilled(screen, coreR, Dalamud.Bindings.ImGui.ImGui.GetColorU32(core), 64);
+        }
+
+        // Text — primary anchor only. Skipped for party rings.
+        if (drawText && cfg.JobAuraShowHpText)
+        {
+            string label = $"{(int)MathF.Round(hpPct * 100f)}%";
+            EnsureHpFont();
+            bool pushed = false;
+            try
+            {
+                if (_hpFontHandle != null && _hpFontHandle.Available)
+                {
+                    _hpFontHandle.Push();
+                    pushed = true;
+                }
+                var ts = Dalamud.Bindings.ImGui.ImGui.CalcTextSize(label);
+                var textPos = new Vector2(screen.X - ts.X * 0.5f, screen.Y - ts.Y * 0.5f);
+                var shadow = new Vector4(0f, 0f, 0f, hpA * 0.9f);
+                var fg     = new Vector4(1f, 1f, 1f, hpA);
+                dl.AddText(new Vector2(textPos.X + 1, textPos.Y + 1),
+                    Dalamud.Bindings.ImGui.ImGui.GetColorU32(shadow), label);
+                dl.AddText(textPos, Dalamud.Bindings.ImGui.ImGui.GetColorU32(fg), label);
+            }
+            finally
+            {
+                if (pushed) _hpFontHandle?.Pop();
+            }
+        }
+
+        // Pulse ring emanating from the HP backdrop.
+        float pulseT = (float)_hpPulsePhase;
+        float pulseRStart = backdropR;
+        float pulseREnd   = backdropR * cfg.JobAuraHpPulseExpandFactor;
+        float pulseR = pulseRStart + (pulseREnd - pulseRStart) * pulseT;
+        float pulseA = (1f - pulseT) * cfg.JobAuraHpPulseAlpha * hpA;
+        if (pulseA >= 0.01f)
+        {
+            var pCol = new Vector4(
+                cfg.JobAuraHpPulseColorR, cfg.JobAuraHpPulseColorG, cfg.JobAuraHpPulseColorB,
+                pulseA);
+            dl.AddCircle(screen, pulseR, Dalamud.Bindings.ImGui.ImGui.GetColorU32(pCol),
+                96, cfg.JobAuraHpPulseThickness * uiScale);
+        }
+    }
 
     // True if any OTHER enabled layer in the list fired within its
     // RunTimeSeconds window — i.e. its visual is presumed still
@@ -1649,6 +1834,17 @@ public static class JobAura
         _oocAlpha       = 0f;
         _haveLastAnchor = false;
         _lastAnchorWorld = default;
+        // Reset cascade timing too so re-entering a zone re-cascades
+        // the Sen markers from scratch instead of skipping the delay.
+        _overlayRiseT = double.MinValue;
+        _overlayWasVisible = false;
+        // Wipe hostile cascade state so the next acquisition gets a
+        // fresh fade-in instead of inheriting whatever the previous
+        // zone left behind.
+        for (int i = 0; i < _hostileCascadeAlpha.Length; i++) _hostileCascadeAlpha[i] = 0f;
+        _targetHostile = false;
+        _targetHostilePrev = false;
+        _hostileTransitionT = double.MinValue;
     }
 
     // Cheap path validator. The game's resource loader (especially

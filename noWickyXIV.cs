@@ -154,6 +154,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         HpRing.Update();
         HotbarFader.Update();
         TargetArrowHider.Update();
+        TargetUI.Update();
     }
 
     protected override void Draw()
@@ -163,6 +164,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         Crosshair.Draw();
         JobAura.Draw();
         HpRing.Draw();
+        TargetUI.Draw();
     }
 
     private static bool didLogin = false; // Workaround
@@ -194,6 +196,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // doesn't leave the user with faded/invisible bars.
         try { HotbarFader.RestoreOpaque(); } catch { }
         try { TargetArrowHider.Dispose(); } catch { }
+        try { TargetUI.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;
 

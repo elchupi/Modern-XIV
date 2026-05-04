@@ -86,6 +86,13 @@ public static unsafe class CameraDynamics
     // first mouse movement after startup yanks the camera somewhere.
     private static bool    _cursorReleased = true;
     private static bool    _mouseLookInit;
+    // One-frame guard after init/toggle: discard the next frame's
+    // delta and just refresh prev-pos. Without this, cursor-pos
+    // updates between Plugin.Update's SetCursorPos call and ImGui's
+    // io.MousePos snapshot could leak a single big phantom delta
+    // (oldPos − center) on the frame right after re-enable, which
+    // jumped the camera angle instead of "just hiding the mouse".
+    private static bool    _mouseLookSkipNextDelta;
     private static Vector2 _mouseLookPrevPos;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -138,8 +145,10 @@ public static unsafe class CameraDynamics
     {
         _cursorReleased = !_cursorReleased;
         // Re-init delta tracking on toggle so we don't apply a phantom delta
-        // accumulated during the released period.
+        // accumulated during the released period. Also burn the next
+        // frame's delta — see _mouseLookSkipNextDelta comment.
         _mouseLookInit = false;
+        _mouseLookSkipNextDelta = true;
         try { DalamudApi.PluginLog.Debug($"[noWickyXIV] Cursor release toggled -> {(_cursorReleased ? "RELEASED (UI mode)" : "GRABBED (mouselook)")}"); } catch { }
     }
 
@@ -188,6 +197,15 @@ public static unsafe class CameraDynamics
         UpdateCombatZoom(cam, tps, dt);
         UpdateAutoShoulderSwap(cam, tps, dt);
         UpdateSwivelOnMove(cam, tps, dt);
+        // Input smoothing runs LAST so it observes the final-state
+        // currentZoom / currentHRotation / currentVRotation produced
+        // by every other writer this frame, exp-lerps toward those
+        // targets, and writes the smoothed values back.
+        UpdateInputSmoothing(cam, tps, dt);
+        // Position-offset smoothing — lerps Display*Offset getters
+        // toward PresetManager.Effective* + Config.GlobalHeightOffset.
+        // The Game.cs camera-position detour reads these getters.
+        UpdateOffsetSmoothing(dt);
         UpdateInstantModeNote();
     }
 
@@ -246,6 +264,200 @@ public static unsafe class CameraDynamics
         _sensLastVrot = newV;
     }
 
+    // ---- Camera position smoothing ----
+    // Smoothed copies of HeightOffset / SideOffset / GlobalHeightOffset.
+    // The Game.cs detour reads these via the Display* getters when
+    // EnableCameraPositionSmoothing is on, so slider drags and
+    // Ctrl+scroll height adjustments lerp into place instead of
+    // snapping. PresetManager.ApplyPreset calls SnapOffsets() so a
+    // preset switch doesn't get caught in the lerp window.
+    private static float _smoothedHeightOffset;
+    private static float _smoothedSideOffset;
+    private static float _smoothedGlobalHeightOffset;
+    private static bool  _smoothedOffsetsInit;
+
+    // Position smoothing follows EITHER toggle — its dedicated
+    // checkbox OR the broader "Smooth zoom / yaw / pitch input" one
+    // — so users who only flip the more obvious input-smoothing
+    // toggle still get smoothed offsets.
+    private static bool PositionSmoothingActive
+        => noWickyXIV.Config.EnableCameraPositionSmoothing
+        || noWickyXIV.Config.EnableInputSmoothing;
+
+    public static float DisplayHeightOffset
+        => PositionSmoothingActive
+            ? _smoothedHeightOffset
+            : PresetManager.EffectiveHeightOffset;
+
+    public static float DisplaySideOffset
+        => PositionSmoothingActive
+            ? _smoothedSideOffset
+            : PresetManager.EffectiveSideOffset;
+
+    public static float DisplayGlobalHeightOffset
+        => PositionSmoothingActive
+            ? _smoothedGlobalHeightOffset
+            : noWickyXIV.Config.GlobalHeightOffset;
+
+    // Snaps every smoothed offset to its current target. Called by
+    // PresetManager.ApplyPreset so a preset switch doesn't visually
+    // ride a lerp out of the previous preset's offsets.
+    public static void SnapOffsets()
+    {
+        _smoothedHeightOffset       = PresetManager.EffectiveHeightOffset;
+        _smoothedSideOffset         = PresetManager.EffectiveSideOffset;
+        _smoothedGlobalHeightOffset = noWickyXIV.Config.GlobalHeightOffset;
+        _smoothedOffsetsInit = true;
+    }
+
+    private static void UpdateOffsetSmoothing(float dt)
+    {
+        if (!PositionSmoothingActive)
+        {
+            _smoothedOffsetsInit = false;
+            return;
+        }
+
+        if (!_smoothedOffsetsInit)
+        {
+            SnapOffsets();
+            return;
+        }
+
+        // Use the dedicated CameraPositionSmoothingRate when its
+        // toggle is on; otherwise fall back to the input rotate rate
+        // so the offset feel matches the rest of the smoothing the
+        // user already enabled.
+        float rate = noWickyXIV.Config.EnableCameraPositionSmoothing
+            ? MathF.Max(0.5f, noWickyXIV.Config.CameraPositionSmoothingRate)
+            : MathF.Max(0.5f, noWickyXIV.Config.InputSmoothingRotateRate);
+        float k = 1f - MathF.Exp(-rate * dt);
+
+        float hT = PresetManager.EffectiveHeightOffset;
+        float sT = PresetManager.EffectiveSideOffset;
+        float gT = noWickyXIV.Config.GlobalHeightOffset;
+
+        _smoothedHeightOffset       += (hT - _smoothedHeightOffset)       * k;
+        _smoothedSideOffset         += (sT - _smoothedSideOffset)         * k;
+        _smoothedGlobalHeightOffset += (gT - _smoothedGlobalHeightOffset) * k;
+
+        // Snap-on-arrival so we don't asymptote forever.
+        if (MathF.Abs(hT - _smoothedHeightOffset)       < 0.0005f) _smoothedHeightOffset       = hT;
+        if (MathF.Abs(sT - _smoothedSideOffset)         < 0.0005f) _smoothedSideOffset         = sT;
+        if (MathF.Abs(gT - _smoothedGlobalHeightOffset) < 0.0005f) _smoothedGlobalHeightOffset = gT;
+    }
+
+    // ---- Input smoothing: exp-lerp on zoom/yaw/pitch ----
+    // Detects external writes by comparing the current camera value
+    // against what we wrote on the previous frame. When they differ
+    // (user scrolled the wheel, mouse-moved, or another writer like
+    // CombatZoom changed it), update the per-axis target. The
+    // smoothed value lerps toward target each frame at a config
+    // rate. Yaw uses AngleDelta so wrap-around at ±π takes the
+    // shortest arc.
+    private static bool  _smoothInit;
+    private static float _smoothZoomLast,  _smoothZoomTarget;
+    private static float _smoothHrotLast,  _smoothHrotTarget;
+    private static float _smoothVrotLast,  _smoothVrotTarget;
+
+    private static void UpdateInputSmoothing(GameCamera* cam, bool tps, float dt)
+    {
+        if (!noWickyXIV.Config.EnableInputSmoothing || !tps)
+        {
+            _smoothInit = false;
+            return;
+        }
+
+        float curZoom = cam->currentZoom;
+        float curH    = cam->currentHRotation;
+        float curV    = cam->currentVRotation;
+
+        if (!_smoothInit)
+        {
+            _smoothZoomLast = _smoothZoomTarget = curZoom;
+            _smoothHrotLast = _smoothHrotTarget = curH;
+            _smoothVrotLast = _smoothVrotTarget = curV;
+            _smoothInit = true;
+            return;
+        }
+
+        // ROTATION smoothing is bypassed while RMB is held — the game's
+        // native RMB-drag does its own delta accumulation per poll;
+        // layering our lerp on top makes it feel sticky/jittery.
+        bool rmbHeld = RmbHeldNow;
+        // ZOOM smoothing is bypassed while CombatZoom or ADS is
+        // actively driving currentZoom. Without this bypass, all three
+        // writers (CombatZoom/ADS plus the smoother) compete for the
+        // same value each frame and the camera feels "stuck in
+        // transition" — scroll deflects briefly, smoother lerps back,
+        // CombatZoom overrides, repeat. When neither is active the
+        // smoother is the sole writer and your scroll wheel rides a
+        // clean exp-lerp.
+        bool zoomBypassed = _combatZoomActive || _adsActive;
+
+        if (!zoomBypassed
+            && MathF.Abs(curZoom - _smoothZoomLast) > 0.0005f)
+            _smoothZoomTarget = curZoom;
+        if (MathF.Abs(AngleDelta(_smoothHrotLast, curH)) > 0.00005f)
+            _smoothHrotTarget = curH;
+        if (MathF.Abs(curV - _smoothVrotLast) > 0.00005f)
+            _smoothVrotTarget = curV;
+
+        float zoomRate = MathF.Max(0.5f, noWickyXIV.Config.InputSmoothingZoomRate);
+        float rotRate  = MathF.Max(0.5f, noWickyXIV.Config.InputSmoothingRotateRate);
+        float kZ = 1f - MathF.Exp(-zoomRate * dt);
+        float kR = 1f - MathF.Exp(-rotRate  * dt);
+
+        float newZoom;
+        if (zoomBypassed)
+        {
+            // Track the engine's current value so the smoother resumes
+            // cleanly when CombatZoom/ADS releases the value.
+            newZoom = curZoom;
+            _smoothZoomTarget = curZoom;
+        }
+        else
+        {
+            newZoom = _smoothZoomLast + (_smoothZoomTarget - _smoothZoomLast) * kZ;
+            if (MathF.Abs(_smoothZoomTarget - newZoom) < 0.001f) newZoom = _smoothZoomTarget;
+        }
+
+        float newH, newV;
+        if (rmbHeld)
+        {
+            newH = curH;
+            newV = curV;
+            _smoothHrotTarget = curH;
+            _smoothVrotTarget = curV;
+        }
+        else
+        {
+            float dH = AngleDelta(_smoothHrotLast, _smoothHrotTarget);
+            newH = _smoothHrotLast + dH * kR;
+            while (newH >  MathF.PI) newH -= 2f * MathF.PI;
+            while (newH < -MathF.PI) newH += 2f * MathF.PI;
+            if (MathF.Abs(AngleDelta(newH, _smoothHrotTarget)) < 0.0005f) newH = _smoothHrotTarget;
+
+            newV = _smoothVrotLast + (_smoothVrotTarget - _smoothVrotLast) * kR;
+            if (MathF.Abs(_smoothVrotTarget - newV) < 0.0005f) newV = _smoothVrotTarget;
+            if (newV < cam->minVRotation) newV = cam->minVRotation;
+            if (newV > cam->maxVRotation) newV = cam->maxVRotation;
+        }
+
+        // Only write back what we actually computed (don't stomp on
+        // CombatZoom/ADS's zoom or the engine's RMB-drag rotation).
+        if (!zoomBypassed) cam->currentZoom = newZoom;
+        if (!rmbHeld)
+        {
+            cam->currentHRotation = newH;
+            cam->currentVRotation = newV;
+        }
+
+        _smoothZoomLast = newZoom;
+        _smoothHrotLast = newH;
+        _smoothVrotLast = newV;
+    }
+
     // ---- Always-on mouselook (FPS-style camera lock) ----
     // When enabled and cursor is "grabbed" (default; F7 toggles to release):
     //   - Read mouse delta vs our tracked previous position
@@ -262,6 +474,9 @@ public static unsafe class CameraDynamics
         if (!noWickyXIV.Config.EnableMouseLookAlways || !tps || _cursorReleased)
         {
             _mouseLookInit = false;
+            _mouseLookSkipNextDelta = true; // re-enable should burn the
+                                             // first delta, regardless
+                                             // of which path turned us off.
             ShowOsCursor();
             return;
         }
@@ -292,6 +507,12 @@ public static unsafe class CameraDynamics
         {
             _mouseLookPrevPos = curPos;
             _mouseLookInit = true;
+        }
+        else if (_mouseLookSkipNextDelta)
+        {
+            // Burn the first post-init delta — see field comment.
+            _mouseLookPrevPos = curPos;
+            _mouseLookSkipNextDelta = false;
         }
         else
         {
@@ -537,10 +758,20 @@ public static unsafe class CameraDynamics
     // baseline. Bypassed while ADS is active (RMB held) so ADS owns zoom.
     private static void UpdateCombatZoom(GameCamera* cam, bool tps, float dt)
     {
-        // Hard-disabled paths: reset state. Re-enable → next frame re-captures
-        // baseline cleanly.
+        // Hard-disabled paths: reset state. If we were mid-effect when
+        // the toggle flipped off (e.g. zoom currently lerped to the
+        // combat distance), SNAP BACK TO BASELINE so the camera
+        // returns to where it was before combat zoom kicked in. Prior
+        // to this, the early-return cleared _combatZoomActive but
+        // never restored zoom — the camera sat at CombatZoomDistance
+        // and looked like the feature was still on.
         if (!noWickyXIV.Config.EnableCombatZoom || !tps)
         {
+            if (_combatZoomActive && cam != null)
+            {
+                cam->currentZoom = MathF.Max(cam->minZoom,
+                                   MathF.Min(cam->maxZoom, _combatZoomBase));
+            }
             _combatZoomActive = false;
             _combatZoomWasInCombat = false;
             return;

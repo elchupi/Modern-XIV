@@ -71,6 +71,14 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Target UI"))
+            {
+                if (ImGui.BeginChild("##targetui_scroll"))
+                    DrawTargetUITab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
             if (ImGui.BeginTabItem("Misc"))
             {
                 if (ImGui.BeginChild("##misc_scroll"))
@@ -1006,6 +1014,17 @@ public static class PluginUI
             ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.56f, 4f, 1f);
             ConfigCheckbox("Invert Y axis##Sens", ref noWickyXIV.Config.InvertMouseY);
             ImGui.TextDisabled("Note: applies to mouse + gamepad uniformly. Per-device split is deferred.");
+
+            ImGui.Separator();
+            ConfigCheckbox("Smooth zoom / yaw / pitch input##InputSmooth", ref noWickyXIV.Config.EnableInputSmoothing);
+            ImGui.TextDisabled("Each axis exp-lerps toward its target. Higher rate = snappier. RMB-drag bypasses rotation lerp; CombatZoom / ADS bypass zoom lerp so they don't fight the smoother.");
+            ConfigSliderFloat("Zoom smoothing rate (1/s)##InputSmooth",   ref noWickyXIV.Config.InputSmoothingZoomRate,   3f, 60f, 12f, "%.1f");
+            ConfigSliderFloat("Rotate smoothing rate (1/s)##InputSmooth", ref noWickyXIV.Config.InputSmoothingRotateRate, 3f, 60f, 22f, "%.1f");
+
+            ImGui.Separator();
+            ConfigCheckbox("Smooth camera position offsets##PosSmooth", ref noWickyXIV.Config.EnableCameraPositionSmoothing);
+            ImGui.TextDisabled("HeightOffset / SideOffset / Ctrl+scroll height lerp into place instead of snapping. Preset switches still snap.");
+            ConfigSliderFloat("Position smoothing rate (1/s)##PosSmooth", ref noWickyXIV.Config.CameraPositionSmoothingRate, 3f, 60f, 12f, "%.1f");
             ImGuiEx.EndGroupBox();
         }
 
@@ -1059,6 +1078,12 @@ public static class PluginUI
             ImGui.Separator();
             ConfigSliderFloat("Sen marker padding##JobAura", ref noWickyXIV.Config.JobAuraSenPadding, 0.8f, 2.0f, 1.18f, "%.2f");
             ConfigSliderFloat("Sen marker scale##JobAura",   ref noWickyXIV.Config.JobAuraSenScale,   0.3f, 3.0f, 1.0f);
+            ConfigSliderFloat("Sen cascade delay (s)##JobAura", ref noWickyXIV.Config.JobAuraSenCascadeDelay, 0f, 2f, 0.4f, "%.2f");
+            ImGui.TextDisabled("Sen markers wait this long after the overlay first becomes visible before fading in.");
+
+            ImGui.Separator();
+            ConfigCheckbox("Show HP rings on party members##JobAura", ref noWickyXIV.Config.JobAuraPartyHpRings);
+            ImGui.TextDisabled("Mirrors the primary HP indicator (without text) on every party member.");
 
             ImGui.Separator();
             ImGui.TextUnformatted("Kenki tier rings (33% / 66% / 100%)");
@@ -1279,6 +1304,181 @@ public static class PluginUI
 
             ImGuiEx.EndGroupBox();
         }
+    }
+
+    // ---- Target UI tab (target name + cast bar + spell name) ----
+    private static void DrawTargetUITab()
+    {
+        // ----- Target name -----
+        if (ImGuiEx.BeginGroupBox("Target name"))
+        {
+            ConfigCheckbox("Enable##TgtName", ref noWickyXIV.Config.EnableTargetName);
+
+            string[] anchorOptions = { "Screen (absolute X/Y)", "Target bone (X/Y are offsets)" };
+            int anchorIdx = Math.Clamp(noWickyXIV.Config.TargetNameAnchorMode, 0, 1);
+            ImGui.SetNextItemWidth(280 * ImGuiHelpers.GlobalScale);
+            if (ImGui.Combo("Anchor##TgtName", ref anchorIdx, anchorOptions, anchorOptions.Length))
+            {
+                noWickyXIV.Config.TargetNameAnchorMode = anchorIdx;
+                noWickyXIV.Config.Save();
+            }
+            if (anchorIdx == 1)
+            {
+                ConfigSliderInt("Bone index##TgtName", ref noWickyXIV.Config.TargetNameBoneIndex, 0, 80, 1);
+                ImGui.TextDisabled("X/Y are pixel offsets from the bone — a 960 X (Screen-mode default) puts the text far off-screen relative to the bone.");
+                if (ImGui.SmallButton("Zero offsets##TgtNameBoneReset"))
+                {
+                    noWickyXIV.Config.TargetNameX = 0f;
+                    noWickyXIV.Config.TargetNameY = -40f; // typical "above the head" offset
+                    noWickyXIV.Config.Save();
+                }
+                ImGui.SameLine();
+                ImGui.TextDisabled("(sets X=0, Y=-40 — text right above the bone)");
+            }
+
+            ConfigSliderFloat("X (px)##TgtName", ref noWickyXIV.Config.TargetNameX, -1500f, 3840f, 960f, "%.0f");
+            ConfigSliderFloat("Y (px)##TgtName", ref noWickyXIV.Config.TargetNameY, -1500f, 2160f, 200f, "%.0f");
+
+            DrawFontPicker("Font##TgtNameFont", ref noWickyXIV.Config.TargetNameFontPath);
+            ConfigSliderFloat("Font size (px)##TgtName", ref noWickyXIV.Config.TargetNameFontSize, 8f, 96f, 22f, "%.0f");
+
+            ImGui.TextDisabled("Color");
+            ConfigSliderFloat("R##TgtNameCol",     ref noWickyXIV.Config.TargetNameColorR, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("G##TgtNameCol",     ref noWickyXIV.Config.TargetNameColorG, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("B##TgtNameCol",     ref noWickyXIV.Config.TargetNameColorB, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("Alpha##TgtNameCol", ref noWickyXIV.Config.TargetNameAlpha,  0f, 1f, 1f, "%.2f");
+
+            ImGui.TextDisabled("Outline");
+            ConfigSliderFloat("Outline R##TgtNameOut", ref noWickyXIV.Config.TargetNameOutlineColorR, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Outline G##TgtNameOut", ref noWickyXIV.Config.TargetNameOutlineColorG, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Outline B##TgtNameOut", ref noWickyXIV.Config.TargetNameOutlineColorB, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Outline alpha##TgtNameOut", ref noWickyXIV.Config.TargetNameOutlineAlpha, 0f, 1f, 1f, "%.2f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // ----- Cast bar -----
+        if (ImGuiEx.BeginGroupBox("Cast bar"))
+        {
+            ConfigCheckbox("Enable##CastBar", ref noWickyXIV.Config.EnableCastBar);
+
+            string[] anchorOptions =
+            {
+                "Screen (absolute X/Y)",
+                "Target bone (X/Y are offsets)",
+                "Target name (X/Y are offsets from the name)",
+            };
+            int anchorIdx = Math.Clamp(noWickyXIV.Config.CastBarAnchorMode, 0, anchorOptions.Length - 1);
+            ImGui.SetNextItemWidth(360 * ImGuiHelpers.GlobalScale);
+            if (ImGui.Combo("Anchor##CastBar", ref anchorIdx, anchorOptions, anchorOptions.Length))
+            {
+                noWickyXIV.Config.CastBarAnchorMode = anchorIdx;
+                noWickyXIV.Config.Save();
+            }
+            if (anchorIdx == 1)
+                ConfigSliderInt("Bone index##CastBar", ref noWickyXIV.Config.CastBarBoneIndex, 0, 80, 1);
+            if (anchorIdx == 2)
+                ImGui.TextDisabled("Cast bar follows the target name; X/Y here are pixels relative to the name's anchor.");
+
+            ConfigSliderFloat("X (center, px)##CastBar", ref noWickyXIV.Config.CastBarX, -1500f, 3840f, 960f, "%.0f");
+            ConfigSliderFloat("Y (top, px)##CastBar",    ref noWickyXIV.Config.CastBarY, -1500f, 2160f, 240f, "%.0f");
+            ConfigSliderFloat("Length (px)##CastBar",    ref noWickyXIV.Config.CastBarLength, 30f, 800f, 220f, "%.0f");
+            ConfigSliderFloat("Height (px)##CastBar",    ref noWickyXIV.Config.CastBarHeight, 2f,  60f,  10f, "%.0f");
+
+            ImGui.TextDisabled("Fill (progress)");
+            ConfigSliderFloat("R##CastFill",     ref noWickyXIV.Config.CastBarFillR,     0f, 1f, 0.85f, "%.2f");
+            ConfigSliderFloat("G##CastFill",     ref noWickyXIV.Config.CastBarFillG,     0f, 1f, 0.55f, "%.2f");
+            ConfigSliderFloat("B##CastFill",     ref noWickyXIV.Config.CastBarFillB,     0f, 1f, 0.15f, "%.2f");
+            ConfigSliderFloat("Alpha##CastFill", ref noWickyXIV.Config.CastBarFillAlpha, 0f, 1f, 0.95f, "%.2f");
+
+            ImGui.TextDisabled("Background (empty)");
+            ConfigSliderFloat("R##CastBg",     ref noWickyXIV.Config.CastBarBgR,     0f, 1f, 0.10f, "%.2f");
+            ConfigSliderFloat("G##CastBg",     ref noWickyXIV.Config.CastBarBgG,     0f, 1f, 0.10f, "%.2f");
+            ConfigSliderFloat("B##CastBg",     ref noWickyXIV.Config.CastBarBgB,     0f, 1f, 0.10f, "%.2f");
+            ConfigSliderFloat("Alpha##CastBg", ref noWickyXIV.Config.CastBarBgAlpha, 0f, 1f, 0.70f, "%.2f");
+
+            ImGui.TextDisabled("Border");
+            ConfigSliderFloat("R##CastBor",     ref noWickyXIV.Config.CastBarBorderR,     0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("G##CastBor",     ref noWickyXIV.Config.CastBarBorderG,     0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("B##CastBor",     ref noWickyXIV.Config.CastBarBorderB,     0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Alpha##CastBor", ref noWickyXIV.Config.CastBarBorderAlpha, 0f, 1f, 0.85f, "%.2f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // ----- Cast bar spell name -----
+        if (ImGuiEx.BeginGroupBox("Cast bar — spell name"))
+        {
+            ConfigCheckbox("Show spell name##CastSpell", ref noWickyXIV.Config.EnableCastBarSpellName);
+
+            ConfigSliderFloat("Offset X (px)##CastSpell", ref noWickyXIV.Config.CastBarSpellOffsetX, -300f, 300f, 0f,   "%.0f");
+            ConfigSliderFloat("Offset Y (px)##CastSpell", ref noWickyXIV.Config.CastBarSpellOffsetY, -200f, 200f, -18f, "%.0f");
+
+            DrawFontPicker("Font##CastSpellFont", ref noWickyXIV.Config.CastBarSpellFontPath);
+            ConfigSliderFloat("Font size (px)##CastSpell", ref noWickyXIV.Config.CastBarSpellFontSize, 8f, 64f, 16f, "%.0f");
+
+            ImGui.TextDisabled("Color");
+            ConfigSliderFloat("R##CastSpellCol",     ref noWickyXIV.Config.CastBarSpellColorR, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("G##CastSpellCol",     ref noWickyXIV.Config.CastBarSpellColorG, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("B##CastSpellCol",     ref noWickyXIV.Config.CastBarSpellColorB, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("Alpha##CastSpellCol", ref noWickyXIV.Config.CastBarSpellAlpha,  0f, 1f, 1f, "%.2f");
+
+            ImGui.TextDisabled("Outline");
+            ConfigSliderFloat("Outline R##CastSpellOut",     ref noWickyXIV.Config.CastBarSpellOutlineColorR, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Outline G##CastSpellOut",     ref noWickyXIV.Config.CastBarSpellOutlineColorG, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Outline B##CastSpellOut",     ref noWickyXIV.Config.CastBarSpellOutlineColorB, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Outline alpha##CastSpellOut", ref noWickyXIV.Config.CastBarSpellOutlineAlpha,  0f, 1f, 1f, "%.2f");
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    // Reusable system-font dropdown for the Target UI elements.
+    // Mirrors the JobAura HP-text font picker. Ctrl+mouse-wheel while
+    // hovering the combo cycles through fonts without opening it.
+    private static void DrawFontPicker(string label, ref string current)
+    {
+        var fonts = JobAura.EnumerateSystemFonts();
+        string preview = string.IsNullOrEmpty(current) ? "(default ImGui)" : System.IO.Path.GetFileName(current);
+        ImGui.SetNextItemWidth(280 * ImGuiHelpers.GlobalScale);
+        if (ImGui.BeginCombo(label, preview))
+        {
+            bool isDefault = string.IsNullOrEmpty(current);
+            if (ImGui.Selectable("(default ImGui)", isDefault))
+            {
+                current = "";
+                noWickyXIV.Config.Save();
+            }
+            foreach (var path in fonts)
+            {
+                bool sel = path.Equals(current, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(System.IO.Path.GetFileName(path), sel))
+                {
+                    current = path;
+                    noWickyXIV.Config.Save();
+                }
+            }
+            ImGui.EndCombo();
+        }
+        // Ctrl+wheel cycle. Up = previous font, Down = next. Wraps.
+        // Activates on hover of the combo's clickable area (which is
+        // the previous item).
+        try
+        {
+            var io = ImGui.GetIO();
+            if (ImGui.IsItemHovered() && io.KeyCtrl && MathF.Abs(io.MouseWheel) > 0.01f && fonts.Count > 0)
+            {
+                int idx = -1;
+                for (int i = 0; i < fonts.Count; i++)
+                {
+                    if (fonts[i].Equals(current, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+                }
+                int step = io.MouseWheel > 0 ? -1 : 1;
+                int next = idx < 0
+                    ? (step > 0 ? 0 : fonts.Count - 1)
+                    : (((idx + step) % fonts.Count) + fonts.Count) % fonts.Count;
+                current = fonts[next];
+                noWickyXIV.Config.Save();
+            }
+        }
+        catch { /* defensive — ImGui IO can be unavailable mid-frame */ }
     }
 
     private static unsafe void DrawMiscTab()

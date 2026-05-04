@@ -88,6 +88,11 @@ public static class PresetManager
         EffectiveLookAtHeightOffset = preset.LookAtHeightOffset;
         EffectiveHeightOffset       = preset.HeightOffset;
         EffectiveSideOffset         = preset.SideOffset;
+
+        // Snap CameraDynamics's smoothed offset copies so a preset
+        // switch doesn't get caught riding a lerp out of the previous
+        // preset's offsets when EnableCameraPositionSmoothing is on.
+        try { CameraDynamics.SnapOffsets(); } catch { /* defensive */ }
     }
 
     public static void CheckCameraConditionSets(bool isLoggingIn)

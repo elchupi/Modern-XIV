@@ -155,6 +155,22 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
 
     // ---- Sensitivity (Phase E — fields added early so panel can show them) ----
     public float MouseSensitivityMul   = 1f;
+
+    // ---- Input smoothing (zoom + yaw + pitch lerps) ----
+    // Optional. Each per-frame write to currentZoom/H/VRotation is
+    // detected via a last-written-value comparison; the smoothed value
+    // exp-lerps toward the new target. Higher Rate = snappier (less
+    // smoothing); the rate is in 1/seconds (e.g., 12 → ~80 ms halflife).
+    public bool  EnableInputSmoothing       = false;
+    public float InputSmoothingZoomRate     = 12f;
+    public float InputSmoothingRotateRate   = 22f;
+
+    // Camera POSITION smoothing — exp-lerps HeightOffset / SideOffset
+    // / GlobalHeightOffset toward their configured targets each frame.
+    // Drives the slider drag / Ctrl+scroll feel without smoothing the
+    // preset-switch snap (PresetManager calls SnapOffsets to bypass).
+    public bool  EnableCameraPositionSmoothing = false;
+    public float CameraPositionSmoothingRate   = 12f;  // 1/s, ~80 ms halflife
     public float GamepadSensitivityMul = 1f;
     public bool  InvertMouseY          = false;
     public bool  InvertGamepadY        = false;
@@ -266,6 +282,83 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // verify the bit positions used by NormalHit/CritHit detection
     // when something stops triggering. Off in normal play.
     public bool  LogCombatHitDiagnostics = false;
+
+    // Sen marker cascade delay — seconds the Sen markers wait after the
+    // target overlay first becomes visible before they begin fading in,
+    // so the rings / HP indicator land first and the Sen markers
+    // cascade in afterwards.
+    public float JobAuraSenCascadeDelay = 0.4f;
+
+    // Hostile-target cascade: when targeting a non-enemy (friendly NPC,
+    // ally player, etc.) the Kenki rings and Sen markers fade out in
+    // sequence; on retargeting an enemy they cascade back in. Per-slot
+    // delay between adjacent elements; total cascade ≈ 4×delay seconds.
+    public float JobAuraHostileCascadeDelay = 0.08f;
+
+    // When true, draws the same HP indicator ring(s) on party members
+    // (anchored to their bone slot). Uses the same colors/sizes as the
+    // player's HP indicator.
+    public bool  JobAuraPartyHpRings    = false;
+
+    // ==== Target UI overlay (replaces DelvUI's target/cast bar) ====
+    // Anchor modes: 0 = absolute screen pixels (X/Y are screen coords),
+    //               1 = anchored to target bone (X/Y are offsets in
+    //                   pixels from the bone's projected screen pos).
+    // Each element (target name, cast bar) has its own anchor + bone idx
+    // so you can mix freely (e.g. cast bar floats above target's head,
+    // target name pinned to a fixed screen slot).
+    // Target name display.
+    public bool   EnableTargetName            = false;
+    public int    TargetNameAnchorMode        = 0;      // 0=Screen, 1=TargetBone
+    public int    TargetNameBoneIndex         = 1;
+    public float  TargetNameX                 = 960f;   // screen px (mode=0) or offset px (mode=1)
+    public float  TargetNameY                 = 200f;
+    public string TargetNameFontPath          = "";
+    public float  TargetNameFontSize          = 22f;
+    public float  TargetNameColorR            = 1.0f;
+    public float  TargetNameColorG            = 1.0f;
+    public float  TargetNameColorB            = 1.0f;
+    public float  TargetNameAlpha             = 1.0f;
+    public float  TargetNameOutlineColorR     = 0f;
+    public float  TargetNameOutlineColorG     = 0f;
+    public float  TargetNameOutlineColorB     = 0f;
+    public float  TargetNameOutlineAlpha      = 1.0f;
+
+    // Cast bar.
+    public bool   EnableCastBar               = false;
+    public int    CastBarAnchorMode           = 0;     // 0=Screen, 1=TargetBone
+    public int    CastBarBoneIndex            = 1;
+    public float  CastBarX                    = 960f;
+    public float  CastBarY                    = 240f;
+    public float  CastBarLength               = 220f;
+    public float  CastBarHeight               = 10f;
+    public float  CastBarFillR                = 0.85f;
+    public float  CastBarFillG                = 0.55f;
+    public float  CastBarFillB                = 0.15f;
+    public float  CastBarFillAlpha            = 0.95f;
+    public float  CastBarBgR                  = 0.10f;
+    public float  CastBarBgG                  = 0.10f;
+    public float  CastBarBgB                  = 0.10f;
+    public float  CastBarBgAlpha              = 0.70f;
+    public float  CastBarBorderR              = 0f;
+    public float  CastBarBorderG              = 0f;
+    public float  CastBarBorderB              = 0f;
+    public float  CastBarBorderAlpha          = 0.85f;
+
+    // Cast spell name (optional sub-toggle of cast bar).
+    public bool   EnableCastBarSpellName      = true;
+    public float  CastBarSpellOffsetX         = 0f;     // relative to the cast bar's TOP-LEFT
+    public float  CastBarSpellOffsetY         = -18f;
+    public string CastBarSpellFontPath        = "";
+    public float  CastBarSpellFontSize        = 16f;
+    public float  CastBarSpellColorR          = 1.0f;
+    public float  CastBarSpellColorG          = 1.0f;
+    public float  CastBarSpellColorB          = 1.0f;
+    public float  CastBarSpellAlpha           = 1.0f;
+    public float  CastBarSpellOutlineColorR   = 0f;
+    public float  CastBarSpellOutlineColorG   = 0f;
+    public float  CastBarSpellOutlineColorB   = 0f;
+    public float  CastBarSpellOutlineAlpha    = 1.0f;
 
     // ---- JobAura Kenki tier ring colors ----
     // The three concentric Kenki rings (33% / 66% / 100%) drawn around

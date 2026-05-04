@@ -12,6 +12,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
     {
         Game.Initialize();
         IPC.Initialize();
+        JobAura.Initialize();
+        CombatEvents.Initialize();
         DalamudApi.ClientState.Login += Login;
 
         // One-shot migration: MouseSensitivityMul values < 0.56 produce
@@ -147,6 +149,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         PresetManager.Update();
         InputHandler.Update();
         CameraDynamics.Update();
+        JobAura.Update();
+        HpRing.Update();
     }
 
     protected override void Draw()
@@ -154,6 +158,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         FreeCam.Draw();
         PluginUI.Draw();
         Crosshair.Draw();
+        JobAura.Draw();
+        HpRing.Draw();
     }
 
     private static bool didLogin = false; // Workaround
@@ -164,6 +170,10 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         DalamudApi.Framework.Update += UpdateDefaultPreset;
         PresetManager.DisableCameraPresets();
         PresetManager.CheckCameraConditionSets(true);
+        // Restore the user's last-active preset over any auto-applied
+        // QoL Bar preset. The override carries across sessions so the
+        // user doesn't have to re-pick their preset every login.
+        PresetManager.RestoreLastActivePreset();
     }
 
     private static void UpdateDefaultPreset(IFramework framework)
@@ -183,6 +193,9 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         if (FreeCam.Enabled)
             FreeCam.Toggle();
 
+        CombatEvents.Dispose();
+        JobAura.Dispose();
+        VfxBridge.Dispose();
         Game.Dispose();
     }
 }

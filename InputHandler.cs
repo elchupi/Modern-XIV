@@ -21,7 +21,15 @@ namespace noWickyXIV;
 //   previous-frame cache to fire ONCE per press.
 public static class InputHandler
 {
+    // Legacy flag — kept for compat with anything else that might read it,
+    // but our zoom suppression now uses the stateless hook in Game.cs that
+    // checks modifier state directly. The flag is no longer load-bearing.
     public static bool SuppressNextZoom { get; private set; }
+
+    // Re-entrancy: when true, the getMouseWheelStatus hook returns the real
+    // wheel value (so our own handler reads it). When false, game-side
+    // callers get 0 unless they're holding the Shift+Ctrl zoom chord.
+    public static bool WheelHandlerActive { get; private set; }
 
     // Edge-detect cache for keyboard hotkeys. Kept by virtual-key int.
     private static readonly System.Collections.Generic.Dictionary<int, bool> _keyPrev = new();
@@ -78,8 +86,13 @@ public static class InputHandler
         try
         {
             sbyte wheelStatus;
-            try { wheelStatus = InputData.GetMouseWheelStatus(); }
-            catch { return; }
+            WheelHandlerActive = true;
+            try
+            {
+                try { wheelStatus = InputData.GetMouseWheelStatus(); }
+                catch { return; }
+            }
+            finally { WheelHandlerActive = false; }
             // Edge-detect: only fire when wheel transitions from 0 (or sign-flip).
             sbyte prev = _wheelPrev;
             _wheelPrev = wheelStatus;

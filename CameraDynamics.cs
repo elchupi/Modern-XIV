@@ -78,7 +78,13 @@ public static unsafe class CameraDynamics
     private static bool  _sensInit;
 
     // --- Always-on mouselook state (FPS-style camera lock) ---
-    private static bool    _cursorReleased; // true = cursor free for UI; false = mouse drives camera
+    // Default = TRUE (cursor released, UI mode). This means even if the
+    // user has EnableMouseLookAlways=true saved in their config,
+    // mouselook does NOT engage on plugin start — they have to press
+    // the CursorReleaseHotkey (default F7) to grab the cursor first.
+    // Prevents the unwanted "camera flinch on plugin load" where the
+    // first mouse movement after startup yanks the camera somewhere.
+    private static bool    _cursorReleased = true;
     private static bool    _mouseLookInit;
     private static Vector2 _mouseLookPrevPos;
 

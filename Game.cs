@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -51,16 +52,29 @@ public static unsafe class Game
     }
 
     // Belt-and-braces: getZoomDelta isn't the only camera path that reads
-    // the wheel — when InputHandler consumes a scroll for cycling/height/
-    // shoulder there was a single notch leaking into camera zoom anyway.
-    // Hook getMouseWheelStatus and return 0 once InputHandler has flagged
-    // the wheel as consumed for the current frame, so any later game-side
-    // reads see zero. InputHandler's own read happens BEFORE it sets the
-    // flag, so it still sees the real value.
+    // the wheel. The flag-based suppression had a frame-ordering bug — if
+    // the game's camera tick read getMouseWheelStatus before our handler
+    // set the flag, one notch leaked into zoom every scroll.
+    //
+    // Stateless approach: in the detour itself, check the modifier state.
+    // The zoom chord is Shift+Ctrl (the only path the user wants for zoom);
+    // anything else that reads the wheel game-side gets 0. Our own handler
+    // sets WheelHandlerActive while it reads, so it still sees the real
+    // value via re-entrancy.
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
     private static sbyte GetMouseWheelStatusDetour()
     {
-        if (InputHandler.SuppressNextZoom) return 0;
-        return InputData.getMouseWheelStatus.Original();
+        if (InputHandler.WheelHandlerActive)
+            return InputData.getMouseWheelStatus.Original();
+        bool shift = (GetAsyncKeyState(0x10) & 0x8000) != 0
+                  || (GetAsyncKeyState(0xA0) & 0x8000) != 0
+                  || (GetAsyncKeyState(0xA1) & 0x8000) != 0;
+        bool ctrl  = (GetAsyncKeyState(0x11) & 0x8000) != 0
+                  || (GetAsyncKeyState(0xA2) & 0x8000) != 0
+                  || (GetAsyncKeyState(0xA3) & 0x8000) != 0;
+        if (shift && ctrl)
+            return InputData.getMouseWheelStatus.Original();
+        return 0;
     }
 
     private static void SetCameraLookAtDetour(GameCamera* camera, Vector3* lookAtPosition, Vector3* cameraPosition, Vector3* a4) // a4 seems to be immediately overwritten and unused
@@ -137,15 +151,20 @@ public static unsafe class Game
                 prevCameraTarget = null;
             }
 
-            position->Y += preset.HeightOffset + noWickyXIV.Config.GlobalHeightOffset;
+            // Use PresetManager.EffectiveHeightOffset so a preset
+            // activation smoothly lerps the height instead of snapping.
+            position->Y += PresetManager.EffectiveHeightOffset + noWickyXIV.Config.GlobalHeightOffset;
 
             // PositionFloat is applied in CameraDynamics now (writes to
             // cam->lookAtX/Y/Z, not camera position) so the character appears
             // to drift within the frame instead of being re-centered by the
             // camera angle. No-op here.
 
-            // Auto-shoulder lerp may override preset.SideOffset mid-swap.
-            float effectiveSide = CameraDynamics.GetActiveSideOffset(preset.SideOffset);
+            // Auto-shoulder lerp may override the side offset mid-swap.
+            // EffectiveSideOffset feeds the lerped value during a preset
+            // transition; CameraDynamics.GetActiveSideOffset further
+            // overrides during an auto-shoulder-swap animation.
+            float effectiveSide = CameraDynamics.GetActiveSideOffset(PresetManager.EffectiveSideOffset);
             if (effectiveSide == 0 || camera->mode != 1) return;
 
             const float halfPI = MathF.PI / 2f;
@@ -209,8 +228,13 @@ public static unsafe class Game
     public static Bool UpdateLookAtHeightOffsetDetour(GameCamera* camera, GameObject* o, Bool zero)
     {
         var ret = GameCamera.updateLookAtHeightOffset.Original(camera, o, zero);
+        // Use PresetManager.EffectiveLookAtHeightOffset so a preset
+        // activation smoothly lerps look-at-height instead of snapping.
+        // (Old code wrote preset.LookAtHeightOffset directly here, which
+        // overwrote the per-frame lerp from PresetManager.Update each
+        // game tick.)
         if (ret && !zero && (nint)o == DalamudApi.ObjectTable.LocalPlayer?.Address && PresetManager.CurrentPreset != PresetManager.DefaultPreset)
-            camera->lookAtHeightOffset = PresetManager.CurrentPreset.LookAtHeightOffset;
+            camera->lookAtHeightOffset = PresetManager.EffectiveLookAtHeightOffset;
         return ret;
     }
 

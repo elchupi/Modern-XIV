@@ -6,4 +6,8 @@
         <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
     </PropertyGroup>
 
+    <ItemGroup>
+        <None Include="assets\*.wav" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
 </Project>

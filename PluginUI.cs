@@ -26,23 +26,56 @@ public static class PluginUI
         ImGui.Begin("noWickyXIV Configuration", ref isVisible);
         ImGuiEx.AddDonationHeader();
 
-        if (ImGui.BeginTabBar("CammyTabs"))
+        // Sticky tab bar: per-tab content lives inside a BeginChild so
+        // the tab bar itself stays pinned at the top of the window
+        // even when the tab content scrolls.
+        if (ImGui.BeginTabBar("CammyTabs", ImGuiTabBarFlags.Reorderable))
         {
             if (ImGui.BeginTabItem("Presets"))
             {
-                DrawPresetList();
+                if (ImGui.BeginChild("##presets_scroll"))
+                    DrawPresetList();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Camera Dynamics"))
             {
-                DrawCameraDynamics();
+                if (ImGui.BeginChild("##dynamics_scroll"))
+                    DrawCameraDynamics();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Other Settings"))
+            if (ImGui.BeginTabItem("Effects"))
             {
-                DrawOtherSettings();
+                if (ImGui.BeginChild("##effects_scroll"))
+                    DrawEffectsTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("VFX Replacer"))
+            {
+                if (ImGui.BeginChild("##vfxreplacer_scroll"))
+                    DrawVfxReplacerTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("HP Ring"))
+            {
+                if (ImGui.BeginChild("##hpring_scroll"))
+                    DrawHpRingTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Misc"))
+            {
+                if (ImGui.BeginChild("##misc_scroll"))
+                    DrawMiscTab();
+                ImGui.EndChild();
                 ImGui.EndTabItem();
             }
 
@@ -52,7 +85,43 @@ public static class PluginUI
         ImGui.End();
     }
 
-    private static void DrawPresetList()
+    // Capture the currently-active camera state into a fresh preset.
+    // Used by the "+ New Preset" button so the user gets a snapshot
+    // of where the camera is right now (zoom, FoV, tilt, V-rotation
+    // limits, look-at offset) instead of the all-defaults baseline.
+    private static unsafe CameraConfigPreset CaptureCurrentCameraPreset()
+    {
+        var p = new CameraConfigPreset();
+        try
+        {
+            var cam = Common.CameraManager != null ? Common.CameraManager->worldCamera : null;
+            if (cam != null)
+            {
+                // Zoom — capture current zoom as Start, current min/max as bounds.
+                p.UseStartZoom = true;
+                p.StartZoom    = cam->currentZoom;
+                p.MinZoom      = cam->minZoom;
+                p.MaxZoom      = cam->maxZoom;
+
+                // FoV — same shape.
+                p.UseStartFoV  = true;
+                p.StartFoV     = cam->currentFoV;
+                p.MinFoV       = cam->minFoV;
+                p.MaxFoV       = cam->maxFoV;
+
+                // Vertical rotation limits + tilt + look-at height.
+                p.MinVRotation = cam->minVRotation;
+                p.MaxVRotation = cam->maxVRotation;
+                p.Tilt         = cam->tilt;
+                p.LookAtHeightOffset = cam->lookAtHeightOffset;
+            }
+        }
+        catch { /* defensive — fall back to defaults */ }
+        p.Name = $"Preset {noWickyXIV.Config.Presets.Count + 1}";
+        return p;
+    }
+
+    private static unsafe void DrawPresetList()
     {
         var currentPreset = CurrentPreset;
         var hasSelectedPreset = currentPreset != null;
@@ -61,7 +130,9 @@ public static class PluginUI
 
         if (ImGui.Button(FontAwesomeIcon.PlusCircle.ToIconString()))
         {
-            noWickyXIV.Config.Presets.Add(new());
+            // Snapshot the live camera into the new preset rather than
+            // creating a defaults-only entry the user has to fill in.
+            noWickyXIV.Config.Presets.Add(CaptureCurrentCameraPreset());
             noWickyXIV.Config.Save();
         }
 
@@ -122,6 +193,14 @@ public static class PluginUI
         ImGui.PopFont();
 
         ImGuiEx.SetItemTooltip("You can CTRL + Left Click sliders to input values manually.");
+
+        // Smooth transition slider — applies to ANY preset activation
+        // (manual click, auto condition-set swap, or login restore).
+        // 0.05s ≈ instant snap; 5s default = slow cinematic ease-in.
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ConfigSliderFloat("Transition seconds##PresetTransition",
+            ref noWickyXIV.Config.PresetTransitionSeconds, 0.05f, 15f, 5f, "%.2fs");
+        ImGui.TextDisabled("How long the camera takes to ease into a newly-applied preset's zoom / FoV / tilt / look-at-height.");
 
         ImGui.BeginChild("CammyPresetList", new Vector2(250 * ImGuiHelpers.GlobalScale, 0), true);
 
@@ -377,6 +456,387 @@ public static class PluginUI
             noWickyXIV.Config.Save();
     }
 
+    private static void ConfigSliderInt(string id, ref int val, int min, int max, int reset)
+    {
+        var save = false;
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button($"{FontAwesomeIcon.UndoAlt.ToIconString()}##{id}"))
+        {
+            val = reset;
+            save = true;
+        }
+        ImGui.PopFont();
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 150 * ImGuiHelpers.GlobalScale);
+        save |= ImGui.SliderInt(id, ref val, min, max);
+        if (save) noWickyXIV.Config.Save();
+    }
+
+    // Sticky filter for the JobAura layer editor. 0 = "All triggers",
+    // otherwise the index into triggerVals + 1.
+    private static int _jobAuraLayerFilterIdx = 0;
+
+    // Builds a string[] suitable for ImGui.Combo, listing every distinct
+    // non-empty Path from the layer list (excluding `self`). Index 0 is
+    // a placeholder ("Quick-pick…" or a custom prompt) so a user click
+    // doesn't accidentally overwrite the field on first render.
+    private static string[] BuildLayerPathQuickPick(
+        System.Collections.Generic.IList<JobAuraVfxLayer> list,
+        JobAuraVfxLayer self,
+        bool includeNone = true,
+        string nonePrompt = "Quick-pick…")
+    {
+        var pathSet = new System.Collections.Generic.SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (list != null)
+        {
+            foreach (var l in list)
+            {
+                if (l == null || l == self) continue;
+                if (!string.IsNullOrEmpty(l.Path)) pathSet.Add(l.Path);
+                if (!string.IsNullOrEmpty(l.ChainSourcePath)) pathSet.Add(l.ChainSourcePath);
+            }
+        }
+        // Always include the layer's own currently-selected source path
+        // so a user-typed value remains visible in the dropdown even
+        // when no other layer references it.
+        if (self != null && !string.IsNullOrEmpty(self.ChainSourcePath))
+            pathSet.Add(self.ChainSourcePath);
+
+        int extra = includeNone ? 1 : 0;
+        var arr = new string[pathSet.Count + extra];
+        if (includeNone) arr[0] = nonePrompt;
+        int k = extra; foreach (var p in pathSet) arr[k++] = p;
+        return arr;
+    }
+
+    // Modular VFX-layer table for the Job Aura panel. Each row = one
+    // user-configured layer (trigger + path + mode).
+    private static void DrawJobAuraVfxLayers()
+    {
+        var list = noWickyXIV.Config.JobAuraVfxLayers;
+        if (list == null) { list = new System.Collections.Generic.List<JobAuraVfxLayer>(); noWickyXIV.Config.JobAuraVfxLayers = list; }
+
+        var triggerNames = Enum.GetNames(typeof(JobAuraTrigger));
+        var triggerVals  = (JobAuraTrigger[])Enum.GetValues(typeof(JobAuraTrigger));
+        var live = JobAura.SnapshotTriggers();
+
+        // ---- Filter dropdown ----
+        // "All triggers" + each trigger name. Layers not matching the
+        // filter are hidden so the configured list doesn't sprawl.
+        var filterOptions = new string[triggerNames.Length + 1];
+        filterOptions[0] = "All triggers";
+        for (int i = 0; i < triggerNames.Length; i++)
+            filterOptions[i + 1] = triggerNames[i];
+
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        if (_jobAuraLayerFilterIdx < 0 || _jobAuraLayerFilterIdx > triggerVals.Length)
+            _jobAuraLayerFilterIdx = 0;
+        ImGui.Combo("Show layers for##layerfilter", ref _jobAuraLayerFilterIdx, filterOptions, filterOptions.Length);
+
+        bool hasFilter = _jobAuraLayerFilterIdx > 0;
+        JobAuraTrigger filterTrigger = hasFilter ? triggerVals[_jobAuraLayerFilterIdx - 1] : default;
+
+        // ---- Add button — pre-fills Trigger to the active filter so a
+        // layer added under "Tier1" inherits Tier1 instead of the
+        // enum default. ----
+        if (ImGui.Button("+ Add layer##JobAuraLayers"))
+        {
+            var nl = new JobAuraVfxLayer { Name = $"Layer {list.Count + 1}" };
+            if (hasFilter) nl.Trigger = filterTrigger;
+            list.Add(nl);
+            noWickyXIV.Config.Save();
+        }
+        ImGui.SameLine();
+        // Counts: visible-under-filter / total
+        int matching = 0;
+        if (hasFilter)
+        {
+            foreach (var l in list)
+                if (l != null && l.Trigger == filterTrigger) matching++;
+        }
+        else matching = list.Count;
+        ImGui.TextDisabled(hasFilter
+            ? $"({matching} shown / {list.Count} total)"
+            : $"({list.Count} configured)");
+
+        ImGui.Separator();
+
+        int? toRemove = null;
+        // Pending up/down swap collected during the loop and applied at
+        // the end so we don't mutate the list mid-iteration.
+        int? swapA = null, swapB = null;
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            var layer = list[i];
+            if (layer == null) continue;
+            if (hasFilter && layer.Trigger != filterTrigger) continue;
+
+            // Find previous/next matching layer index (under the active
+            // filter) — that's what the up/down arrows will swap with,
+            // so the visual order in the filtered view matches the
+            // resulting list order.
+            int? prevMatchingIdx = null;
+            for (int j = i - 1; j >= 0; j--)
+            {
+                if (list[j] != null && (!hasFilter || list[j].Trigger == filterTrigger))
+                { prevMatchingIdx = j; break; }
+            }
+            int? nextMatchingIdx = null;
+            for (int j = i + 1; j < list.Count; j++)
+            {
+                if (list[j] != null && (!hasFilter || list[j].Trigger == filterTrigger))
+                { nextMatchingIdx = j; break; }
+            }
+
+            ImGui.PushID($"layer_{layer.Id}");
+
+            // ---- Header row: arrows + enable + name + trigger combo + mode + state pip + delete ----
+            // Up / down arrows.
+            if (!prevMatchingIdx.HasValue) ImGui.BeginDisabled();
+            if (ImGui.ArrowButton("##up", ImGuiDir.Up) && prevMatchingIdx.HasValue)
+            { swapA = i; swapB = prevMatchingIdx.Value; }
+            if (!prevMatchingIdx.HasValue) ImGui.EndDisabled();
+            ImGui.SameLine();
+            if (!nextMatchingIdx.HasValue) ImGui.BeginDisabled();
+            if (ImGui.ArrowButton("##down", ImGuiDir.Down) && nextMatchingIdx.HasValue)
+            { swapA = i; swapB = nextMatchingIdx.Value; }
+            if (!nextMatchingIdx.HasValue) ImGui.EndDisabled();
+            ImGui.SameLine();
+
+            bool en = layer.Enabled;
+            if (ImGui.Checkbox("##en", ref en)) { layer.Enabled = en; noWickyXIV.Config.Save(); }
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+            string nm = layer.Name ?? "";
+            if (ImGui.InputText("##name", ref nm, 64)) { layer.Name = nm; noWickyXIV.Config.Save(); }
+            ImGui.SameLine();
+            // When viewing "All triggers" we surface the per-layer Trigger
+            // combo so the user can reassign categories. When filtered to
+            // a category, the Trigger combo is redundant (the filter has
+            // already pinned the category), so we instead surface a
+            // "Default vs Chain" source-mode combo. Default fires on the
+            // category trigger; Chain fires after another layer's vfx
+            // path plays. See JobAuraLayerSourceMode.
+            if (!hasFilter)
+            {
+                int curIdx = Array.IndexOf(triggerVals, layer.Trigger);
+                if (curIdx < 0) curIdx = 0;
+                ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+                if (ImGui.Combo("##trig", ref curIdx, triggerNames, triggerNames.Length))
+                {
+                    layer.Trigger = triggerVals[curIdx];
+                    noWickyXIV.Config.Save();
+                }
+            }
+            else
+            {
+                int srcIdx = (int)layer.SourceMode;
+                ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+                if (ImGui.Combo("##srcmode", ref srcIdx, new[] { "Default", "Chain", "Chained" }, 3))
+                {
+                    layer.SourceMode = (JobAuraLayerSourceMode)srcIdx;
+                    noWickyXIV.Config.Save();
+                }
+            }
+            ImGui.SameLine();
+            // Sustained toggle — default off (SingleShot). When checked,
+            // mode = Sustained. Single-shot is the safe default — a
+            // sustained layer relies on the avfx's natural loop and will
+            // stack visibly if the chosen avfx is one-shot.
+            bool sustained = layer.Mode == JobAuraVfxMode.Sustained;
+            if (ImGui.Checkbox("Sustained##mode", ref sustained))
+            {
+                layer.Mode = sustained ? JobAuraVfxMode.Sustained : JobAuraVfxMode.SingleShot;
+                noWickyXIV.Config.Save();
+            }
+            ImGui.SameLine();
+            // Live state pip
+            bool isOn = live.TryGetValue(layer.Trigger, out var onv) && onv;
+            ImGui.TextColored(isOn
+                ? new System.Numerics.Vector4(0.4f, 0.95f, 0.4f, 1f)
+                : new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1f),
+                isOn ? "●" : "○");
+            ImGui.SameLine();
+            if (ImGui.Button("X##del")) toRemove = i;
+
+            // Path on its own line below. Use EnterReturnsTrue so the
+            // committed value only updates layer.Path on Enter (or the
+            // input losing focus via the explicit AutoSelectAll on the
+            // next focus). This stops the layer engine from receiving
+            // partial paths mid-typing — those crashed Penumbra's
+            // resource loader (dump 190359).
+            //
+            // Chained mode adds a small "▼" quick-pick combo next to the
+            // input that fills the text field with another layer's Path
+            // (and any historically known path). The text input remains
+            // the source of truth — the dropdown is only a typing aid.
+            bool wantQuickPick = layer.SourceMode == JobAuraLayerSourceMode.Chained;
+            string path = layer.Path ?? "";
+            float pathInputW = wantQuickPick
+                ? ImGui.GetContentRegionAvail().X - 130 * ImGuiHelpers.GlobalScale
+                : -1;
+            ImGui.SetNextItemWidth(pathInputW);
+            if (ImGui.InputText("##path", ref path, 256,
+                ImGuiInputTextFlags.EnterReturnsTrue))
+            {
+                layer.Path = path;
+                noWickyXIV.Config.Save();
+            }
+            else if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                // Commit on focus-loss too so users who click away
+                // without pressing Enter don't lose their edits.
+                layer.Path = path;
+                noWickyXIV.Config.Save();
+            }
+            if (wantQuickPick)
+            {
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(-1);
+                int sel = 0;
+                var options = BuildLayerPathQuickPick(list, layer);
+                if (ImGui.Combo("##pathpick", ref sel, options, options.Length)
+                    && sel > 0)
+                {
+                    layer.Path = options[sel];
+                    noWickyXIV.Config.Save();
+                }
+            }
+
+            // ---- Chain-source picker ----
+            // Shown for both Chain and Chained modes. The two modes share
+            // firing semantics (this layer fires DelaySeconds after the
+            // chosen source path's vfx Create succeeds anywhere in the
+            // layer list). They differ in *editing*:
+            //   Chain   — dropdown picks from existing layer paths only.
+            //   Chained — text input the user types freely, with an
+            //             adjacent quick-pick combo as a typing aid.
+            if (layer.SourceMode == JobAuraLayerSourceMode.Chain)
+            {
+                var pathArr = BuildLayerPathQuickPick(list, layer, includeNone: true,
+                    nonePrompt: "(none — pick a source path)");
+                int srcSel = 0;
+                if (!string.IsNullOrEmpty(layer.ChainSourcePath))
+                {
+                    for (int j = 1; j < pathArr.Length; j++)
+                    {
+                        if (string.Equals(pathArr[j], layer.ChainSourcePath, StringComparison.OrdinalIgnoreCase))
+                        { srcSel = j; break; }
+                    }
+                }
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.Combo("Chain source path##chainpath", ref srcSel, pathArr, pathArr.Length))
+                {
+                    layer.ChainSourcePath = srcSel <= 0 ? "" : pathArr[srcSel];
+                    noWickyXIV.Config.Save();
+                }
+                if (string.IsNullOrEmpty(layer.ChainSourcePath))
+                    ImGui.TextDisabled("Chain layers fire DelaySeconds after the chosen source layer's vfx plays.");
+            }
+            else if (layer.SourceMode == JobAuraLayerSourceMode.Chained)
+            {
+                string src = layer.ChainSourcePath ?? "";
+                float srcInputW = ImGui.GetContentRegionAvail().X - 130 * ImGuiHelpers.GlobalScale;
+                ImGui.SetNextItemWidth(srcInputW);
+                if (ImGui.InputTextWithHint("##chainsrctext", "vfx/.../source.avfx", ref src, 256,
+                    ImGuiInputTextFlags.EnterReturnsTrue))
+                {
+                    layer.ChainSourcePath = src; noWickyXIV.Config.Save();
+                }
+                else if (ImGui.IsItemDeactivatedAfterEdit())
+                {
+                    layer.ChainSourcePath = src; noWickyXIV.Config.Save();
+                }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(-1);
+                int sel = 0;
+                var options = BuildLayerPathQuickPick(list, layer);
+                if (ImGui.Combo("##chainsrcpick", ref sel, options, options.Length)
+                    && sel > 0)
+                {
+                    layer.ChainSourcePath = options[sel]; noWickyXIV.Config.Save();
+                }
+                if (string.IsNullOrEmpty(layer.ChainSourcePath))
+                    ImGui.TextDisabled("Chained: type the source vfx path the next animation should follow.");
+            }
+
+            // Sound path + volume + delay row. Sound plays alongside
+            // the vfx fire, after Delay has elapsed. Leave SoundPath
+            // empty for a silent layer.
+            string sp = layer.SoundPath ?? "";
+            float spw = ImGui.GetContentRegionAvail().X * 0.55f;
+            ImGui.SetNextItemWidth(spw);
+            // Commit on Enter or focus-loss only — same reason as the
+            // vfx path field above. Partial paths can spam the audio
+            // subsystem with bad mci open commands.
+            if (ImGui.InputTextWithHint("##soundpath", "C:\\path\\to\\sound.wav (optional)", ref sp, 512,
+                ImGuiInputTextFlags.EnterReturnsTrue))
+            {
+                layer.SoundPath = sp; noWickyXIV.Config.Save();
+            }
+            else if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                layer.SoundPath = sp; noWickyXIV.Config.Save();
+            }
+            ImGui.SameLine();
+            float vol = layer.SoundVolume;
+            float volw = ImGui.GetContentRegionAvail().X * 0.55f;
+            ImGui.SetNextItemWidth(volw);
+            if (ImGui.SliderFloat("##sndvol", ref vol, 0f, 1f, "vol %.2f"))
+            {
+                layer.SoundVolume = vol; noWickyXIV.Config.Save();
+            }
+            ImGui.SameLine();
+            float delay = layer.DelaySeconds;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("##delay", ref delay, 0f, 5f, "delay %.2fs"))
+            {
+                layer.DelaySeconds = delay; noWickyXIV.Config.Save();
+            }
+
+            // Per-layer debounce — minimum interval between fires.
+            // Belt-and-braces safety net for combat-event triggers
+            // (NormalHit / CritHit / IncomingDamage) which can fire
+            // many times per second on multi-hit / DoT actions.
+            float minInt = layer.MinIntervalSeconds;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.SliderFloat("Min interval (s, 0=off)##debounce", ref minInt, 0f, 5f, "%.2fs"))
+            {
+                layer.MinIntervalSeconds = minInt;
+                noWickyXIV.Config.Save();
+            }
+
+            // EndTriggerId — fires CallTrigger(handle, id) on the running
+            // vfx when the layer's trigger goes false. The avfx's own
+            // timeline picks it up and runs its end-animation (the
+            // graceful fade VFXEditor's pause button can't actually
+            // produce). -1 = no trigger dispatched (vfx plays its
+            // natural duration to completion). Trigger IDs are avfx-
+            // specific — try 0, 1, 2 and watch which one ends the
+            // animation cleanly.
+            int endTrig = layer.EndTriggerId;
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.InputInt("End trigger id (-1=off)##endtrig", ref endTrig))
+            {
+                layer.EndTriggerId = Math.Clamp(endTrig, -1, int.MaxValue);
+                noWickyXIV.Config.Save();
+            }
+
+            ImGui.Separator();
+            ImGui.PopID();
+        }
+        if (toRemove.HasValue) { list.RemoveAt(toRemove.Value); noWickyXIV.Config.Save(); }
+        if (swapA.HasValue && swapB.HasValue
+            && swapA.Value >= 0 && swapA.Value < list.Count
+            && swapB.Value >= 0 && swapB.Value < list.Count
+            && swapA.Value != swapB.Value)
+        {
+            (list[swapA.Value], list[swapB.Value]) = (list[swapB.Value], list[swapA.Value]);
+            noWickyXIV.Config.Save();
+        }
+    }
+
     private static string _dynamicsSearch = string.Empty;
 
     private static bool DynamicsSectionMatches(string name)
@@ -504,19 +964,8 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Section: Third-Person Click Translator
-        if (DynamicsSectionMatches("Click") && ImGuiEx.BeginGroupBox("Third-person LMB → hotbar translator"))
-        {
-            ConfigCheckbox("Enable##ClickTranslate", ref noWickyXIV.Config.EnableThirdPersonClickTranslation);
-            ImGui.TextDisabled(
-                "Mapping (priority order):\n" +
-                "  forward + LMB  → Shift+3   (W or stick-up)\n" +
-                "  back    + LMB  → Shift+1   (S or stick-down)\n" +
-                "  Shift   + LMB  → 1\n" +
-                "  Ctrl    + LMB  → 3\n" +
-                "  LMB            → 2");
-            ImGuiEx.EndGroupBox();
-        }
+        // [Third-Person LMB → hotbar translator moved to the Misc tab.]
+        // [Job Aura section moved to the Effects tab — see DrawEffectsTab().]
 
         // Section: Combat Zoom
         if (DynamicsSectionMatches("Combat") && ImGuiEx.BeginGroupBox("Combat Zoom (auto-pull-back in combat)"))
@@ -572,17 +1021,284 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Section: Misc / overrides
-        if (DynamicsSectionMatches("Misc") && ImGuiEx.BeginGroupBox("Misc"))
+        // [Misc subsection (Instant mode, height offset) moved to the Misc tab.]
+    }
+
+    // ---- Effects tab (Job Aura + modular VFX layers) ----
+    private static void DrawEffectsTab()
+    {
+        if (ImGuiEx.BeginGroupBox("Job Aura (SAM Kenki)"))
+        {
+            ConfigCheckbox("Enable##JobAura", ref noWickyXIV.Config.EnableJobAura);
+            ConfigCheckbox("Only when weapon drawn##JobAura", ref noWickyXIV.Config.JobAuraOnlyWeaponDrawn);
+            ConfigCheckbox("Mute SFX##JobAura", ref noWickyXIV.Config.MuteJobAuraSfx);
+
+            ImGui.Separator();
+            ConfigCheckbox("Anchor to target (instead of player)##JobAura", ref noWickyXIV.Config.JobAuraAnchorToTarget);
+            ConfigCheckbox("Anchor to bone##JobAura", ref noWickyXIV.Config.JobAuraAnchorToBone);
+            ConfigSliderInt  ("Player bone index##JobAura", ref noWickyXIV.Config.JobAuraBoneIndex,       0, 80, 4);
+            ConfigSliderInt  ("Target bone index — enemy##JobAura",  ref noWickyXIV.Config.JobAuraTargetBoneIndex,       0, 80, 1);
+            ConfigSliderInt  ("Target bone index — player ally##JobAura", ref noWickyXIV.Config.JobAuraTargetBoneIndexPlayer, 0, 80, 4);
+            ImGui.TextDisabled("Allied player skeletons place the same bone index visibly lower than enemy skeletons; the player-target slot lets you dial in a higher anchor.");
+            ConfigSliderFloat("Group scale##JobAura",  ref noWickyXIV.Config.JobAuraScale,       0.3f, 3f,   1f);
+            ConfigSliderFloat("Offset X (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetX,    -2f,   2f,   0f,   "%.2f");
+            ConfigSliderFloat("Offset Y (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetY,    -2f,   2f,   0.4f, "%.2f");
+            ConfigSliderFloat("Offset Z (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetZ,    -2f,   2f,  -0.15f,"%.2f");
+
+            ImGui.Separator();
+            ConfigSliderFloat("Sen marker padding##JobAura", ref noWickyXIV.Config.JobAuraSenPadding, 0.8f, 2.0f, 1.18f, "%.2f");
+            ConfigSliderFloat("Sen marker scale##JobAura",   ref noWickyXIV.Config.JobAuraSenScale,   0.3f, 3.0f, 1.0f);
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Kenki tier rings (33% / 66% / 100%)");
+            // ---- Tier 1 (33%) ----
+            ImGui.TextDisabled("Tier 1 — Kenki ≥ 33%");
+            ConfigSliderFloat("Tier1 R##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier1ColorR, 0f, 1f, 1.00f, "%.2f");
+            ConfigSliderFloat("Tier1 G##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier1ColorG, 0f, 1f, 0.85f, "%.2f");
+            ConfigSliderFloat("Tier1 B##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier1ColorB, 0f, 1f, 0.40f, "%.2f");
+            ConfigSliderFloat("Tier1 alpha##JobAuraTier", ref noWickyXIV.Config.JobAuraTier1Alpha,  0f, 1f, 0.55f, "%.2f");
+            // ---- Tier 2 (66%) ----
+            ImGui.TextDisabled("Tier 2 — Kenki ≥ 66%");
+            ConfigSliderFloat("Tier2 R##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier2ColorR, 0f, 1f, 1.00f, "%.2f");
+            ConfigSliderFloat("Tier2 G##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier2ColorG, 0f, 1f, 0.65f, "%.2f");
+            ConfigSliderFloat("Tier2 B##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier2ColorB, 0f, 1f, 0.20f, "%.2f");
+            ConfigSliderFloat("Tier2 alpha##JobAuraTier", ref noWickyXIV.Config.JobAuraTier2Alpha,  0f, 1f, 0.70f, "%.2f");
+            // ---- Tier 3 (100%) ----
+            ImGui.TextDisabled("Tier 3 — Kenki = 100% (pulses)");
+            ConfigSliderFloat("Tier3 R##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier3ColorR, 0f, 1f, 1.00f, "%.2f");
+            ConfigSliderFloat("Tier3 G##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier3ColorG, 0f, 1f, 0.30f, "%.2f");
+            ConfigSliderFloat("Tier3 B##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier3ColorB, 0f, 1f, 0.10f, "%.2f");
+            ConfigSliderFloat("Tier3 alpha##JobAuraTier", ref noWickyXIV.Config.JobAuraTier3Alpha,  0f, 1f, 0.85f, "%.2f");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("HP indicator rings (3-layer composite around target/player)");
+            // ---- Outer (backdrop) ring ----
+            ImGui.TextDisabled("Outer ring — persistent backdrop");
+            ConfigSliderFloat("Outer radius (× base)##JobAuraOuter",  ref noWickyXIV.Config.JobAuraHpBackdropRadiusFactor, 0.1f, 3f, 0.7425f, "%.3f");
+            ConfigSliderFloat("Outer alpha##JobAuraOuter",            ref noWickyXIV.Config.JobAuraHpBackdropAlpha, 0f, 1f, 0.65f, "%.2f");
+            ConfigSliderFloat("Outer R##JobAuraOuter",                ref noWickyXIV.Config.JobAuraHpBackdropColorR, 0f, 1f, 0.42f, "%.2f");
+            ConfigSliderFloat("Outer G##JobAuraOuter",                ref noWickyXIV.Config.JobAuraHpBackdropColorG, 0f, 1f, 0.05f, "%.2f");
+            ConfigSliderFloat("Outer B##JobAuraOuter",                ref noWickyXIV.Config.JobAuraHpBackdropColorB, 0f, 1f, 0.06f, "%.2f");
+            // ---- Inner core ----
+            ImGui.TextDisabled("Inner core — radius and alpha both shrink with HP%");
+            ConfigSliderFloat("Inner radius (× base × HP%%)##JobAuraInner", ref noWickyXIV.Config.JobAuraHpInnerRadiusFactor, 0.05f, 2f, 0.55f, "%.3f");
+            ConfigSliderFloat("Inner alpha##JobAuraInner",                  ref noWickyXIV.Config.JobAuraHpInnerAlpha, 0f, 1f, 0.85f, "%.2f");
+            ConfigSliderFloat("Inner R##JobAuraInner",                      ref noWickyXIV.Config.JobAuraHpInnerColorR, 0f, 1f, 1.0f, "%.2f");
+            ConfigSliderFloat("Inner G##JobAuraInner",                      ref noWickyXIV.Config.JobAuraHpInnerColorG, 0f, 1f, 0.18f, "%.2f");
+            ConfigSliderFloat("Inner B##JobAuraInner",                      ref noWickyXIV.Config.JobAuraHpInnerColorB, 0f, 1f, 0.18f, "%.2f");
+            // ---- Pulse ring ----
+            ImGui.TextDisabled("Pulse ring — expands outward from outer edge, period scales with HP%");
+            ConfigSliderFloat("Pulse expand (× outer radius)##JobAuraPulse", ref noWickyXIV.Config.JobAuraHpPulseExpandFactor, 1f, 4f, 1.95f, "%.2f");
+            ConfigSliderFloat("Pulse alpha##JobAuraPulse",                   ref noWickyXIV.Config.JobAuraHpPulseAlpha,        0f, 1f, 0.85f, "%.2f");
+            ConfigSliderFloat("Pulse thickness##JobAuraPulse",               ref noWickyXIV.Config.JobAuraHpPulseThickness,    0.5f, 12f, 3.5f, "%.1f");
+            ConfigSliderFloat("Pulse R##JobAuraPulse",                       ref noWickyXIV.Config.JobAuraHpPulseColorR, 0f, 1f, 1.0f, "%.2f");
+            ConfigSliderFloat("Pulse G##JobAuraPulse",                       ref noWickyXIV.Config.JobAuraHpPulseColorG, 0f, 1f, 0.20f, "%.2f");
+            ConfigSliderFloat("Pulse B##JobAuraPulse",                       ref noWickyXIV.Config.JobAuraHpPulseColorB, 0f, 1f, 0.20f, "%.2f");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Full-zen (AllSen) overlay rings");
+            ImGui.TextDisabled("Inner ring fades alpha 0→0.5; outer ring then traces clockwise from 12 o'clock as a snake stroke 0.5→1.0.");
+            // ---- AllSen inner ring ----
+            ImGui.TextDisabled("Inner ring");
+            ConfigSliderFloat("AllSen inner alpha##JobAuraAllSenInner",     ref noWickyXIV.Config.JobAuraAllSenInnerAlpha,     0f, 1f, 1.0f,  "%.2f");
+            ConfigSliderFloat("AllSen inner thickness##JobAuraAllSenInner", ref noWickyXIV.Config.JobAuraAllSenInnerThickness, 0.5f, 16f, 5.0f, "%.1f");
+            ConfigSliderFloat("AllSen inner R##JobAuraAllSenInner",         ref noWickyXIV.Config.JobAuraAllSenInnerColorR,    0f, 1f, 1.0f,  "%.2f");
+            ConfigSliderFloat("AllSen inner G##JobAuraAllSenInner",         ref noWickyXIV.Config.JobAuraAllSenInnerColorG,    0f, 1f, 0.18f, "%.2f");
+            ConfigSliderFloat("AllSen inner B##JobAuraAllSenInner",         ref noWickyXIV.Config.JobAuraAllSenInnerColorB,    0f, 1f, 0.18f, "%.2f");
+            // ---- AllSen outer (snake) ring ----
+            ImGui.TextDisabled("Outer ring (snake stroke)");
+            ConfigSliderFloat("AllSen outer radius (× inner)##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterRadiusFactor, 1.0f, 2.0f, 1.10f, "%.2f");
+            ConfigSliderFloat("AllSen outer alpha##JobAuraAllSenOuter",     ref noWickyXIV.Config.JobAuraAllSenOuterAlpha,     0f, 1f, 0.55f, "%.2f");
+            ConfigSliderFloat("AllSen outer thickness##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterThickness, 0.5f, 16f, 2.5f, "%.1f");
+            ConfigSliderFloat("AllSen outer R##JobAuraAllSenOuter",         ref noWickyXIV.Config.JobAuraAllSenOuterColorR,    0f, 1f, 0.85f, "%.2f");
+            ConfigSliderFloat("AllSen outer G##JobAuraAllSenOuter",         ref noWickyXIV.Config.JobAuraAllSenOuterColorG,    0f, 1f, 0.05f, "%.2f");
+            ConfigSliderFloat("AllSen outer B##JobAuraAllSenOuter",         ref noWickyXIV.Config.JobAuraAllSenOuterColorB,    0f, 1f, 0.05f, "%.2f");
+
+            ImGui.Separator();
+            ConfigCheckbox("Show HP %% text##JobAura", ref noWickyXIV.Config.JobAuraShowHpText);
+            ImGui.TextDisabled("HP text font (system .ttf/.otf)");
+            {
+                var fonts = JobAura.EnumerateSystemFonts();
+                string current = noWickyXIV.Config.JobAuraHpFontPath ?? "";
+                string preview = string.IsNullOrEmpty(current) ? "(default ImGui)" : System.IO.Path.GetFileName(current);
+                if (ImGui.BeginCombo("Font##JobAuraHp", preview))
+                {
+                    bool isDefault = string.IsNullOrEmpty(current);
+                    if (ImGui.Selectable("(default ImGui)", isDefault))
+                    {
+                        noWickyXIV.Config.JobAuraHpFontPath = "";
+                        noWickyXIV.Config.Save();
+                    }
+                    foreach (var path in fonts)
+                    {
+                        bool sel = path.Equals(current, StringComparison.OrdinalIgnoreCase);
+                        if (ImGui.Selectable(System.IO.Path.GetFileName(path), sel))
+                        {
+                            noWickyXIV.Config.JobAuraHpFontPath = path;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+                {
+                    var io = ImGui.GetIO();
+                    if (ImGui.IsItemHovered() && io.KeyCtrl && MathF.Abs(io.MouseWheel) > 0.01f && fonts.Count > 0)
+                    {
+                        int idx = -1;
+                        for (int i = 0; i < fonts.Count; i++)
+                        {
+                            if (fonts[i].Equals(current, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+                        }
+                        int step = io.MouseWheel > 0 ? -1 : 1;
+                        int next = idx < 0 ? (step > 0 ? 0 : fonts.Count - 1)
+                                           : (((idx + step) % fonts.Count) + fonts.Count) % fonts.Count;
+                        noWickyXIV.Config.JobAuraHpFontPath = fonts[next];
+                        noWickyXIV.Config.Save();
+                    }
+                }
+                ConfigSliderFloat("Font size (px)##JobAuraHp", ref noWickyXIV.Config.JobAuraHpFontSize, 8f, 96f, 22f, "%.0f");
+            }
+
+            ImGui.Separator();
+            ConfigCheckbox  ("Fade out of combat##JobAura", ref noWickyXIV.Config.JobAuraFadeOutOfCombat);
+            ConfigSliderFloat("OOC alpha##JobAura",  ref noWickyXIV.Config.JobAuraOutOfCombatAlpha, 0f,  1f,  0f,  "%.2f");
+            ConfigCheckbox  ("Fade when no target##JobAura", ref noWickyXIV.Config.JobAuraFadeWhenNoTarget);
+            ConfigSliderFloat("No-target alpha##JobAura", ref noWickyXIV.Config.JobAuraNoTargetAlpha, 0f, 1f, 0f, "%.2f");
+            ConfigSliderFloat("Fade rate##JobAura",  ref noWickyXIV.Config.JobAuraFadeRate,         0.5f, 12f, 4f);
+
+            ImGui.Separator();
+            ConfigSliderFloat("Volume max-focus##JobAura", ref noWickyXIV.Config.JobAuraVolMax, 0f, 1f, 1f);
+            ConfigSliderFloat("Volume pt1##JobAura",       ref noWickyXIV.Config.JobAuraVolPt1, 0f, 1f, 1f);
+            ConfigSliderFloat("Volume pt2##JobAura",       ref noWickyXIV.Config.JobAuraVolPt2, 0f, 1f, 1f);
+            if (ImGui.Button("Test SFX sequence##JobAura"))
+                JobAura.TestPlaySequence();
+            ImGui.SameLine();
+            ImGui.TextDisabled("(plays max-focus + 1s later pt1/pt2 — verify audio)");
+
+            ImGui.TextDisabled(
+                "Tiers: 33% / 66% / 100% Kenki.\n" +
+                "100% triggers an explosive burst ring + max-focus SFX.\n" +
+                "1s after cap, pt1+pt2 SFX play together.\n" +
+                "Bone index 4 ≈ upper spine; tweak to taste.\n" +
+                "Visible only when on Samurai.\n" +
+                "Modular per-trigger VFX layers now live in the dedicated VFX Replacer tab.");
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    // ---- VFX Replacer tab (modular per-trigger layer editor) ----
+    // Pulled out of the Effects tab so the layer list and its quickly-
+    // growing per-row controls (path, sound, chain source, end trigger,
+    // delay, debounce, ordering arrows, …) get their own scroll region
+    // and don't crowd the JobAura ring/sound settings above.
+    private static void DrawVfxReplacerTab()
+    {
+        if (ImGuiEx.BeginGroupBox("VFX Replacer (modular layers)"))
+        {
+            ImGui.TextDisabled("Each layer hooks a Kenki/Sen/motion/combat trigger and plays an .avfx.");
+            ConfigCheckbox("Enable real .avfx (advanced — may crash game until sigs verified)##JobAura",
+                ref noWickyXIV.Config.JobAuraEnableRealVfx);
+            ImGui.TextDisabled("Toggle requires plugin reload. ImGui rings + audio in the Effects tab work either way.");
+            ImGui.Separator();
+            DrawJobAuraVfxLayers();
+
+            ImGui.TextDisabled(
+                "VFX paths: e.g. \"vfx/common/eff/dk03ht_canc0t.avfx\" (browse with VfxEditor).\n" +
+                "Chain mode: pick a source path from existing layers via dropdown.\n" +
+                "Chained mode: type any source path with quick-pick autocomplete adjacent.");
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    // ---- Misc tab (was "Other Settings" + click translator + instant mode) ----
+    // ---- HP Ring tab ----
+    private static void DrawHpRingTab()
+    {
+        if (ImGuiEx.BeginGroupBox("HP Ring (standalone HP-driven pulse overlay)"))
+        {
+            ConfigCheckbox("Enable##HpRing", ref noWickyXIV.Config.EnableHpRing);
+            ImGui.TextDisabled(
+                "A single ring anchored on screen that pulses with HP.\n" +
+                "Full HP: slow gentle pulse, low base alpha.\n" +
+                "Low  HP: rapid pulse, high base alpha, ring shrinks toward center.\n" +
+                "Linear interpolation across the entire HP range.");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Position");
+            ConfigCheckbox("Anchor to player bone (3D, follows character)##HpRing",
+                ref noWickyXIV.Config.HpRingAnchorToBone);
+            if (noWickyXIV.Config.HpRingAnchorToBone)
+            {
+                ConfigSliderInt  ("Player bone index##HpRing", ref noWickyXIV.Config.HpRingBoneIndex, 0, 80, 1);
+                ImGui.TextDisabled("Offsets are PLAYER-LOCAL (rotate with player facing).");
+                ConfigSliderFloat("Right (m, +X)##HpRing",   ref noWickyXIV.Config.HpRingOffsetRight,   -3f, 3f,  0f,    "%.2f");
+                ConfigSliderFloat("Up (m, +Y)##HpRing",      ref noWickyXIV.Config.HpRingOffsetUp,      -3f, 3f,  0f,    "%.2f");
+                ConfigSliderFloat("Forward (m, -Z=behind)##HpRing", ref noWickyXIV.Config.HpRingOffsetForward, -3f, 3f, -0.6f, "%.2f");
+            }
+            else
+            {
+                ConfigSliderFloat("Screen X (0=left, 1=right)##HpRing", ref noWickyXIV.Config.HpRingScreenX, 0f, 1f, 0.5f, "%.3f");
+                ConfigSliderFloat("Screen Y (0=top, 1=bottom)##HpRing", ref noWickyXIV.Config.HpRingScreenY, 0f, 1f, 0.85f, "%.3f");
+            }
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Geometry");
+            ConfigSliderFloat("Base radius (px, full HP)##HpRing",   ref noWickyXIV.Config.HpRingRadius,            10f, 400f, 80f, "%.0f");
+            ConfigSliderFloat("Low-HP radius factor (× base)##HpRing", ref noWickyXIV.Config.HpRingLowHpRadiusFactor, 0.1f, 1f, 0.7f, "%.2f");
+            ConfigSliderFloat("Line thickness##HpRing",              ref noWickyXIV.Config.HpRingThickness,         0.5f, 16f, 3f, "%.1f");
+            ConfigSliderInt  ("Circle segments (resolution)##HpRing",ref noWickyXIV.Config.HpRingSegments,           8, 256, 64);
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Pulse rate (Hz — cycles per second)");
+            ConfigSliderFloat("Slow pulse (full HP)##HpRing",  ref noWickyXIV.Config.HpRingSlowPulseHz, 0.05f, 5f, 0.5f, "%.2f Hz");
+            ConfigSliderFloat("Fast pulse (zero HP)##HpRing",  ref noWickyXIV.Config.HpRingFastPulseHz, 0.1f, 12f, 3.0f, "%.2f Hz");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Alpha");
+            ConfigSliderFloat("Full-HP base alpha##HpRing", ref noWickyXIV.Config.HpRingFullHpBaseAlpha, 0f, 1f, 0.5f, "%.2f");
+            ConfigSliderFloat("Full-HP peak alpha##HpRing", ref noWickyXIV.Config.HpRingFullHpPeakAlpha, 0f, 1f, 1.0f, "%.2f");
+            ConfigSliderFloat("Low-HP  base alpha##HpRing", ref noWickyXIV.Config.HpRingLowHpBaseAlpha,  0f, 1f, 0.8f, "%.2f");
+            ConfigSliderFloat("Low-HP  peak alpha##HpRing", ref noWickyXIV.Config.HpRingLowHpPeakAlpha,  0f, 1f, 1.0f, "%.2f");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Color (RGB 0..1)");
+            ConfigSliderFloat("R##HpRingCol", ref noWickyXIV.Config.HpRingColorR, 0f, 1f, 1.0f, "%.2f");
+            ConfigSliderFloat("G##HpRingCol", ref noWickyXIV.Config.HpRingColorG, 0f, 1f, 0.25f, "%.2f");
+            ConfigSliderFloat("B##HpRingCol", ref noWickyXIV.Config.HpRingColorB, 0f, 1f, 0.25f, "%.2f");
+
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    private static unsafe void DrawMiscTab()
+    {
+        // Third-Person LMB → hotbar translator (moved from Camera Dynamics).
+        if (ImGuiEx.BeginGroupBox("Third-person LMB → hotbar translator"))
+        {
+            ConfigCheckbox("Enable##ClickTranslate", ref noWickyXIV.Config.EnableThirdPersonClickTranslation);
+            ImGui.TextDisabled(
+                "Mapping (priority order):\n" +
+                "  forward + LMB  → Shift+3   (W or stick-up)\n" +
+                "  back    + LMB  → Shift+1   (S or stick-down)\n" +
+                "  Shift   + LMB  → 1\n" +
+                "  Ctrl    + LMB  → 3\n" +
+                "  LMB            → 2");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Instant mode + height offsets (moved from Camera Dynamics → Misc subsection).
+        if (ImGuiEx.BeginGroupBox("Camera tweaks"))
         {
             ConfigCheckbox("Instant mode (zero all smoothing)", ref noWickyXIV.Config.InstantMode);
             ImGui.TextDisabled("Note: InstantMode is currently a no-op — FFXIV's camera struct doesn't expose smoothing rates.");
             ConfigSliderFloat("Ctrl+scroll height step", ref noWickyXIV.Config.HeightOffsetStep, 0.01f, 1f, 0.1f);
-            // Live global height offset (Ctrl/Alt + scroll updates this).
-            // Slider also lets the user nudge it directly from the panel.
             ConfigSliderFloat("Live height offset (Ctrl/Alt+scroll)", ref noWickyXIV.Config.GlobalHeightOffset, -2f, 4f, 0f);
             ImGuiEx.EndGroupBox();
         }
+
+        // The original "Other Settings" content (collision toggle, death cam,
+        // free cam, spectate, tilt) follows. Renders as-is.
+        DrawOtherSettings();
     }
 
     // Render a hotkey row: shows current binding, "Set" button to capture next

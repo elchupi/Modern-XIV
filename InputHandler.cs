@@ -100,6 +100,19 @@ public static class InputHandler
             if (wheelStatus == prev) return; // already fired for this hold
 
             float wheel = wheelStatus; // -1, 0, +1
+            int dirRaw = wheel > 0 ? 1 : -1;
+
+            // Chat scroll: if the cursor is over the bubble column,
+            // route the wheel into ChatBubbles for history scroll and
+            // suppress everything else (target-cycle, height-offset,
+            // etc.) — those would also fire on plain wheel and
+            // shouldn't while reading chat.
+            if (ChatBubbles.IsCursorOverColumn())
+            {
+                ChatBubbles.OnWheel(dirRaw);
+                SuppressNextZoom = true;
+                return;
+            }
 
             bool shift = ShiftHeld, ctrl = CtrlHeld, alt = AltHeld;
 

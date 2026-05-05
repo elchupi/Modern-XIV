@@ -311,6 +311,79 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float ChatBubblesOtherG                = 0.18f;
     public float ChatBubblesOtherB                = 0.22f;
     public float ChatBubblesOtherAlpha            = 0.85f;
+    // Hover-reveal: hovering within this many pixels above the anchor
+    // (centered on the column) reveals every buffered message at full
+    // alpha, ignoring the per-entry max-age filter.
+    public float ChatBubblesHoverRevealHeight     = 800f;
+    public float ChatBubblesHoverHoldSeconds      = 1.5f;
+    // How tall (in px) the soft gradient mask at the top of the
+    // column extends. Bubbles whose top edge sits inside this band
+    // fade toward 0 alpha so older messages disappear gracefully
+    // instead of being hard-clipped at the column edge.
+    public float ChatBubblesTopFadeHeight         = 100f;
+    // Maximum visible height of the bubble column (in px, measured up
+    // from the anchor). Bubbles past this height get progressively
+    // more masked by the top-fade gradient and eventually skip
+    // drawing entirely. Without this cap, a long history could spam
+    // the entire screen — the cap defines a "container" that the
+    // top-fade mask sits at the top of.
+    public float ChatBubblesMaxColumnHeight       = 600f;
+    // rtyping integration: poll the rtyping plugin's IPC channels to
+    // surface "X is typing…" ghost bubbles at the bottom of the
+    // column. No-op when rtyping isn't installed or isn't connected
+    // to its server.
+    public bool  EnableTypingIndicators           = true;
+    // Reserved vertical space at the bottom of the bubble column for
+    // typing indicators. Real bubbles start above this band — it
+    // stays empty when no one is typing, but the column geometry
+    // doesn't shift when the indicator fades in/out.
+    public float ChatBubblesTypingReserveHeight   = 30f;
+    // Backfill chat history on plugin load by parsing the engine's
+    // RaptureLogModule.LogMessageData buffer. Format is undocumented
+    // and may break on patch days — flip off if a future patch
+    // produces nonsense bubbles, then re-enable when the parser is
+    // updated.
+    public bool  ChatBubblesBackfillOnLoad        = true;
+
+    // Sends a slash command (default /tomescroll) once when the chat
+    // input is focused. /tomescroll is a self-looping pose so a
+    // single fire keeps the animation playing for as long as the
+    // player stays still. If it ever stops on its own, the rising-
+    // edge gate re-fires next time the user opens chat.
+    public bool   EnableTypingEmote               = false;
+    public string ChatTypingEmoteCommand          = "/tomescroll";
+    // Re-fire interval in seconds. /tomescroll claims to self-loop
+    // but real-world testing shows the loop can be interrupted by
+    // the user closing/reopening the chat prompt, by movement, or
+    // by other engine events. Periodic re-trigger means any such
+    // interruption is restored within `ChatTypingEmoteRetriggerSeconds`.
+    public float  ChatTypingEmoteRetriggerSeconds = 2.0f;
+    // Optional command to send when the chat input loses focus —
+    // empty = no cancel (player moves naturally to break the pose).
+    public string ChatTypingEmoteCancelCommand    = "";
+    // Font picker — same shape as the TargetUI font controls. Empty
+    // path = default ImGui font; size is in pixels.
+    public string ChatBubblesFontPath             = "";
+    public float  ChatBubblesFontSize             = 16f;
+    public float  ChatBubblesSenderFontSize       = 12f;  // sender label below the bubble
+
+    // Custom typing prompt — rendered as an ImGui overlay when chat
+    // input is focused. Mirrors the engine's text input so the user
+    // can SEE what they're typing even when the native chat is
+    // hidden. Sending still goes through the engine on Enter.
+    public bool  EnableChatPrompt                 = false;
+    public float ChatPromptX                      = 960f;
+    public float ChatPromptY                      = 540f;
+    public float ChatPromptWidth                  = 600f;
+    public float ChatPromptFontSize               = 22f;
+    public float ChatPromptBgR                    = 0.05f;
+    public float ChatPromptBgG                    = 0.05f;
+    public float ChatPromptBgB                    = 0.07f;
+    public float ChatPromptBgAlpha                = 0.85f;
+    public float ChatPromptTextR                  = 1f;
+    public float ChatPromptTextG                  = 1f;
+    public float ChatPromptTextB                  = 1f;
+    public float ChatPromptTextAlpha              = 1f;
 
     // Diagnostic: log every damage effect entry (type, Param0/1,
     // value, action id, fromMe/toMe, crit/dh decision) so we can
@@ -483,9 +556,21 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // world meters. Scale multiplies all ring radii.
     public bool  JobAuraAnchorToBone = true;
     public int   JobAuraBoneIndex    = 4;
+    // Self anchor offset (when JobAuraAnchorToTarget is OFF — overlay
+    // sits on the local player).
     public float JobAuraOffsetX      = 0f;
     public float JobAuraOffsetY      = 0.4f;
     public float JobAuraOffsetZ      = -0.15f;
+    // Player-ally target offset (when target is a Pc / friendly
+    // player). Skeletons place the same bone at a different absolute
+    // height than enemies; this lets you dial it independently.
+    public float JobAuraTargetPlayerOffsetX = 0f;
+    public float JobAuraTargetPlayerOffsetY = 0.4f;
+    public float JobAuraTargetPlayerOffsetZ = 0f;
+    // Enemy target offset (BattleNpc).
+    public float JobAuraTargetEnemyOffsetX  = 0f;
+    public float JobAuraTargetEnemyOffsetY  = 0.4f;
+    public float JobAuraTargetEnemyOffsetZ  = 0f;
     public float JobAuraScale        = 1f;
     public bool  JobAuraFadeOutOfCombat = true;
     public float JobAuraOutOfCombatAlpha = 0f;   // target alpha multiplier when OOC

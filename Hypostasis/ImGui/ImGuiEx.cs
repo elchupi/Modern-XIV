@@ -13,11 +13,84 @@ namespace Dalamud.Bindings.ImGui;
 
 public static partial class ImGuiEx
 {
+    // Hover tooltip — custom-rendered north of the hovered item
+    // with an exp-lerp fade-in/out. Replaces the stock
+    // ImGui.SetTooltip which renders bottom-right of the cursor
+    // with no fade.
+    //
+    // Rendering is deferred to RenderPendingTooltip() so we can
+    // fade alpha across frames; this method just captures the
+    // hovered item's anchor (top-center of its screen rect) and
+    // the text. PluginUI.Draw calls RenderPendingTooltip once at
+    // the end of each UI frame so the tooltip lives on the
+    // foreground draw list (above all windows).
+    private static string  _pendingTooltipText  = "";
+    private static Vector2 _pendingTooltipAnchor;
+    private static int     _pendingTooltipLastHoverFrame = -2;
+    private static float   _tooltipAlpha;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetItemTooltip(string s, ImGuiHoveredFlags flags = ImGuiHoveredFlags.None)
     {
-        if (ImGui.IsItemHovered(flags))
-            ImGui.SetTooltip(s);
+        if (!ImGui.IsItemHovered(flags) || string.IsNullOrEmpty(s)) return;
+        _pendingTooltipText = s;
+        var min = ImGui.GetItemRectMin();
+        var max = ImGui.GetItemRectMax();
+        _pendingTooltipAnchor = new Vector2((min.X + max.X) * 0.5f, min.Y);
+        _pendingTooltipLastHoverFrame = ImGui.GetFrameCount();
+    }
+
+    // Call this once at the end of the plugin's UI frame so the
+    // tooltip renders on top of all windows, fades smoothly, and
+    // hovers above the last hovered item.
+    public static void RenderPendingTooltip()
+    {
+        // Hover is "active this frame" if a SetItemTooltip captured
+        // it on the current OR previous frame (one-frame slack so
+        // moving between adjacent items doesn't make the tooltip
+        // start fading instantly).
+        bool active = _pendingTooltipLastHoverFrame >= ImGui.GetFrameCount() - 1
+                   && !string.IsNullOrEmpty(_pendingTooltipText);
+
+        // Exp-lerp alpha. ~12/s rate (~80 ms halflife) — fast
+        // enough not to feel laggy, slow enough that you can
+        // perceive the fade.
+        float dt = 0.016f;
+        try { dt = ImGui.GetIO().DeltaTime; } catch { }
+        float k = 1f - MathF.Exp(-12f * dt);
+        float target = active ? 1f : 0f;
+        _tooltipAlpha += (target - _tooltipAlpha) * k;
+        if (MathF.Abs(target - _tooltipAlpha) < 0.002f) _tooltipAlpha = target;
+
+        if (_tooltipAlpha < 0.01f || string.IsNullOrEmpty(_pendingTooltipText)) return;
+
+        var dl = ImGui.GetForegroundDrawList();
+        var ts = ImGui.CalcTextSize(_pendingTooltipText, false, 320f);
+        const float padX = 8f, padY = 5f, gap = 8f;
+        float w = ts.X + padX * 2f;
+        float h = ts.Y + padY * 2f;
+
+        // Position above the anchor; clamp to viewport so anchors
+        // near the screen edge don't push the tooltip off-screen.
+        // If there's no room above, fall back to below.
+        var vp = ImGui.GetMainViewport();
+        float left = _pendingTooltipAnchor.X - w * 0.5f;
+        float top  = _pendingTooltipAnchor.Y - h - gap;
+        if (left < vp.Pos.X + 4f) left = vp.Pos.X + 4f;
+        if (left + w > vp.Pos.X + vp.Size.X - 4f) left = vp.Pos.X + vp.Size.X - 4f - w;
+        if (top < vp.Pos.Y + 4f) top = _pendingTooltipAnchor.Y + gap;
+
+        var tl = new Vector2(left, top);
+        var br = new Vector2(left + w, top + h);
+
+        var bg = new Vector4(0.05f, 0.05f, 0.07f, 0.92f * _tooltipAlpha);
+        dl.AddRectFilled(tl, br, ImGui.GetColorU32(bg), 6f);
+        var border = new Vector4(0.4f, 0.4f, 0.45f, 0.8f * _tooltipAlpha);
+        dl.AddRect(tl, br, ImGui.GetColorU32(border), 6f);
+
+        var fg = new Vector4(1f, 1f, 1f, _tooltipAlpha);
+        dl.AddText(new Vector2(left + padX, top + padY),
+            ImGui.GetColorU32(fg), _pendingTooltipText);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

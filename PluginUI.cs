@@ -91,6 +91,12 @@ public static class PluginUI
         }
 
         ImGui.End();
+
+        // Render any pending custom tooltip (foreground draw list, on
+        // top of all windows). Tooltip text + anchor are captured by
+        // ImGuiEx.SetItemTooltip during the frame; this draws it
+        // north of the hovered item with an exp-lerp fade-in/out.
+        ImGuiEx.RenderPendingTooltip();
     }
 
     // Capture the currently-active camera state into a fresh preset.
@@ -1066,14 +1072,20 @@ public static class PluginUI
             ImGui.Separator();
             ConfigCheckbox("Anchor to target (instead of player)##JobAura", ref noWickyXIV.Config.JobAuraAnchorToTarget);
             ConfigCheckbox("Anchor to bone##JobAura", ref noWickyXIV.Config.JobAuraAnchorToBone);
-            ConfigSliderInt  ("Player bone index##JobAura", ref noWickyXIV.Config.JobAuraBoneIndex,       0, 80, 4);
-            ConfigSliderInt  ("Target bone index — enemy##JobAura",  ref noWickyXIV.Config.JobAuraTargetBoneIndex,       0, 80, 1);
-            ConfigSliderInt  ("Target bone index — player ally##JobAura", ref noWickyXIV.Config.JobAuraTargetBoneIndexPlayer, 0, 80, 4);
-            ImGui.TextDisabled("Allied player skeletons place the same bone index visibly lower than enemy skeletons; the player-target slot lets you dial in a higher anchor.");
+            ConfigSliderInt("Humanoid bone index (self / players / NPCs)##JobAura", ref noWickyXIV.Config.JobAuraBoneIndex,        0, 80, 4);
+            ConfigSliderInt("Hostile combatant bone index##JobAura",                ref noWickyXIV.Config.JobAuraTargetBoneIndex, 0, 80, 1);
+            ImGui.TextDisabled("Two skeleton categories: humanoid (player / NPC body shape) shares one bone index. Hostile combatant BattleNpcs — beasts, dragons, bosses — get their own slot since they may not be humanoid.");
             ConfigSliderFloat("Group scale##JobAura",  ref noWickyXIV.Config.JobAuraScale,       0.3f, 3f,   1f);
-            ConfigSliderFloat("Offset X (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetX,    -2f,   2f,   0f,   "%.2f");
-            ConfigSliderFloat("Offset Y (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetY,    -2f,   2f,   0.4f, "%.2f");
-            ConfigSliderFloat("Offset Z (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetZ,    -2f,   2f,  -0.15f,"%.2f");
+
+            ImGui.TextDisabled("Humanoid offset (self / player allies / friendly NPCs / pets)");
+            ConfigSliderFloat("Humanoid X (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetX, -2f, 2f,  0f,    "%.2f");
+            ConfigSliderFloat("Humanoid Y (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetY, -2f, 2f,  0.4f,  "%.2f");
+            ConfigSliderFloat("Humanoid Z (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetZ, -2f, 2f, -0.15f, "%.2f");
+
+            ImGui.TextDisabled("Hostile combatant offset (enemy BattleNpcs)");
+            ConfigSliderFloat("Combatant X (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetX, -2f, 2f, 0f,   "%.2f");
+            ConfigSliderFloat("Combatant Y (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetY, -2f, 2f, 0.4f, "%.2f");
+            ConfigSliderFloat("Combatant Z (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetZ, -2f, 2f, 0f,   "%.2f");
 
             ImGui.Separator();
             ConfigSliderFloat("Sen marker padding##JobAura", ref noWickyXIV.Config.JobAuraSenPadding, 0.8f, 2.0f, 1.18f, "%.2f");
@@ -1562,6 +1574,39 @@ public static class PluginUI
             ConfigSliderFloat("Column width (px)##ChatBubbles",  ref noWickyXIV.Config.ChatBubblesColumnWidth, 200f,  1400f, 700f, "%.0f");
             ConfigSliderFloat("Bubble max width (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesMaxWidth, 100f, 800f, 360f, "%.0f");
             ConfigSliderFloat("Max age (s)##ChatBubbles",   ref noWickyXIV.Config.ChatBubblesMaxAgeSeconds,   5f,    300f, 30f, "%.0f");
+            ConfigSliderFloat("Max column height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesMaxColumnHeight, 200f, 2000f, 600f, "%.0f");
+            ImGui.TextDisabled("Caps the visible bubble stack height. Older messages above this band are masked by the soft top-fade gradient and eventually skip drawing.");
+            ConfigSliderFloat("Top-fade height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesTopFadeHeight, 0f, 400f, 100f, "%.0f");
+            ImGui.TextDisabled("Soft gradient band at the top of the column — bubbles whose top edge sits inside it fade toward 0 alpha so old messages disappear gradually.");
+            ConfigSliderFloat("Hover-reveal height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesHoverRevealHeight, 100f, 2160f, 800f, "%.0f");
+            ImGui.TextDisabled("Hovering inside the column rect reveals every buffered message until you mouse out.");
+            ConfigSliderFloat("Hover hold (s)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesHoverHoldSeconds, 0f, 5f, 1.5f, "%.1f");
+            ImGui.Separator();
+            ConfigCheckbox("Show typing indicators (rtyping)##ChatBubbles", ref noWickyXIV.Config.EnableTypingIndicators);
+            ImGui.TextDisabled("When the rtyping plugin is installed and connected, ghost bubbles for currently-typing OTHER players appear at the bottom of the column with smooth fade. Self is excluded — you already see your text in the typing prompt.");
+            ConfigSliderFloat("Typing band height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesTypingReserveHeight, 0f, 200f, 30f, "%.0f");
+            ImGui.TextDisabled("Reserved bottom band so real bubbles don't shift when the indicator fades in/out.");
+            ImGui.Separator();
+            ConfigCheckbox("Backfill chat history on plugin load##ChatBubbles", ref noWickyXIV.Config.ChatBubblesBackfillOnLoad);
+            ImGui.TextDisabled("Reads RaptureLogModule.LogMessageData on Initialize to seed the buffer with prior messages so the overlay isn't blank. Format is undocumented and may break on patch days — flip off if that happens.");
+
+            ImGui.Separator();
+            ConfigCheckbox("Play typing emote##ChatTypingEmote", ref noWickyXIV.Config.EnableTypingEmote);
+            ImGui.TextDisabled("Fires the configured slash command once when the chat input gains focus. Default /tomescroll loops on its own. Set the cancel command to fire something on focus-lost, or leave empty to let movement break the pose naturally.");
+            string cmd = noWickyXIV.Config.ChatTypingEmoteCommand ?? "";
+            if (ImGui.InputText("Emote command##ChatTypingEmote", ref cmd, 64))
+            {
+                noWickyXIV.Config.ChatTypingEmoteCommand = cmd;
+                noWickyXIV.Config.Save();
+            }
+            string cancelCmd = noWickyXIV.Config.ChatTypingEmoteCancelCommand ?? "";
+            if (ImGui.InputText("Cancel command (optional)##ChatTypingEmote", ref cancelCmd, 64))
+            {
+                noWickyXIV.Config.ChatTypingEmoteCancelCommand = cancelCmd;
+                noWickyXIV.Config.Save();
+            }
+            ConfigSliderFloat("Re-fire interval (s)##ChatTypingEmote", ref noWickyXIV.Config.ChatTypingEmoteRetriggerSeconds, 0.5f, 10f, 2.0f, "%.1f");
+            ImGui.TextDisabled("How often the emote re-fires while typing. Restores the loop if it gets interrupted (chat prompt close+reopen, brief movement, engine cancel).");
             ImGui.TextDisabled("Self bubble color");
             ConfigSliderFloat("Self R##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfR, 0f, 1f, 0.20f, "%.2f");
             ConfigSliderFloat("Self G##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfG, 0f, 1f, 0.55f, "%.2f");
@@ -1572,6 +1617,32 @@ public static class PluginUI
             ConfigSliderFloat("Other G##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherG, 0f, 1f, 0.18f, "%.2f");
             ConfigSliderFloat("Other B##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherB, 0f, 1f, 0.22f, "%.2f");
             ConfigSliderFloat("Other alpha##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherAlpha, 0f, 1f, 0.85f, "%.2f");
+            ImGui.Separator();
+            DrawFontPicker("Font##ChatBubblesFont", ref noWickyXIV.Config.ChatBubblesFontPath);
+            ConfigSliderFloat("Body font size (px)##ChatBubbles",   ref noWickyXIV.Config.ChatBubblesFontSize,       8f, 72f, 16f, "%.0f");
+            ConfigSliderFloat("Sender font size (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSenderFontSize, 6f, 48f, 12f, "%.0f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Typing prompt overlay (shown while the engine has chat input focused).
+        if (ImGuiEx.BeginGroupBox("Typing prompt overlay"))
+        {
+            ConfigCheckbox("Enable##ChatPrompt", ref noWickyXIV.Config.EnableChatPrompt);
+            ImGui.TextDisabled("Centered ImGui box that mirrors the engine's chat input buffer while you're typing. Useful when the native chat is hidden.");
+            ConfigSliderFloat("X (center, px)##ChatPrompt", ref noWickyXIV.Config.ChatPromptX, 0f, 3840f, 960f, "%.0f");
+            ConfigSliderFloat("Y (center, px)##ChatPrompt", ref noWickyXIV.Config.ChatPromptY, 0f, 2160f, 540f, "%.0f");
+            ConfigSliderFloat("Width (px)##ChatPrompt",     ref noWickyXIV.Config.ChatPromptWidth,    100f, 1600f, 600f, "%.0f");
+            ConfigSliderFloat("Font size (px)##ChatPrompt", ref noWickyXIV.Config.ChatPromptFontSize,  10f, 96f,  22f,  "%.0f");
+            ImGui.TextDisabled("Background");
+            ConfigSliderFloat("Bg R##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgR, 0f, 1f, 0.05f, "%.2f");
+            ConfigSliderFloat("Bg G##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgG, 0f, 1f, 0.05f, "%.2f");
+            ConfigSliderFloat("Bg B##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgB, 0f, 1f, 0.07f, "%.2f");
+            ConfigSliderFloat("Bg alpha##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgAlpha, 0f, 1f, 0.85f, "%.2f");
+            ImGui.TextDisabled("Text");
+            ConfigSliderFloat("Text R##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextR, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("Text G##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextG, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("Text B##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextB, 0f, 1f, 1f, "%.2f");
+            ConfigSliderFloat("Text alpha##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextAlpha, 0f, 1f, 1f, "%.2f");
             ImGuiEx.EndGroupBox();
         }
 

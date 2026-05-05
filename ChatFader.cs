@@ -159,23 +159,39 @@ public static unsafe class ChatFader
         ApplyHideNativeChat();
     }
 
+    // Each chat panel (ChatLogPanel_0..3) is a SEPARATE addon that
+    // floats on top of ChatLog — hiding the parent root does not
+    // affect them. To fully hide native chat we walk all five addons
+    // and clear/restore the visibility bit on each.
+    private static readonly string[] AllChatAddons =
+    {
+        "ChatLog",
+        "ChatLogPanel_0",
+        "ChatLogPanel_1",
+        "ChatLogPanel_2",
+        "ChatLogPanel_3",
+    };
+
     private static void ApplyHideNativeChat()
     {
         bool hide = noWickyXIV.Config.ChatHideNative;
-        try
+        foreach (var name in AllChatAddons)
         {
-            var wrapper = DalamudApi.GameGui.GetAddonByName("ChatLog", 1);
-            var addr = wrapper.Address;
-            if (addr == IntPtr.Zero) return;
-            var addon = (AtkUnitBase*)addr;
-            if (addon->RootNode == null) return;
-            ushort flags = (ushort)addon->RootNode->NodeFlags;
-            if (hide && (flags & NODEFLAG_VISIBLE) != 0)
-                addon->RootNode->NodeFlags = (NodeFlags)(unchecked((ushort)(flags & ~NODEFLAG_VISIBLE)));
-            else if (!hide && (flags & NODEFLAG_VISIBLE) == 0)
-                addon->RootNode->NodeFlags = (NodeFlags)(unchecked((ushort)(flags | NODEFLAG_VISIBLE)));
+            try
+            {
+                var wrapper = DalamudApi.GameGui.GetAddonByName(name, 1);
+                var addr = wrapper.Address;
+                if (addr == IntPtr.Zero) continue;
+                var addon = (AtkUnitBase*)addr;
+                if (addon->RootNode == null) continue;
+                ushort flags = (ushort)addon->RootNode->NodeFlags;
+                if (hide && (flags & NODEFLAG_VISIBLE) != 0)
+                    addon->RootNode->NodeFlags = (NodeFlags)(unchecked((ushort)(flags & ~NODEFLAG_VISIBLE)));
+                else if (!hide && (flags & NODEFLAG_VISIBLE) == 0)
+                    addon->RootNode->NodeFlags = (NodeFlags)(unchecked((ushort)(flags | NODEFLAG_VISIBLE)));
+            }
+            catch { }
         }
-        catch { }
     }
 
     // True when the engine has any text input focused (chat input,

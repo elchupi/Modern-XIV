@@ -67,6 +67,14 @@ public static class JobAura
     private static Vector3 _lastAnchorWorld;
     private static bool    _haveLastAnchor;
     private static long    _lastBoneDiagKey = -1;
+    // Last successful bone-world-position lookup. When the engine
+    // returns Vector3.Zero on a transient frame (skeleton mid-rebuild,
+    // animation handoff), re-use this if the (owner, boneIdx) pair
+    // matches — keeps enemy bone tracking from snapping back to root.
+    private static Vector3 _boneCacheWorld;
+    private static bool    _boneCacheValid;
+    private static ulong   _boneCacheOwner;
+    private static int     _boneCacheIdx = -1;
     private static bool _firstUpdateDone;   // suppress rising-edge audio on the very first eval
 
     // Buff overlay state — additional ring layered on top of the Kenki rings
@@ -1291,10 +1299,24 @@ public static class JobAura
                     }
                     catch { }
                 }
-                int boneIdx = anchorIsTarget
-                    ? (targetIsAlliedPlayer
-                        ? noWickyXIV.Config.JobAuraTargetBoneIndexPlayer
-                        : noWickyXIV.Config.JobAuraTargetBoneIndex)
+                // Two anchor categories — humanoid skeletons (self,
+                // player allies, friendly NPCs, pets) all share the
+                // same body type so they share the same bone index
+                // and offset. Hostile combatant BattleNpcs (kind == 5)
+                // can have non-humanoid skeletons (beasts, dragons,
+                // boss models) so they get their own slot.
+                bool isHostileCombatant = false;
+                if (anchorIsTarget)
+                {
+                    try
+                    {
+                        if (anchor is Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn)
+                            isHostileCombatant = (int)bn.BattleNpcKind == 5;
+                    }
+                    catch { }
+                }
+                int boneIdx = isHostileCombatant
+                    ? noWickyXIV.Config.JobAuraTargetBoneIndex
                     : noWickyXIV.Config.JobAuraBoneIndex;
                 Vector3 root = new Vector3(anchor.Position.X, anchor.Position.Y, anchor.Position.Z);
                 world = root;
@@ -1310,7 +1332,27 @@ public static class JobAura
                         {
                             bw = Hypostasis.Game.Common.GetBoneWorldPosition(
                                 go, (uint)Math.Max(0, boneIdx));
-                            if (bw != Vector3.Zero) world = bw;
+                            if (bw != Vector3.Zero)
+                            {
+                                world = bw;
+                                _boneCacheWorld = bw;
+                                _boneCacheValid = true;
+                                _boneCacheOwner = anchor.GameObjectId;
+                                _boneCacheIdx   = boneIdx;
+                            }
+                            else if (_boneCacheValid
+                                  && _boneCacheOwner == anchor.GameObjectId
+                                  && _boneCacheIdx == boneIdx)
+                            {
+                                // Transient zero — engine hasn't fully built
+                                // the skeleton this frame. Re-use the last
+                                // known good bone position rather than
+                                // snapping back to the root, which read as
+                                // "the bone slider isn't doing anything"
+                                // for enemy targets where bone resolution
+                                // returns zero on certain animation frames.
+                                world = _boneCacheWorld;
+                            }
                         }
                         // One-shot diag whenever the (anchor, boneIdx) combo
                         // changes so we can see if the bone slider is taking
@@ -1341,10 +1383,37 @@ public static class JobAura
             {
                 return;
             }
-            _ = usedCached; // (reserved for future per-cache styling)
-            world.X += noWickyXIV.Config.JobAuraOffsetX;
-            world.Y += noWickyXIV.Config.JobAuraOffsetY;
-            world.Z += noWickyXIV.Config.JobAuraOffsetZ;
+            _ = usedCached;
+            // Two-category offset selection — humanoid (self / players
+            // / NPCs / pets) vs hostile combatant. Anchor-type checks
+            // are recomputed here because this block runs even when
+            // the bone-resolve path didn't (e.g. cached-world fallback).
+            bool isHostileForOffset = false;
+            if (anchor != null && noWickyXIV.Config.JobAuraAnchorToTarget)
+            {
+                try
+                {
+                    if (anchor is Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn)
+                        isHostileForOffset = (int)bn.BattleNpcKind == 5;
+                }
+                catch { }
+            }
+            float ox, oy, oz;
+            if (isHostileForOffset)
+            {
+                ox = noWickyXIV.Config.JobAuraTargetEnemyOffsetX;
+                oy = noWickyXIV.Config.JobAuraTargetEnemyOffsetY;
+                oz = noWickyXIV.Config.JobAuraTargetEnemyOffsetZ;
+            }
+            else
+            {
+                ox = noWickyXIV.Config.JobAuraOffsetX;
+                oy = noWickyXIV.Config.JobAuraOffsetY;
+                oz = noWickyXIV.Config.JobAuraOffsetZ;
+            }
+            world.X += ox;
+            world.Y += oy;
+            world.Z += oz;
 
             // Project anchored world position to screen
             if (!DalamudApi.GameGui.WorldToScreen(world, out var screen)) return;

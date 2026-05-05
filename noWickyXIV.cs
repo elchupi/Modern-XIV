@@ -158,6 +158,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         TargetArrowHider.Update();
         TargetUI.Update();
         ChatFader.Update();
+        ChatBubbles.Update();
+        ChatTypingEmote.Update();
     }
 
     protected override void Draw()

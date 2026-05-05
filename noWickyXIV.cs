@@ -15,6 +15,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         JobAura.Initialize();
         CombatEvents.Initialize();
         TargetArrowHider.Initialize();
+        ChatFader.Initialize();
+        ChatBubbles.Initialize();
         DalamudApi.ClientState.Login += Login;
 
         // One-shot migration: MouseSensitivityMul values < 0.56 produce
@@ -155,6 +157,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         HotbarFader.Update();
         TargetArrowHider.Update();
         TargetUI.Update();
+        ChatFader.Update();
     }
 
     protected override void Draw()
@@ -165,6 +168,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         JobAura.Draw();
         HpRing.Draw();
         TargetUI.Draw();
+        ChatBubbles.Draw();
     }
 
     private static bool didLogin = false; // Workaround
@@ -197,6 +201,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { HotbarFader.RestoreOpaque(); } catch { }
         try { TargetArrowHider.Dispose(); } catch { }
         try { TargetUI.Dispose(); } catch { }
+        try { ChatFader.Dispose(); } catch { }
+        try { ChatBubbles.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;
 

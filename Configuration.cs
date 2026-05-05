@@ -277,6 +277,41 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // toggle-off and on plugin Dispose.
     public bool  HideTargetArrow = false;
 
+    // ---- Chat fade ----
+    // Fades the FFXIV chat log when not typing. Hover-to-show + an
+    // optional brighten-on-new-message window keep important chat
+    // visible without the user having to focus the input.
+    public bool  EnableChatFader                  = false;
+    public float ChatFaderIdleAlpha               = 0.20f; // alpha when not typing/hovered
+    public float ChatFaderActiveAlpha             = 1.00f; // alpha when typing / hovered / new msg
+    public float ChatFaderRate                    = 6.0f;  // 1/s exp lerp rate
+    public bool  ChatFaderHoverActivates          = true;
+    public float ChatFaderHoldOnNewMessageSeconds = 4.0f;  // 0 = disabled
+    // Minimal mode: hide chat tabs + the three icons next to them so
+    // only the chat lines and input box are visible.
+    public bool  ChatMinimalMode                  = false;
+    // Hide the entire native chat (root visibility cleared). Only flip
+    // this on when the bubble overlay is active or you have another
+    // way of reading chat — the input field still works (Enter focuses
+    // it natively) but the visible window goes away.
+    public bool  ChatHideNative                   = false;
+
+    // ---- Chat bubbles overlay (v1: read-only) ----
+    public bool  EnableChatBubbles                = false;
+    public float ChatBubblesX                     = 960f;
+    public float ChatBubblesY                     = 700f;     // bottom of the bubble stack
+    public float ChatBubblesColumnWidth           = 700f;     // overall column the bubbles align inside
+    public float ChatBubblesMaxWidth              = 360f;     // max bubble body width before wrap
+    public float ChatBubblesMaxAgeSeconds         = 30f;
+    public float ChatBubblesSelfR                 = 0.20f;
+    public float ChatBubblesSelfG                 = 0.55f;
+    public float ChatBubblesSelfB                 = 0.95f;
+    public float ChatBubblesSelfAlpha             = 0.85f;
+    public float ChatBubblesOtherR                = 0.18f;
+    public float ChatBubblesOtherG                = 0.18f;
+    public float ChatBubblesOtherB                = 0.22f;
+    public float ChatBubblesOtherAlpha            = 0.85f;
+
     // Diagnostic: log every damage effect entry (type, Param0/1,
     // value, action id, fromMe/toMe, crit/dh decision) so we can
     // verify the bit positions used by NormalHit/CritHit detection

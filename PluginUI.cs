@@ -1528,6 +1528,53 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
+        // Chat fader (fades chat when not typing, restores on hover / new message / typing).
+        if (ImGuiEx.BeginGroupBox("Chat fader"))
+        {
+            ConfigCheckbox("Enable##ChatFader", ref noWickyXIV.Config.EnableChatFader);
+            ImGui.TextDisabled("Fades the chat log when you're not typing. Restored when chat input is focused, when hovered, or for a few seconds after a new message arrives.");
+            ConfigSliderFloat("Idle alpha##ChatFader",        ref noWickyXIV.Config.ChatFaderIdleAlpha,                  0f,   1f,   0.20f, "%.2f");
+            ConfigSliderFloat("Active alpha##ChatFader",      ref noWickyXIV.Config.ChatFaderActiveAlpha,                0f,   1f,   1.00f, "%.2f");
+            ConfigSliderFloat("Fade rate (1/s)##ChatFader",   ref noWickyXIV.Config.ChatFaderRate,                       1f,   20f,  6.0f,  "%.1f");
+            ConfigCheckbox  ("Hover to show##ChatFader",      ref noWickyXIV.Config.ChatFaderHoverActivates);
+            ConfigSliderFloat("New-msg hold (s, 0=off)##ChatFader", ref noWickyXIV.Config.ChatFaderHoldOnNewMessageSeconds, 0f, 15f, 4.0f, "%.1f");
+            ImGui.Separator();
+            ConfigCheckbox("Minimal mode (hide tabs + icons)##ChatFader", ref noWickyXIV.Config.ChatMinimalMode);
+            ImGui.TextDisabled("Hides the tab strip and the three icon buttons next to it; only the chat lines and input box remain visible. Restored on toggle-off.");
+            if (ImGui.Button("Dump chat addon node tree to log##ChatFader"))
+                ChatFader.DumpChatLogNodeTree();
+            ImGui.SameLine();
+            ImGui.TextDisabled("Logs every ChatLog node ID + rect to PluginLog so we can identify hidden-target IDs.");
+
+            ImGui.Separator();
+            ConfigCheckbox("Hide native chat entirely##ChatHideNative", ref noWickyXIV.Config.ChatHideNative);
+            ImGui.TextDisabled("Clears the ChatLog root visibility bit. The input field still works (Enter focuses it natively). Pair with the bubble overlay below.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Chat bubbles overlay (v1: read-only).
+        if (ImGuiEx.BeginGroupBox("Chat bubbles overlay (read-only)"))
+        {
+            ConfigCheckbox("Enable##ChatBubbles", ref noWickyXIV.Config.EnableChatBubbles);
+            ImGui.TextDisabled("Renders incoming chat lines as alternating left/right bubbles with the sender label below each one. Sending chat is still done through the native input (Enter).");
+            ConfigSliderFloat("Anchor X (px)##ChatBubbles",  ref noWickyXIV.Config.ChatBubblesX,            0f,    3840f, 960f, "%.0f");
+            ConfigSliderFloat("Anchor Y (px, bottom)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesY,    0f,    2160f, 700f, "%.0f");
+            ConfigSliderFloat("Column width (px)##ChatBubbles",  ref noWickyXIV.Config.ChatBubblesColumnWidth, 200f,  1400f, 700f, "%.0f");
+            ConfigSliderFloat("Bubble max width (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesMaxWidth, 100f, 800f, 360f, "%.0f");
+            ConfigSliderFloat("Max age (s)##ChatBubbles",   ref noWickyXIV.Config.ChatBubblesMaxAgeSeconds,   5f,    300f, 30f, "%.0f");
+            ImGui.TextDisabled("Self bubble color");
+            ConfigSliderFloat("Self R##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfR, 0f, 1f, 0.20f, "%.2f");
+            ConfigSliderFloat("Self G##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfG, 0f, 1f, 0.55f, "%.2f");
+            ConfigSliderFloat("Self B##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfB, 0f, 1f, 0.95f, "%.2f");
+            ConfigSliderFloat("Self alpha##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfAlpha, 0f, 1f, 0.85f, "%.2f");
+            ImGui.TextDisabled("Other bubble color");
+            ConfigSliderFloat("Other R##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherR, 0f, 1f, 0.18f, "%.2f");
+            ConfigSliderFloat("Other G##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherG, 0f, 1f, 0.18f, "%.2f");
+            ConfigSliderFloat("Other B##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherB, 0f, 1f, 0.22f, "%.2f");
+            ConfigSliderFloat("Other alpha##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherAlpha, 0f, 1f, 0.85f, "%.2f");
+            ImGuiEx.EndGroupBox();
+        }
+
         // Combat-event diagnostics for verifying NormalHit/CritHit/IncomingDamage bit positions.
         if (ImGuiEx.BeginGroupBox("Diagnostics"))
         {

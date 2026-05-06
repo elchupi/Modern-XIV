@@ -45,7 +45,13 @@ public static unsafe class Game
         try
         {
             var io = ImGui.GetIO();
-            if (io.KeyShift && io.KeyCtrl) return PresetManager.CurrentPreset.ZoomDelta;
+            if (io.KeyShift && io.KeyCtrl)
+            {
+                // Cancel any in-flight preset transition so the
+                // user's wheel zoom doesn't fight the lerp.
+                PresetManager.CancelTransitionToTarget();
+                return PresetManager.CurrentPreset.ZoomDelta;
+            }
         }
         catch { /* if ImGui IO not available, fall through to suppression */ }
         return 0f;

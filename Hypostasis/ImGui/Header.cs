@@ -58,8 +58,17 @@ public static partial class ImGuiEx
         var center = itemMin + halfSize;
         if (ImGui.IsWindowHovered() && ImGui.IsMouseHoveringRect(itemMin, itemMax, false))
         {
+            // Route through the custom tooltip pipeline so this site
+            // matches the rest (north-of-item placement, exp-lerp
+            // fade-in/out). Use CaptureTooltip with the explicit
+            // anchor — the InvisibleButton lives in the title bar
+            // (outside window content rect), so ImGui.IsItemHovered
+            // can return false even though we're geometrically over
+            // it. We've already verified hover via
+            // IsMouseHoveringRect above, so a direct capture is
+            // correct here.
             if (!string.IsNullOrEmpty(options.Tooltip))
-                ImGui.SetTooltip(options.Tooltip);
+                ImGuiEx.CaptureTooltip(options.Tooltip, new Vector2((itemMin.X + itemMax.X) * 0.5f, itemMin.Y));
             ImGui.GetWindowDrawList().AddCircleFilled(center, halfSize.X, ImGui.GetColorU32(ImGui.IsMouseDown(ImGuiMouseButton.Left) ? ImGuiCol.ButtonActive : ImGuiCol.ButtonHovered));
             if (ImGui.IsMouseReleased(options.MouseButton))
                 pressed = true;

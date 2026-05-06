@@ -208,13 +208,14 @@ public static class PluginUI
 
         ImGuiEx.SetItemTooltip("You can CTRL + Left Click sliders to input values manually.");
 
-        // Smooth transition slider — applies to ANY preset activation
-        // (manual click, auto condition-set swap, or login restore).
-        // 0.05s ≈ instant snap; 5s default = slow cinematic ease-in.
+        // Smooth transition slider — applies to AUTO condition-driven
+        // preset swaps. 0.05s ≈ instant snap; 0.5s default ≈ momentary
+        // glide. Anything past ~1s starts to fight Ctrl/Alt+scroll
+        // height/shoulder adjustments mid-transition.
         ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
         ConfigSliderFloat("Transition seconds##PresetTransition",
-            ref noWickyXIV.Config.PresetTransitionSeconds, 0.05f, 15f, 5f, "%.2fs");
-        ImGui.TextDisabled("How long the camera takes to ease into a newly-applied preset's zoom / FoV / tilt / look-at-height.");
+            ref noWickyXIV.Config.PresetTransitionSeconds, 0.05f, 5f, 0.5f, "%.2fs");
+        ImGui.TextDisabled("How long the camera takes to ease the position offsets (Height / Side / LookAtHeight) into a newly-activated preset. Zoom/FoV/Tilt snap immediately so they don't fight live wheel input. Ctrl/Alt+scroll cancels an in-flight transition.");
 
         ImGui.BeginChild("CammyPresetList", new Vector2(250 * ImGuiHelpers.GlobalScale, 0), true);
 
@@ -394,7 +395,7 @@ public static class PluginUI
         ImGui.Separator();
         ImGui.Spacing();
 
-        ResetSliderFloat("Camera Height Offset", ref preset.HeightOffset, -1, 1, 0, "%.2f");
+        ResetSliderFloat("Camera Height Offset", ref preset.HeightOffset, -2, 4, 0, "%.2f");
         ResetSliderFloat("Camera Side Offset", ref preset.SideOffset, -1, 1, 0, "%.2f");
         ResetSliderFloat("Tilt", ref preset.Tilt, -MathF.PI, MathF.PI, 0, "%f");
         ImGuiEx.SetItemTooltip("Not meant for general gameplay use! Will be moved to a separate feature in a later update.");
@@ -409,26 +410,64 @@ public static class PluginUI
 
         var qolBarEnabled = IPC.QoLBarEnabled;
         var conditionSets = qolBarEnabled ? IPC.QoLBarConditionSets : [];
-        var display = preset.ConditionSet >= 0
-            ? preset.ConditionSet < conditionSets.Length
+
+        // Display string priority:
+        //   1. Built-in condition (if set)
+        //   2. QoL Bar set index (if set)
+        //   3. "None"
+        string display;
+        if (preset.Condition != BuiltinPresetCondition.None)
+        {
+            display = $"[Built-in] {BuiltinConditionLabel(preset.Condition)}";
+        }
+        else if (preset.ConditionSet >= 0)
+        {
+            display = preset.ConditionSet < conditionSets.Length
                 ? $"[{preset.ConditionSet + 1}] {conditionSets[preset.ConditionSet]}"
-                : (preset.ConditionSet + 1).ToString()
-            : "None";
+                : (preset.ConditionSet + 1).ToString();
+        }
+        else
+        {
+            display = "None";
+        }
 
         if (ImGui.BeginCombo("Condition Set", display))
         {
-            if (ImGui.Selectable("None##ConditionSet", preset.ConditionSet < 0))
+            // None — clears both built-in and QoL Bar selections.
+            if (ImGui.Selectable("None##ConditionSet",
+                    preset.Condition == BuiltinPresetCondition.None && preset.ConditionSet < 0))
             {
+                preset.Condition = BuiltinPresetCondition.None;
                 preset.ConditionSet = -1;
                 noWickyXIV.Config.Save();
             }
 
-            if (qolBarEnabled)
+            // Built-in conditions (game-state). Selecting one clears
+            // the QoL Bar selection so the two triggers don't collide.
+            ImGui.Separator();
+            foreach (var c in (BuiltinPresetCondition[])System.Enum.GetValues(typeof(BuiltinPresetCondition)))
             {
+                if (c == BuiltinPresetCondition.None) continue;
+                bool selected = preset.Condition == c;
+                if (ImGui.Selectable($"[Built-in] {BuiltinConditionLabel(c)}##bic_{c}", selected))
+                {
+                    preset.Condition = c;
+                    preset.ConditionSet = -1;
+                    noWickyXIV.Config.Save();
+                }
+            }
+
+            // QoL Bar sets — selecting clears the built-in choice.
+            if (qolBarEnabled && conditionSets.Length > 0)
+            {
+                ImGui.Separator();
                 for (int i = 0; i < conditionSets.Length; i++)
                 {
                     var name = conditionSets[i];
-                    if (!ImGui.Selectable($"[{i + 1}] {name}", i == preset.ConditionSet)) continue;
+                    if (!ImGui.Selectable($"[{i + 1}] {name}",
+                            preset.Condition == BuiltinPresetCondition.None && i == preset.ConditionSet))
+                        continue;
+                    preset.Condition = BuiltinPresetCondition.None;
                     preset.ConditionSet = i;
                     noWickyXIV.Config.Save();
                 }
@@ -437,11 +476,23 @@ public static class PluginUI
             ImGui.EndCombo();
         }
 
-        ImGuiEx.SetItemTooltip("Uses a QoL Bar Condition Set to automatically swap to this preset." +
-            "\nPresets higher in the list will have priority over lower ones." +
-            "\nCondition Sets should be made using the QoL Bar plugin config." +
-            "\nPlease see the \"Other Settings\" tab to verify if QoL Bar was detected.");
+        ImGuiEx.SetItemTooltip(
+            "Auto-activates this preset when the chosen condition is true.\n" +
+            "Built-in conditions read directly from the game's condition flags " +
+            "(InCombat, Mounted, Passenger, Talking to NPC) and don't need any extra plugins.\n" +
+            "QoL Bar sets are sourced from the QoL Bar plugin and let you build composite conditions.\n" +
+            "Presets higher in the preset list win when multiple conditions match.");
     }
+
+    private static string BuiltinConditionLabel(BuiltinPresetCondition c) => c switch
+    {
+        BuiltinPresetCondition.InCombat     => "In Combat",
+        BuiltinPresetCondition.Mounted      => "Mounted",
+        BuiltinPresetCondition.Passenger    => "Passenger",
+        BuiltinPresetCondition.TalkingToNpc => "Talking to NPC",
+        BuiltinPresetCondition.WhileRunning => "While Running",
+        _                                    => c.ToString(),
+    };
 
     // ---- Wicked-style settings rows for global Configuration fields ----
     // Cammy's existing ResetSliderFloat is per-preset; these helpers are
@@ -1589,6 +1640,8 @@ public static class PluginUI
             ImGui.Separator();
             ConfigCheckbox("Backfill chat history on plugin load##ChatBubbles", ref noWickyXIV.Config.ChatBubblesBackfillOnLoad);
             ImGui.TextDisabled("Reads RaptureLogModule.LogMessageData on Initialize to seed the buffer with prior messages so the overlay isn't blank. Format is undocumented and may break on patch days — flip off if that happens.");
+            ConfigCheckbox("Show channel tag above bubbles##ChatBubbles", ref noWickyXIV.Config.ChatBubblesShowChannelTag);
+            ImGui.TextDisabled("Renders a small bracketed tag like [PARTY], [FC], [TELL], [LS3] above each bubble in the channel's color. /say is always unmarked since it's the baseline.");
 
             ImGui.Separator();
             ConfigCheckbox("Play typing emote##ChatTypingEmote", ref noWickyXIV.Config.EnableTypingEmote);
@@ -1673,6 +1726,17 @@ public static class PluginUI
     // key pressed, "Clear" to unbind, "Reset" to default. Stores raw VirtualKey int.
     private static int _hotkeyCapturingFor; // 0 = nothing, else field-id we're capturing for; we use the address-of-int via a static set-target
     private static System.Action<int> _hotkeyCaptureCallback;
+    // Tracks which VK codes were already down WHEN capture started so
+    // we don't immediately rebind to whatever was held while clicking
+    // "Set" (e.g. Mouse1/LMB latching from the click itself, or Ctrl
+    // held while opening the panel). Capture only commits when a key
+    // transitions UP→DOWN inside the capture window.
+    private static bool[] _hotkeyDownAtCaptureStart = new bool[256];
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private static bool VkDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
 
     private static void HotkeyRow(string label, ref int vk, int defaultVk)
     {
@@ -1685,21 +1749,41 @@ public static class PluginUI
         if (isCapturing)
         {
             ImGui.TextColored(new System.Numerics.Vector4(1f, 0.7f, 0.2f, 1f), "press a key…");
-            // Poll Dalamud's IKeyState for any key pressed this frame.
-            int pressed = ScanFirstPressedVk();
-            if (pressed != 0)
+
+            // ESC cancels — checked first so it never gets bound.
+            if (VkDown(0x1B))
             {
-                vk = pressed;
-                noWickyXIV.Config.Save();
                 _hotkeyCapturingFor = 0;
             }
-            // ESC cancels
-            try { if (DalamudApi.KeyState[0x1B]) _hotkeyCapturingFor = 0; } catch { }
+            else
+            {
+                // Poll Win32 GetAsyncKeyState directly so we can see
+                // every key (Dalamud's IKeyState only tracks the
+                // engine-registered subset and silently ignored most
+                // VK codes — that's the bug the user hit). Only
+                // commit on a UP→DOWN transition for a key that was
+                // NOT already down when capture began, otherwise the
+                // click on "Set" itself, or held modifiers, would
+                // rebind instantly.
+                int pressed = ScanFirstFreshlyPressedVk();
+                if (pressed != 0)
+                {
+                    vk = pressed;
+                    noWickyXIV.Config.Save();
+                    _hotkeyCapturingFor = 0;
+                }
+            }
         }
         else
         {
             if (ImGui.Button($"{display}##{label}"))
+            {
                 _hotkeyCapturingFor = label.GetHashCode();
+                // Snapshot which keys are currently down so we can
+                // require a fresh UP→DOWN transition before commit.
+                for (int v = 0; v < _hotkeyDownAtCaptureStart.Length; v++)
+                    _hotkeyDownAtCaptureStart[v] = VkDown(v);
+            }
         }
         ImGui.SameLine();
         if (ImGui.SmallButton($"x##{label}"))
@@ -1715,21 +1799,32 @@ public static class PluginUI
         }
     }
 
-    private static int ScanFirstPressedVk()
+    private static int ScanFirstFreshlyPressedVk()
     {
-        // Scan a sensible range (letters, numbers, F-keys, common others).
-        try
+        // Walk standard keyboard range. Skip mouse buttons (0x01..0x06)
+        // entirely — binding mouse to a hotkey row isn't useful here,
+        // and the LMB click that opened the capture would otherwise
+        // self-bind. ESC handled by the caller. Tab/Enter/raw Shift/
+        // raw Ctrl/Alt left out to avoid accidental binds; the
+        // L/R-specific shift/ctrl/alt VKs (0xA0..0xA5) are also skipped
+        // for the same reason — bind a real key, modifiers are
+        // composed via the calling code.
+        for (int v = 0x07; v <= 0xFE; v++)
         {
-            for (int v = 0x08; v <= 0xDE; v++)
-            {
-                // Skip mouse buttons (0x01..0x06) and common modifiers (handled
-                // inline by Ctrl-aware slot hotkeys), Tab+Enter+Shift left out
-                // to avoid accidental binds during Set click.
-                if (v == 0x09 || v == 0x0D || v == 0x10 || v == 0x11 || v == 0x12 || v == 0x1B) continue;
-                if (DalamudApi.KeyState[v]) return v;
-            }
+            if (v >= 0x01 && v <= 0x06) continue;       // mouse buttons
+            if (v == 0x09 || v == 0x0D) continue;         // Tab, Enter
+            if (v == 0x10 || v == 0x11 || v == 0x12) continue; // Shift, Ctrl, Alt
+            if (v >= 0xA0 && v <= 0xA5) continue;         // L/R Shift, Ctrl, Alt
+            if (v == 0x1B) continue;                       // ESC (cancel)
+            bool nowDown = VkDown(v);
+            // Reset the "was down at start" latch as soon as the user
+            // releases the key, so subsequent re-presses count as
+            // fresh.
+            if (!nowDown && _hotkeyDownAtCaptureStart[v])
+                _hotkeyDownAtCaptureStart[v] = false;
+            if (nowDown && !_hotkeyDownAtCaptureStart[v])
+                return v;
         }
-        catch { }
         return 0;
     }
 

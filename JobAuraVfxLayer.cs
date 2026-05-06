@@ -20,6 +20,10 @@ public enum JobAuraTrigger
     IncomingDamage,// One-shot — local player took damage
     Moving,        // Sustained-while-true — local player is moving (speed > threshold)
     Stopped,       // Sustained-while-true — local player is stationary (speed <= threshold)
+    InCombat,      // Sustained-while-true — ConditionFlag.InCombat (engaged with an enemy)
+    Mounted,       // Sustained-while-true — riding own mount (ConditionFlag.Mounted, not Mounted2)
+    Passenger,     // Sustained-while-true — riding on someone else's mount (ConditionFlag.Mounted2)
+    TalkingToNpc,  // Sustained-while-true — engaged in an NPC quest event / interaction
 }
 
 // Two layer modes. The old "IsBurst" boolean was a poor abstraction

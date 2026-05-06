@@ -66,6 +66,17 @@ public static class JobAura
     // place instead of snapping to the (possibly off-screen) player.
     private static Vector3 _lastAnchorWorld;
     private static bool    _haveLastAnchor;
+    // Persist the offset category that was active when _lastAnchorWorld
+    // was captured. Without this, when the target drops we fall back to
+    // _lastAnchorWorld (correct world position) but the offset
+    // computation re-derives `isHostileForOffset` from `anchor`, which
+    // is null on the cached path — so we silently switch from enemy
+    // offset (Y +head height etc.) to humanoid offset (Y 0). The visual
+    // then jumps by (humanoid_offset - enemy_offset) on detarget, which
+    // is what the user sees as "offset reset to 0 on detarget". Latch
+    // it here at the same moment _lastAnchorWorld is written so the
+    // cached path uses the same offset that was active during capture.
+    private static bool    _lastAnchorWasHostile;
     private static long    _lastBoneDiagKey = -1;
     // Last successful bone-world-position lookup. When the engine
     // returns Vector3.Zero on a transient frame (skeleton mid-rebuild,
@@ -1370,6 +1381,7 @@ public static class JobAura
                 }
                 _lastAnchorWorld = world;
                 _haveLastAnchor = true;
+                _lastAnchorWasHostile = isHostileCombatant;
             }
             else if (_haveLastAnchor && _targetAlpha > 0.01f)
             {
@@ -1388,6 +1400,12 @@ public static class JobAura
             // / NPCs / pets) vs hostile combatant. Anchor-type checks
             // are recomputed here because this block runs even when
             // the bone-resolve path didn't (e.g. cached-world fallback).
+            // When using the cached anchor (target just dropped), the
+            // hostility check on `anchor` would always be false because
+            // anchor is null — so we fall back to the latched
+            // `_lastAnchorWasHostile` from the frame the cache was
+            // captured. Without this fallback the visual jumps by
+            // (humanoid_offset - enemy_offset) on the detarget frame.
             bool isHostileForOffset = false;
             if (anchor != null && noWickyXIV.Config.JobAuraAnchorToTarget)
             {
@@ -1397,6 +1415,10 @@ public static class JobAura
                         isHostileForOffset = (int)bn.BattleNpcKind == 5;
                 }
                 catch { }
+            }
+            else if (usedCached)
+            {
+                isHostileForOffset = _lastAnchorWasHostile;
             }
             float ox, oy, oz;
             if (isHostileForOffset)
@@ -1987,8 +2009,55 @@ public static class JobAura
             case JobAuraTrigger.IncomingDamage: return CombatEvents.IncomingDamage;
             case JobAuraTrigger.Moving:         return _isMoving;
             case JobAuraTrigger.Stopped:        return _isMoving == false && _motionTracked;
+            case JobAuraTrigger.InCombat:       return ReadCondInCombat();
+            case JobAuraTrigger.Mounted:        return ReadCondMounted();
+            case JobAuraTrigger.Passenger:      return ReadCondPassenger();
+            case JobAuraTrigger.TalkingToNpc:   return ReadCondTalkingToNpc();
             default:                          return false;
         }
+    }
+
+    // Condition-flag readers — wrapped because Dalamud's Condition
+    // indexer can throw if invoked before ClientState is fully ready
+    // (very early plugin load). Returning false on miss is the safe
+    // default — a layer simply doesn't fire that frame.
+    private static bool ReadCondInCombat()
+    {
+        try { return DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]; }
+        catch { return false; }
+    }
+    // "Driving" your own mount — the engine sets ConditionFlag.Mounted
+    // for any mount session (driver or passenger) and ConditionFlag.RidingPillion
+    // when the player is the secondary rider. So driver = Mounted && !Mounted2.
+    private static bool ReadCondMounted()
+    {
+        try
+        {
+            var c = DalamudApi.Condition;
+            return c[Dalamud.Game.ClientState.Conditions.ConditionFlag.Mounted]
+                && !c[Dalamud.Game.ClientState.Conditions.ConditionFlag.RidingPillion];
+        }
+        catch { return false; }
+    }
+    // Passenger — riding pillion on someone else's mount.
+    private static bool ReadCondPassenger()
+    {
+        try { return DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.RidingPillion]; }
+        catch { return false; }
+    }
+    // Engaged in NPC dialogue / quest event. OccupiedInQuestEvent fires
+    // for quest NPCs; OccupiedInEvent covers generic interactions
+    // (vendors, summoning bell triggers, aetheryte menus) so the
+    // visual fires for any "talking to a fixed object" interaction.
+    private static bool ReadCondTalkingToNpc()
+    {
+        try
+        {
+            var c = DalamudApi.Condition;
+            return c[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInQuestEvent]
+                || c[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInEvent];
+        }
+        catch { return false; }
     }
 
     // Player motion state — sampled each Update from local-player
@@ -1998,6 +2067,10 @@ public static class JobAura
     private const float MOTION_SPEED_THRESHOLD = 0.5f;
     private static bool _isMoving;
     private static bool _motionTracked;
+    // Public accessors so preset/condition systems can read motion
+    // state without duplicating the per-frame position-delta tracker.
+    public static bool IsMoving => _isMoving;
+    public static bool IsStopped => _motionTracked && !_isMoving;
     private static System.Numerics.Vector3 _lastMotionPos;
     private static double _lastMotionAt;
 
@@ -2047,6 +2120,10 @@ public static class JobAura
             [JobAuraTrigger.IncomingDamage] = CombatEvents.IncomingDamage,
             [JobAuraTrigger.Moving]         = _isMoving,
             [JobAuraTrigger.Stopped]        = _motionTracked && !_isMoving,
+            [JobAuraTrigger.InCombat]       = ReadCondInCombat(),
+            [JobAuraTrigger.Mounted]        = ReadCondMounted(),
+            [JobAuraTrigger.Passenger]      = ReadCondPassenger(),
+            [JobAuraTrigger.TalkingToNpc]   = ReadCondTalkingToNpc(),
         };
         return d;
     }

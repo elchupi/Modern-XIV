@@ -4,6 +4,19 @@ using Dalamud.Configuration;
 
 namespace noWickyXIV;
 
+// Built-in game-state conditions a preset can auto-activate on. Lives
+// alongside QoL Bar's ConditionSet so users can pick either source —
+// the Condition Set dropdown surfaces both.
+public enum BuiltinPresetCondition
+{
+    None,
+    InCombat,
+    Mounted,
+    Passenger,
+    [Display(Name = "Talking to NPC")] TalkingToNpc,
+    [Display(Name = "While Running")]  WhileRunning,
+}
+
 public class CameraConfigPreset
 {
     public enum ViewBobSetting
@@ -39,10 +52,45 @@ public class CameraConfigPreset
     public float LookAtHeightOffset = Game.GetDefaultLookAtHeightOffset() ?? 0;
     public ViewBobSetting ViewBobMode = ViewBobSetting.Disabled;
     public int ConditionSet = -1;
+    // Built-in game-state condition that activates this preset. Takes
+    // precedence over ConditionSet when non-None — picking one in the
+    // Condition Set dropdown sets this and clears ConditionSet so the
+    // two triggers don't collide.
+    public BuiltinPresetCondition Condition = BuiltinPresetCondition.None;
 
     public CameraConfigPreset Clone() => (CameraConfigPreset)MemberwiseClone();
 
-    public bool CheckConditionSet() => ConditionSet < 0 || IPC.QoLBarEnabled && IPC.CheckConditionSet(ConditionSet);
+    public bool CheckConditionSet()
+    {
+        // Built-in condition wins if set.
+        if (Condition != BuiltinPresetCondition.None)
+            return EvaluateBuiltinCondition(Condition);
+        // QoL Bar set, or unconditional ("None").
+        return ConditionSet < 0 || IPC.QoLBarEnabled && IPC.CheckConditionSet(ConditionSet);
+    }
+
+    private static bool EvaluateBuiltinCondition(BuiltinPresetCondition c)
+    {
+        try
+        {
+            var cond = DalamudApi.Condition;
+            return c switch
+            {
+                BuiltinPresetCondition.InCombat     => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat],
+                BuiltinPresetCondition.Mounted      => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Mounted]
+                                                       && !cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.RidingPillion],
+                BuiltinPresetCondition.Passenger    => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.RidingPillion],
+                BuiltinPresetCondition.TalkingToNpc => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInQuestEvent]
+                                                       || cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInEvent],
+                // Driven from JobAura's existing motion tracker —
+                // exposed via JobAura.IsMoving so we don't duplicate
+                // the per-frame position-delta loop.
+                BuiltinPresetCondition.WhileRunning => JobAura.IsMoving,
+                _ => false,
+            };
+        }
+        catch { return false; }
+    }
 
     public void Apply(bool isLoggingIn = false) => PresetManager.ApplyPreset(this, isLoggingIn);
 }
@@ -69,7 +117,14 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // FoV / tilt / look-at-height into a newly-applied preset's target
     // values. Smoothstep eased. Bounds (min/max zoom, FoV, V-rot
     // limits) snap immediately — only visible per-frame values lerp.
-    public float PresetTransitionSeconds = 5.0f;
+    // How long the camera takes to ease the position offsets
+    // (Height/Side/LookAtHeight) into a newly-activated preset.
+    // Default 0.5s = momentary. Anything longer than ~1s starts to
+    // fight live Ctrl/Alt+scroll height/shoulder adjustments — the
+    // transition's contribution can outrun the user's input mid-
+    // glide. If you want a cinematic ease-in, set 1-2s and avoid
+    // scrolling through the transition window.
+    public float PresetTransitionSeconds = 0.5f;
     public bool EnableCameraNoClippy = false;
     public DeathCamSetting DeathCamMode = DeathCamSetting.Disabled;
     public bool EnableAdvancedFreeCamControls = false;
@@ -311,6 +366,10 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float ChatBubblesOtherG                = 0.18f;
     public float ChatBubblesOtherB                = 0.22f;
     public float ChatBubblesOtherAlpha            = 0.85f;
+    // Show the bracketed channel tag ([PARTY], [FC], [TELL], etc.) above
+    // each bubble. /say is always unmarked (baseline conversational
+    // channel) regardless of this toggle.
+    public bool  ChatBubblesShowChannelTag        = true;
     // Hover-reveal: hovering within this many pixels above the anchor
     // (centered on the column) reveals every buffered message at full
     // alpha, ignoring the per-entry max-age filter.

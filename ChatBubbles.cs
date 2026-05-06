@@ -301,8 +301,8 @@ public static class ChatBubbles
             // player chat in the bubble overlay.
             if (!IsConversationalChannel(chType)) return;
 
-            var senderText = message.Sender?.TextValue ?? "";
-            var bodyText   = message.Message?.TextValue ?? "";
+            var senderText = ExtractSeStringText(message.Sender);
+            var bodyText   = ExtractSeStringText(message.Message);
 
             // Cache local player name once. The lookup must happen on
             // the framework thread, but we're already in the Update
@@ -663,7 +663,20 @@ public static class ChatBubbles
             string label = e.FromSelf
                 ? timeStr
                 : (string.IsNullOrEmpty(timeStr) ? nameStr : $"{nameStr}  {timeStr}");
+
+            // Channel label: shown ABOVE each bubble so the user can
+            // tell at a glance which chat mode the message came in on.
+            // Suppressed for Say (default conversational channel — the
+            // unmarked baseline) to keep the column from feeling
+            // labelled-noisy when most messages are /say. Wrap [Tell]
+            // and [FC] in brackets to read as a tag rather than a
+            // sender prefix. Gated by config toggle.
+            string channelTag = cfg.ChatBubblesShowChannelTag
+                ? ChannelTagAbove(e.Channel)
+                : "";
+
             Vector2 labelSize;
+            Vector2 channelTagSize = Vector2.Zero;
             bool senderFontPushed = false;
             try
             {
@@ -673,6 +686,8 @@ public static class ChatBubbles
                     senderFontPushed = true;
                 }
                 labelSize = ImGui.CalcTextSize(label);
+                if (!string.IsNullOrEmpty(channelTag))
+                    channelTagSize = ImGui.CalcTextSize(channelTag);
             }
             finally
             {
@@ -682,37 +697,47 @@ public static class ChatBubbles
             float padX = 10f, padY = 6f;
             float bubbleW = MathF.Min(maxBubbleW, MathF.Max(40f, bodySize.X)) + padX * 2f;
             float bubbleH = bodySize.Y + padY * 2f;
-            float blockH  = bubbleH + 4f + labelSize.Y; // bubble + gap + label
+            // Block layout (top-to-bottom):
+            //   [channel tag] (only if channelTag is non-empty)
+            //   [2px gap]
+            //   [bubble body]
+            //   [4px gap]
+            //   [sender/time label]
+            float channelTagH    = channelTagSize.Y;
+            float channelTagGap  = string.IsNullOrEmpty(channelTag) ? 0f : 2f;
+            float blockH = channelTagH + channelTagGap + bubbleH + 4f + labelSize.Y;
 
-            // Lay out the block above the running cursor.
+            // Lay out the block above the running cursor. The bubble
+            // sits below the channel tag (if any), so its top is
+            // offset by the tag's height + gap.
             float blockTop = curY - blockH;
-            float bubbleTop = blockTop;
+            float bubbleTop = blockTop + channelTagH + channelTagGap;
             float bubbleLeft = e.FromSelf
                 ? (anchor.X + colWidth * 0.5f - bubbleW)  // right-aligned within column
                 : (anchor.X - colWidth * 0.5f);            // left-aligned
 
-            // Container clip + top-fade gradient.
+            // Container clip + soft fade gradients on BOTH edges.
             //
-            // Bottom: when the user has scrolled up, the newest
-            // bubbles drop below anchor.Y. Skip any bubble whose top
-            // is at or below anchor.Y — they're outside the
-            // container in the downward direction and shouldn't bleed
-            // into the rest of the UI.
-            //
-            // Top: bubbles whose top edge sits inside the fade band
-            // (colTopY .. colTopY + fadeBand) are alpha-graded toward
-            // 0 so old messages disappear softly. Once the entire
-            // bubble sits above colTopY we stop walking — every older
+            // Top (older messages scrolling up): bubbles whose top
+            // edge enters the fadeBand at colTopY are alpha-graded
+            // toward 0 so old messages dissolve into the column's
+            // top edge instead of hard-clipping. Once a bubble sits
+            // entirely above colTopY we stop walking — every older
             // entry is also outside the container.
-            if (bubbleTop >= anchor.Y)
-            {
-                curY = blockTop - 6f;
-                continue;
-            }
-            float maskAlpha;
+            //
+            // Bottom (newer messages drifting below anchor.Y when
+            // the user has scrolled up, and re-entering as they
+            // scroll back down): mirror the same fadeBand at the
+            // anchor.Y line. Bubbles whose top is past anchor.Y are
+            // fully masked (off-screen below). Bubbles straddling
+            // the bottom edge fade based on how much of their body
+            // sits inside the band. Without this the bottom was a
+            // hard cut — chat would pop in/out as the user scrolled
+            // back toward the newest message.
+            float topMask;
             if (bubbleTop >= colTopY + fadeBand)
             {
-                maskAlpha = 1f;
+                topMask = 1f;
             }
             else if (bubbleTop + bubbleH <= colTopY)
             {
@@ -720,16 +745,74 @@ public static class ChatBubbles
             }
             else
             {
-                maskAlpha = MathF.Max(0f,
+                topMask = MathF.Max(0f,
                     (bubbleTop - colTopY) / MathF.Max(1f, fadeBand));
             }
-            a *= maskAlpha;
+
+            float bottomMask;
+            if (bubbleTop >= anchor.Y)
+            {
+                // Entirely below the column — render with 0 alpha and
+                // continue walking. We can't `break` here because the
+                // iteration walks NEWEST first (bottom) → older (top),
+                // and older bubbles will sit ABOVE this one once the
+                // running curY climbs back up.
+                bottomMask = 0f;
+            }
+            else if (bubbleTop + bubbleH <= anchor.Y - fadeBand)
+            {
+                bottomMask = 1f;
+            }
+            else
+            {
+                // Fade based on how far the bubble's TOP is above
+                // anchor.Y. When the top is at the band's upper edge
+                // (anchor.Y - fadeBand) → fully visible; at anchor.Y
+                // → fully masked. Using the top edge keeps the fade
+                // monotonic as the bubble slides downward through
+                // the band on scroll-up.
+                bottomMask = MathF.Max(0f,
+                    (anchor.Y - bubbleTop) / MathF.Max(1f, fadeBand));
+            }
+
+            a *= MathF.Min(topMask, bottomMask);
             if (a < 0.01f) { curY = blockTop - 6f; continue; }
 
-            // Draw the bubble background.
-            var fillC = e.FromSelf
-                ? new Vector4(cfg.ChatBubblesSelfR, cfg.ChatBubblesSelfG, cfg.ChatBubblesSelfB, cfg.ChatBubblesSelfAlpha * a)
-                : new Vector4(cfg.ChatBubblesOtherR, cfg.ChatBubblesOtherG, cfg.ChatBubblesOtherB, cfg.ChatBubblesOtherAlpha * a);
+            // Channel tag — rendered ABOVE the bubble using the
+            // channel's text color so the visual link between tag and
+            // bubble is immediate. Same alignment as the bubble (right
+            // for self, left for other) so it sits flush with the
+            // bubble's leading edge.
+            if (!string.IsNullOrEmpty(channelTag))
+            {
+                var tagC = ChannelTextColor(e.Channel, false);
+                tagC.W *= 0.7f * a;  // a touch dimmer than body text
+                uint tagCol = ImGui.GetColorU32(tagC);
+                float tagX = e.FromSelf
+                    ? (bubbleLeft + bubbleW - channelTagSize.X)
+                    : bubbleLeft;
+                bool tagFontPushed = false;
+                try
+                {
+                    if (_senderFont != null && _senderFont.Available)
+                    {
+                        _senderFont.Push();
+                        tagFontPushed = true;
+                    }
+                    dl.AddText(new Vector2(tagX, blockTop), tagCol, channelTag);
+                }
+                finally
+                {
+                    if (tagFontPushed) _senderFont?.Pop();
+                }
+            }
+
+            // Draw the bubble background. Self and other share the
+            // same fill color — the visual differentiation is the
+            // L/R alignment, not a channel-conflicting blue tint.
+            // Channel color is conveyed by the body text and the
+            // tag above, so the bubble itself stays neutral.
+            var fillC = new Vector4(cfg.ChatBubblesOtherR, cfg.ChatBubblesOtherG, cfg.ChatBubblesOtherB, cfg.ChatBubblesOtherAlpha * a);
             uint fillCol = ImGui.GetColorU32(fillC);
             var rectMin = new Vector2(bubbleLeft, bubbleTop);
             var rectMax = new Vector2(bubbleLeft + bubbleW, bubbleTop + bubbleH);
@@ -790,11 +873,12 @@ public static class ChatBubbles
         _ = maxScroll; // keep variable referenced for future use
     }
 
-    // Maps channel → the chat color shown in stock chat. Self-line gets
-    // a brighter tint regardless of channel so it stands out.
+    // Maps channel → the chat color shown in stock chat. Same color
+    // for self and other so the channel tag/body color is the single
+    // source of truth for "what channel was this on".
     private static Vector4 ChannelTextColor(XivChatType ch, bool fromSelf)
     {
-        if (fromSelf) return new Vector4(1f, 1f, 1f, 1f);
+        _ = fromSelf;
         return ch switch
         {
             XivChatType.Say                    => new Vector4(1.00f, 1.00f, 1.00f, 1f),
@@ -853,6 +937,99 @@ public static class ChatBubbles
         XivChatType.TellOutgoing => "Tell",
         _                        => ch.ToString(),
     };
+
+    // Short tag rendered above each bubble. Uppercased + bracketed so
+    // it reads as a chat-mode marker rather than a sender name.
+    // Numbered for linkshells/cwls so the user can tell LS1 from LS3.
+    // Returns "" for Say to suppress the tag (Say is the unmarked
+    // baseline — labelling every /say bubble adds visual noise).
+    private static string ChannelTagAbove(XivChatType ch) => ch switch
+    {
+        XivChatType.Say              => "",
+        XivChatType.Yell             => "[YELL]",
+        XivChatType.Shout            => "[SHOUT]",
+        XivChatType.Party            => "[PARTY]",
+        XivChatType.CrossParty       => "[CWP]",
+        XivChatType.Alliance         => "[ALLIANCE]",
+        XivChatType.FreeCompany      => "[FC]",
+        XivChatType.NoviceNetwork    => "[NN]",
+        XivChatType.TellIncoming     => "[TELL]",
+        XivChatType.TellOutgoing     => "[TELL]",
+        XivChatType.Ls1 => "[LS1]",
+        XivChatType.Ls2 => "[LS2]",
+        XivChatType.Ls3 => "[LS3]",
+        XivChatType.Ls4 => "[LS4]",
+        XivChatType.Ls5 => "[LS5]",
+        XivChatType.Ls6 => "[LS6]",
+        XivChatType.Ls7 => "[LS7]",
+        XivChatType.Ls8 => "[LS8]",
+        XivChatType.CrossLinkShell1 => "[CWLS1]",
+        XivChatType.CrossLinkShell2 => "[CWLS2]",
+        XivChatType.CrossLinkShell3 => "[CWLS3]",
+        XivChatType.CrossLinkShell4 => "[CWLS4]",
+        XivChatType.CrossLinkShell5 => "[CWLS5]",
+        XivChatType.CrossLinkShell6 => "[CWLS6]",
+        XivChatType.CrossLinkShell7 => "[CWLS7]",
+        XivChatType.CrossLinkShell8 => "[CWLS8]",
+        _                            => "",
+    };
+
+    // Convert a SeString to display-friendly text. Direct .TextValue
+    // works for plain TextPayloads but produces garbage for messages
+    // with attached map links / item links / party-finder links —
+    // those payloads include FFXIV private-use icon glyphs (e.g. the
+    // map-pin ) that render as tofu boxes in normal fonts. We
+    // iterate payloads ourselves and substitute renderable prefixes
+    // so map links + co show up legibly in the bubble.
+    private static string ExtractSeStringText(Dalamud.Game.Text.SeStringHandling.SeString seString)
+    {
+        if (seString == null) return "";
+
+        // Take SeString.TextValue as the source of truth. It walks
+        // every payload's text representation and concatenates — for
+        // a map link that's "Region<icon>( X.X , Y.Y )" and for an
+        // item link that's the item name (already wrapped in icon
+        // glyphs by the engine). The previous implementation tried
+        // to substitute prefixes mid-walk but skipped the trailing
+        // text payloads on some link variants, which is what made
+        // links "not work" in the bubble.
+        string raw;
+        try { raw = seString.TextValue ?? ""; }
+        catch { return ""; }
+
+        // Detect link payload types so we can prepend a tag. Type
+        // inspection is cheap and avoids false positives from a
+        // user who happens to type "[map]" themselves.
+        bool hasMapLink = false;
+        bool hasItemLink = false;
+        try
+        {
+            foreach (var p in seString.Payloads)
+            {
+                if (p is Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload) hasMapLink = true;
+                else if (p is Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload) hasItemLink = true;
+            }
+        }
+        catch { /* defensive — if Payloads enumeration throws, just skip the tag */ }
+
+        // Strip FFXIV's private-use icon glyphs (U+E000..U+F8FF).
+        // They aren't in any standard text font, so emitting them
+        // gives tofu boxes. Whitespace and surrounding text is kept.
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (var ch in raw)
+        {
+            if (ch >= '' && ch <= '') continue;
+            sb.Append(ch);
+        }
+        string clean = sb.ToString();
+        // Collapse runs of whitespace introduced by the icon strip.
+        while (clean.Contains("  ")) clean = clean.Replace("  ", " ");
+        clean = clean.Trim();
+
+        if (hasMapLink) clean = "[map] " + clean;
+        else if (hasItemLink) clean = "[item] " + clean;
+        return clean;
+    }
 
     private static double NowSec() => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
 
@@ -1128,9 +1305,9 @@ public static class ChatBubbles
                 // Columns 2/3 — sender and body. Decode SeString to
                 // get the visible text value (resolves item links etc.)
                 string senderText, bodyText;
-                try { senderText = Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[2]).TextValue ?? ""; }
+                try { senderText = ExtractSeStringText(Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[2])); }
                 catch { senderText = ""; }
-                try { bodyText   = Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[3]).TextValue ?? ""; }
+                try { bodyText   = ExtractSeStringText(Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[3])); }
                 catch { bodyText = ""; }
                 if (string.IsNullOrEmpty(bodyText)) { skipped++; continue; }
 

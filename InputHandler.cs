@@ -144,16 +144,47 @@ public static class InputHandler
 
             if (ctrl)
             {
-                // HEIGHT — global offset persisted across preset switches
+                // HEIGHT — write to the ACTIVE preset's HeightOffset
+                // when we have one, so the adjustment persists with
+                // that preset rather than as a global override. Falls
+                // back to Config.GlobalHeightOffset only when there's
+                // no override / active preset (i.e. DefaultPreset is
+                // current). Cancels any in-flight transition first so
+                // the lerp doesn't fight the manual nudge.
+                PresetManager.CancelTransitionToTarget();
                 float step = noWickyXIV.Config.HeightOffsetStep;
-                float next = noWickyXIV.Config.GlobalHeightOffset + wheel * step;
-                if (next < -2f) next = -2f;
-                if (next >  4f) next =  4f;
 
-                if (Math.Abs(next - noWickyXIV.Config.GlobalHeightOffset) > 0.0001f)
+                var activePreset = PresetManager.PresetOverride ?? PresetManager.ActivePreset;
+                if (activePreset != null)
                 {
-                    noWickyXIV.Config.GlobalHeightOffset = next;
-                    noWickyXIV.Config.Save();
+                    float next = activePreset.HeightOffset + wheel * step;
+                    // Match the GlobalHeightOffset range (-2..4) so
+                    // routing the Ctrl+scroll adjustment through the
+                    // preset doesn't lose vertical range. Previously
+                    // clamped to -1..1 which surprised users who were
+                    // used to the wider scroll travel.
+                    if (next < -2f) next = -2f;
+                    if (next >  4f) next =  4f;
+                    if (Math.Abs(next - activePreset.HeightOffset) > 0.0001f)
+                    {
+                        activePreset.HeightOffset = next;
+                        // Push through ApplyPreset so EffectiveHeight*
+                        // and CameraDynamics' smoothed copies refresh
+                        // without waiting on the next condition tick.
+                        try { activePreset.Apply(); } catch { }
+                        noWickyXIV.Config.Save();
+                    }
+                }
+                else
+                {
+                    float next = noWickyXIV.Config.GlobalHeightOffset + wheel * step;
+                    if (next < -2f) next = -2f;
+                    if (next >  4f) next =  4f;
+                    if (Math.Abs(next - noWickyXIV.Config.GlobalHeightOffset) > 0.0001f)
+                    {
+                        noWickyXIV.Config.GlobalHeightOffset = next;
+                        noWickyXIV.Config.Save();
+                    }
                 }
                 SuppressNextZoom = true;
             }
@@ -163,6 +194,8 @@ public static class InputHandler
                 // for now (typical 0.1 m steps feel right for shoulder too).
                 // Inverted relative to height: scroll-down = +SideOffset (right
                 // shoulder), scroll-up = -SideOffset (left).
+                // Cancel any in-flight transition so we don't fight the lerp.
+                PresetManager.CancelTransitionToTarget();
                 var preset = PresetManager.CurrentPreset;
                 if (preset == null) return;
                 float step = noWickyXIV.Config.HeightOffsetStep;

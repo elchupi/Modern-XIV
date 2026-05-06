@@ -27,17 +27,36 @@ public static partial class ImGuiEx
     private static string  _pendingTooltipText  = "";
     private static Vector2 _pendingTooltipAnchor;
     private static int     _pendingTooltipLastHoverFrame = -2;
+    private static int     _pendingTooltipPrevHoverFrame = -2;
     private static float   _tooltipAlpha;
+    // Diagnostics — counts SetItemTooltip captures and
+    // RenderPendingTooltip draws so we can tell whether the path is
+    // firing at all when the user reports tooltips look default.
+    private static int     _tooltipCaptureCount;
+    private static int     _tooltipDrawCount;
+    private static double  _tooltipDiagLastLogT;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetItemTooltip(string s, ImGuiHoveredFlags flags = ImGuiHoveredFlags.None)
     {
         if (!ImGui.IsItemHovered(flags) || string.IsNullOrEmpty(s)) return;
-        _pendingTooltipText = s;
         var min = ImGui.GetItemRectMin();
         var max = ImGui.GetItemRectMax();
-        _pendingTooltipAnchor = new Vector2((min.X + max.X) * 0.5f, min.Y);
+        CaptureTooltip(s, new Vector2((min.X + max.X) * 0.5f, min.Y));
+    }
+
+    // Force-capture path — caller has already determined the hover
+    // is real (e.g. via IsMouseHoveringRect on a manually-placed
+    // rect outside the window content region, where IsItemHovered
+    // is unreliable). Used by AddHeaderIcon for title-bar buttons.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void CaptureTooltip(string s, Vector2 anchor)
+    {
+        if (string.IsNullOrEmpty(s)) return;
+        _pendingTooltipText = s;
+        _pendingTooltipAnchor = anchor;
         _pendingTooltipLastHoverFrame = ImGui.GetFrameCount();
+        _tooltipCaptureCount++;
     }
 
     // Call this once at the end of the plugin's UI frame so the
@@ -49,20 +68,54 @@ public static partial class ImGuiEx
         // it on the current OR previous frame (one-frame slack so
         // moving between adjacent items doesn't make the tooltip
         // start fading instantly).
-        bool active = _pendingTooltipLastHoverFrame >= ImGui.GetFrameCount() - 1
+        int curFrame = ImGui.GetFrameCount();
+        bool active = _pendingTooltipLastHoverFrame >= curFrame - 1
                    && !string.IsNullOrEmpty(_pendingTooltipText);
 
-        // Exp-lerp alpha. ~12/s rate (~80 ms halflife) — fast
-        // enough not to feel laggy, slow enough that you can
-        // perceive the fade.
+        // Fresh-session reset: if we're activating now but the last
+        // capture was more than 3 frames ago, treat it as a brand-
+        // new hover and reset alpha to 0 so the user actually sees
+        // the fade-in. Without this, alpha stays high while the
+        // cursor sweeps between adjacent items and every "new"
+        // tooltip pops in instantly. 3 frames @ 60Hz ≈ 50 ms — long
+        // enough that a sub-pixel cursor flick between items
+        // doesn't trigger a re-fade, short enough that any actual
+        // "leave then come back" gesture does.
+        if (active && _pendingTooltipLastHoverFrame >= curFrame - 1
+                   && _pendingTooltipPrevHoverFrame < curFrame - 3)
+        {
+            _tooltipAlpha = 0f;
+        }
+        _pendingTooltipPrevHoverFrame = _pendingTooltipLastHoverFrame;
+
+        // Exp-lerp alpha. ~9/s rate (~77 ms halflife) — visibly
+        // fades in (reaches ~0.5 in 75 ms, ~0.9 in 250 ms) without
+        // being so slow the user thinks the tooltip never showed up.
         float dt = 0.016f;
         try { dt = ImGui.GetIO().DeltaTime; } catch { }
-        float k = 1f - MathF.Exp(-12f * dt);
+        float k = 1f - MathF.Exp(-9f * dt);
         float target = active ? 1f : 0f;
         _tooltipAlpha += (target - _tooltipAlpha) * k;
         if (MathF.Abs(target - _tooltipAlpha) < 0.002f) _tooltipAlpha = target;
 
+        // Periodic diagnostic emit (~1 Hz). Lets us see whether the
+        // custom tooltip path is firing at all from the user's
+        // PluginLog without spamming the log every frame.
+        try
+        {
+            var nowT = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
+            if (nowT - _tooltipDiagLastLogT > 1.0)
+            {
+                _tooltipDiagLastLogT = nowT;
+                DalamudApi.PluginLog.Information(
+                    $"[noWickyXIV] tooltip diag: captures={_tooltipCaptureCount} draws={_tooltipDrawCount} alpha={_tooltipAlpha:F2} active={active} text=\"{(_pendingTooltipText.Length > 32 ? _pendingTooltipText.Substring(0, 32) + "…" : _pendingTooltipText)}\"");
+            }
+        }
+        catch { }
+
         if (_tooltipAlpha < 0.01f || string.IsNullOrEmpty(_pendingTooltipText)) return;
+
+        _tooltipDrawCount++;
 
         var dl = ImGui.GetForegroundDrawList();
         var ts = ImGui.CalcTextSize(_pendingTooltipText, false, 320f);

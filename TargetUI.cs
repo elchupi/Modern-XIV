@@ -142,8 +142,29 @@ public static unsafe class TargetUI
     {
         if (cfg.TargetNameAnchorMode == 1)
         {
+            // Target lost: freeze the displayed position at exactly
+            // where it was last frame. Do NOT keep lerping toward
+            // _cachedNamePos — even though that "looks right", the
+            // lerp always lags the raw bone read, so on the de-target
+            // frame _displayedNamePos and _cachedNamePos differ by
+            // a few pixels, and continuing the lerp drags the text
+            // visibly toward a "ghost" position before fading out.
+            // Freezing makes the fade-out happen exactly where the
+            // text was when the target was released.
+            if (tgt == null)
+            {
+                if (_displayedNamePosValid)
+                    return new Vector2(MathF.Round(_displayedNamePos.X), MathF.Round(_displayedNamePos.Y));
+                if (_cachedNamePosValid)
+                    return new Vector2(MathF.Round(_cachedNamePos.X), MathF.Round(_cachedNamePos.Y));
+                // Nothing cached at all — first frame after enable
+                // with no prior target. Use the configured screen
+                // offset so we at least don't render at (0,0).
+                return new Vector2(cfg.TargetNameX, cfg.TargetNameY);
+            }
+
             Vector2 rawTarget;
-            if (tgt != null && TryProjectBone(tgt, cfg.TargetNameBoneIndex, out var anchor))
+            if (TryProjectBone(tgt, cfg.TargetNameBoneIndex, out var anchor))
             {
                 rawTarget = new Vector2(anchor.X + cfg.TargetNameX, anchor.Y + cfg.TargetNameY);
                 _cachedNamePos = rawTarget;

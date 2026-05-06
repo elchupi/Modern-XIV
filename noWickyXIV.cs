@@ -28,6 +28,32 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
             Config.MouseSensitivityMul = 0.56f;
             Config.Save();
         }
+
+        // One-shot migration: an earlier auto-save pass wrote
+        // `cam->lookAtHeightOffset - PitchTiltLastApplied` into
+        // preset.LookAtHeightOffset on every frame. The subtraction
+        // didn't fully recover the user's intent because PitchTilt's
+        // accumulator drifts under EnablePitchTilt, so corrupted
+        // values like -78 ended up persisted. The slider range is
+        // -10..10; anything outside that is clearly garbage from the
+        // bad auto-save. Clamp into range and reset to 0 (default
+        // look-at) for severely-out-of-bounds entries so the camera
+        // doesn't focus 78m below the player on plugin load.
+        bool sanitized = false;
+        foreach (var p in Config.Presets)
+        {
+            if (float.IsNaN(p.LookAtHeightOffset) || System.MathF.Abs(p.LookAtHeightOffset) > 10f)
+            {
+                p.LookAtHeightOffset = 0f;
+                sanitized = true;
+            }
+        }
+        if (sanitized)
+        {
+            Config.Save();
+            try { DalamudApi.PluginLog.Information(
+                "[noWickyXIV] Sanitized corrupted preset LookAtHeightOffset values (out of -10..10 range)."); } catch { }
+        }
         // Hypostasis base wires Draw + OpenConfigUi only. OpenMainUi was
         // added later by Dalamud as a distinct "open the plugin's primary
         // window" entrypoint (the click-to-open button in the installer);

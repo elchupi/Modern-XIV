@@ -985,49 +985,117 @@ public static class ChatBubbles
     {
         if (seString == null) return "";
 
-        // Take SeString.TextValue as the source of truth. It walks
-        // every payload's text representation and concatenates — for
-        // a map link that's "Region<icon>( X.X , Y.Y )" and for an
-        // item link that's the item name (already wrapped in icon
-        // glyphs by the engine). The previous implementation tried
-        // to substitute prefixes mid-walk but skipped the trailing
-        // text payloads on some link variants, which is what made
-        // links "not work" in the bubble.
-        string raw;
-        try { raw = seString.TextValue ?? ""; }
-        catch { return ""; }
-
-        // Detect link payload types so we can prepend a tag. Type
-        // inspection is cheap and avoids false positives from a
-        // user who happens to type "[map]" themselves.
+        // Walk payloads ourselves and emit the appropriate text for
+        // each type. SeString.TextValue is unreliable for link
+        // payloads on some Dalamud versions — MapLinkPayload's
+        // .Text returns just the placeholder string and the actual
+        // region/coords are emitted by surrounding text payloads
+        // (which TextValue may or may not include depending on
+        // serialization path: live ChatMessage vs LogModule
+        // backfill).
         bool hasMapLink = false;
         bool hasItemLink = false;
+        var sb = new System.Text.StringBuilder();
         try
         {
             foreach (var p in seString.Payloads)
             {
-                if (p is Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload) hasMapLink = true;
-                else if (p is Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload) hasItemLink = true;
+                switch (p)
+                {
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload ml:
+                        hasMapLink = true;
+                        // MapLinkPayload exposes structured fields —
+                        // use them directly so we get the place name
+                        // + coords regardless of which surrounding
+                        // payloads exist.
+                        try
+                        {
+                            var pn = ml.PlaceName ?? "";
+                            var coord = ml.CoordinateString ?? "";
+                            if (!string.IsNullOrEmpty(pn) || !string.IsNullOrEmpty(coord))
+                                sb.Append($"{pn} {coord}".Trim()).Append(' ');
+                        }
+                        catch { }
+                        break;
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload ip:
+                        hasItemLink = true;
+                        try
+                        {
+                            // Look up the item name from the Lumina
+                            // Item sheet directly via ItemId — avoids
+                            // RowRef API churn between Dalamud
+                            // versions and works with both regular
+                            // and HQ item IDs.
+                            var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+                            var row = sheet?.GetRow(ip.ItemId);
+                            if (row.HasValue)
+                            {
+                                var name = row.Value.Name.ExtractText() ?? "";
+                                if (!string.IsNullOrEmpty(name))
+                                    sb.Append(name).Append(' ');
+                            }
+                        }
+                        catch { }
+                        break;
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.IconPayload _:
+                        // Skip — game-icon glyph in private-use area.
+                        break;
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.AutoTranslatePayload atp:
+                        try { sb.Append(atp.Text ?? ""); } catch { }
+                        break;
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.PlayerPayload pp:
+                        try { sb.Append(pp.PlayerName ?? ""); } catch { }
+                        break;
+                    case Dalamud.Game.Text.SeStringHandling.ITextProvider tp:
+                        try { sb.Append(tp.Text ?? ""); } catch { }
+                        break;
+                }
             }
         }
-        catch { /* defensive — if Payloads enumeration throws, just skip the tag */ }
+        catch
+        {
+            // Payload walk failed entirely — fall back to TextValue
+            // so we at least show *something*.
+            try { sb.Append(seString.TextValue ?? ""); } catch { }
+        }
+        string raw = sb.ToString();
 
         // Strip FFXIV's private-use icon glyphs (U+E000..U+F8FF).
         // They aren't in any standard text font, so emitting them
         // gives tofu boxes. Whitespace and surrounding text is kept.
-        var sb = new System.Text.StringBuilder(raw.Length);
+        var stripped = new System.Text.StringBuilder(raw.Length);
         foreach (var ch in raw)
         {
             if (ch >= '' && ch <= '') continue;
-            sb.Append(ch);
+            stripped.Append(ch);
         }
-        string clean = sb.ToString();
+        string clean = stripped.ToString();
         // Collapse runs of whitespace introduced by the icon strip.
         while (clean.Contains("  ")) clean = clean.Replace("  ", " ");
         clean = clean.Trim();
 
         if (hasMapLink) clean = "[map] " + clean;
         else if (hasItemLink) clean = "[item] " + clean;
+
+        // One-shot diagnostic when a link payload was seen, so if
+        // links still don't render the user can paste the log line
+        // and we can see exactly what payload types + final text we
+        // produced.
+        if (hasMapLink || hasItemLink)
+        {
+            try
+            {
+                var types = new System.Text.StringBuilder();
+                foreach (var p in seString.Payloads)
+                {
+                    if (types.Length > 0) types.Append(',');
+                    types.Append(p.GetType().Name);
+                }
+                DalamudApi.PluginLog.Information(
+                    $"[noWickyXIV] link extracted: types=[{types}] clean=\"{clean}\" rawTextValue=\"{seString.TextValue}\"");
+            }
+            catch { }
+        }
         return clean;
     }
 

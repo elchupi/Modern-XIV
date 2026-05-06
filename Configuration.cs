@@ -15,6 +15,10 @@ public enum BuiltinPresetCondition
     Passenger,
     [Display(Name = "Talking to NPC")] TalkingToNpc,
     [Display(Name = "While Running")]  WhileRunning,
+    // Mounted on own mount AND moving — used for travel-camera
+    // presets that should only kick in while actually riding, not
+    // while standing still on a parked mount.
+    [Display(Name = "Moving on Mount")] MovingMount,
 }
 
 public class CameraConfigPreset
@@ -50,6 +54,15 @@ public class CameraConfigPreset
     public float SideOffset = 0;
     public float Tilt = 0;
     public float LookAtHeightOffset = Game.GetDefaultLookAtHeightOffset() ?? 0;
+    // Per-preset live height adjustment. Ctrl+scroll writes here so the
+    // tuning persists with the preset itself rather than stacking on
+    // top of every preset via the legacy global offset. Without this,
+    // tuning height down on preset A would put preset B (which has its
+    // own negative HeightOffset baseline) far below ground when
+    // conditions swapped — the global stack added to whatever the
+    // destination already had. Range mirrors GlobalHeightOffset's
+    // -2..4 clamp.
+    public float LiveHeightOffset = 0;
     public ViewBobSetting ViewBobMode = ViewBobSetting.Disabled;
     public int ConditionSet = -1;
     // Built-in game-state condition that activates this preset. Takes
@@ -86,6 +99,13 @@ public class CameraConfigPreset
                 // exposed via JobAura.IsMoving so we don't duplicate
                 // the per-frame position-delta loop.
                 BuiltinPresetCondition.WhileRunning => JobAura.IsMoving,
+                // Mounted on OWN mount (not passenger) AND moving.
+                // JobAura.IsMoving tracks the player's world position
+                // delta, which still updates while mounted — so the
+                // same tracker works.
+                BuiltinPresetCondition.MovingMount  => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Mounted]
+                                                       && !cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.RidingPillion]
+                                                       && JobAura.IsMoving,
                 _ => false,
             };
         }

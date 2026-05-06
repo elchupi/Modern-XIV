@@ -144,34 +144,29 @@ public static class InputHandler
 
             if (ctrl)
             {
-                // HEIGHT — write to the ACTIVE preset's HeightOffset
-                // when we have one, so the adjustment persists with
-                // that preset rather than as a global override. Falls
-                // back to Config.GlobalHeightOffset only when there's
-                // no override / active preset (i.e. DefaultPreset is
-                // current). Cancels any in-flight transition first so
-                // the lerp doesn't fight the manual nudge.
+                // HEIGHT — write to the active preset's LiveHeightOffset
+                // so the tuning persists with that specific preset
+                // rather than stacking globally on every preset
+                // (which made conditions-driven swaps drop the camera
+                // underground when the destination preset's own
+                // HeightOffset was negative). Falls back to
+                // Config.GlobalHeightOffset when the active preset is
+                // the DefaultPreset — keeps backward compat with
+                // setups that hadn't saved per-preset values yet.
+                // Cancel any in-flight transition so the lerp
+                // doesn't fight the user's manual nudge.
                 PresetManager.CancelTransitionToTarget();
                 float step = noWickyXIV.Config.HeightOffsetStep;
+                var active = PresetManager.CurrentPreset;
 
-                var activePreset = PresetManager.PresetOverride ?? PresetManager.ActivePreset;
-                if (activePreset != null)
+                if (active != null && active != PresetManager.DefaultPreset)
                 {
-                    float next = activePreset.HeightOffset + wheel * step;
-                    // Match the GlobalHeightOffset range (-2..4) so
-                    // routing the Ctrl+scroll adjustment through the
-                    // preset doesn't lose vertical range. Previously
-                    // clamped to -1..1 which surprised users who were
-                    // used to the wider scroll travel.
+                    float next = active.LiveHeightOffset + wheel * step;
                     if (next < -2f) next = -2f;
                     if (next >  4f) next =  4f;
-                    if (Math.Abs(next - activePreset.HeightOffset) > 0.0001f)
+                    if (Math.Abs(next - active.LiveHeightOffset) > 0.0001f)
                     {
-                        activePreset.HeightOffset = next;
-                        // Push through ApplyPreset so EffectiveHeight*
-                        // and CameraDynamics' smoothed copies refresh
-                        // without waiting on the next condition tick.
-                        try { activePreset.Apply(); } catch { }
+                        active.LiveHeightOffset = next;
                         noWickyXIV.Config.Save();
                     }
                 }

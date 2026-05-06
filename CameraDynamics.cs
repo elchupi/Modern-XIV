@@ -297,7 +297,23 @@ public static unsafe class CameraDynamics
     public static float DisplayGlobalHeightOffset
         => PositionSmoothingActive
             ? _smoothedGlobalHeightOffset
-            : noWickyXIV.Config.GlobalHeightOffset;
+            : LiveHeightTarget;
+
+    // The "live height adjustment" is now per-preset (preset.LiveHeightOffset)
+    // so user tuning travels with the preset across condition swaps
+    // instead of stacking globally. Falls back to legacy
+    // Config.GlobalHeightOffset for the DefaultPreset (which has no
+    // saved adjustment) so existing user setups don't lose their saved
+    // tweak when this change ships.
+    private static float LiveHeightTarget
+    {
+        get
+        {
+            var p = PresetManager.CurrentPreset;
+            if (p != null && p != PresetManager.DefaultPreset) return p.LiveHeightOffset;
+            return noWickyXIV.Config.GlobalHeightOffset;
+        }
+    }
 
     // Snaps every smoothed offset to its current target. Called by
     // PresetManager.ApplyPreset so a preset switch doesn't visually
@@ -306,7 +322,7 @@ public static unsafe class CameraDynamics
     {
         _smoothedHeightOffset       = PresetManager.EffectiveHeightOffset;
         _smoothedSideOffset         = PresetManager.EffectiveSideOffset;
-        _smoothedGlobalHeightOffset = noWickyXIV.Config.GlobalHeightOffset;
+        _smoothedGlobalHeightOffset = LiveHeightTarget;
         _smoothedOffsetsInit = true;
     }
 
@@ -335,7 +351,7 @@ public static unsafe class CameraDynamics
 
         float hT = PresetManager.EffectiveHeightOffset;
         float sT = PresetManager.EffectiveSideOffset;
-        float gT = noWickyXIV.Config.GlobalHeightOffset;
+        float gT = LiveHeightTarget;
 
         _smoothedHeightOffset       += (hT - _smoothedHeightOffset)       * k;
         _smoothedSideOffset         += (sT - _smoothedSideOffset)         * k;
@@ -385,15 +401,16 @@ public static unsafe class CameraDynamics
         // native RMB-drag does its own delta accumulation per poll;
         // layering our lerp on top makes it feel sticky/jittery.
         bool rmbHeld = RmbHeldNow;
-        // ZOOM smoothing is bypassed while CombatZoom or ADS is
-        // actively driving currentZoom. Without this bypass, all three
-        // writers (CombatZoom/ADS plus the smoother) compete for the
-        // same value each frame and the camera feels "stuck in
-        // transition" — scroll deflects briefly, smoother lerps back,
-        // CombatZoom overrides, repeat. When neither is active the
-        // smoother is the sole writer and your scroll wheel rides a
-        // clean exp-lerp.
-        bool zoomBypassed = _combatZoomActive || _adsActive;
+        // ZOOM smoothing is bypassed while another writer is actively
+        // driving currentZoom: CombatZoom, ADS, or a preset
+        // transition. Without these bypasses, two writers compete on
+        // the same value each frame — they both write currentZoom,
+        // each smoothing the other's output, producing the stepped
+        // / jerky feel during preset swaps. While bypassed the
+        // smoother just tracks the engine value so it can resume
+        // cleanly when the other writer releases.
+        bool zoomBypassed = _combatZoomActive || _adsActive
+                         || PresetManager.IsTransitionActive;
 
         if (!zoomBypassed
             && MathF.Abs(curZoom - _smoothZoomLast) > 0.0005f)

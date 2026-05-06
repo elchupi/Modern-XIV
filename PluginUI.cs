@@ -491,6 +491,7 @@ public static class PluginUI
         BuiltinPresetCondition.Passenger    => "Passenger",
         BuiltinPresetCondition.TalkingToNpc => "Talking to NPC",
         BuiltinPresetCondition.WhileRunning => "While Running",
+        BuiltinPresetCondition.MovingMount  => "Moving on Mount",
         _                                    => c.ToString(),
     };
 

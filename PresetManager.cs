@@ -38,6 +38,13 @@ public static class PresetManager
     public static CameraConfigPreset DefaultPreset { get; set; } = new();
     public static CameraConfigPreset ActivePreset { get; private set; }
     public static CameraConfigPreset PresetOverride { get; private set; }
+    // Public read so CameraDynamics can bypass its zoom/rotation
+    // smoothing while a transition is in flight — without this, both
+    // PresetManager.Update (writing the lerped zoom) and
+    // CameraDynamics.Update (re-targeting to whatever the lerp just
+    // wrote) compete on the same value every frame, producing the
+    // stepped/jerky zoom feel during preset swaps.
+    public static bool IsTransitionActive => _txActive;
 
     // ---- Effective values ----
     // Game.cs detours read these instead of preset.X directly so the
@@ -102,11 +109,17 @@ public static class PresetManager
         _txTarget = null;
     }
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
-    // Smoothstep for visually-pleasing ease in/out at both ends.
+    // Ken Perlin's smootherstep — 5th-order Hermite, flatter
+    // derivative at both ends than cubic smoothstep, so the
+    // beginning and end of the transition feel less abrupt while
+    // the middle moves more decisively. Replaces the previous
+    // 3t² - 2t³ which had a noticeably "stepped" feel on zoom
+    // because its endpoint derivative is non-zero relative to a
+    // perceptually-flat baseline.
     private static float Smoothstep(float t)
     {
         t = MathF.Max(0f, MathF.Min(1f, t));
-        return t * t * (3f - 2f * t);
+        return t * t * t * (t * (t * 6f - 15f) + 10f);
     }
 
     public static unsafe void ApplyPreset(CameraConfigPreset preset, bool isLoggingIn = false)

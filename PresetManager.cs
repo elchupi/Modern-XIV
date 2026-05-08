@@ -80,6 +80,10 @@ public static class PresetManager
     private static float  _txStartLive;
     private static float  _txStartMinVRot;
     private static float  _txStartMaxVRot;
+    private static float  _txStartMinZoom;
+    private static float  _txStartMaxZoom;
+    private static float  _txStartMinFoV;
+    private static float  _txStartMaxFoV;
     // Zoom/FoV captured at transition start so the engine's
     // currentZoom/currentFoV can lerp visibly toward the target
     // preset's StartZoom/StartFoV. User scroll input cancels the
@@ -113,6 +117,10 @@ public static class PresetManager
             {
                 cam->currentZoom = _txTargetZoom;
                 cam->currentFoV  = _txTargetFoV;
+                cam->minZoom      = _txTarget.MinZoom;
+                cam->maxZoom      = _txTarget.MaxZoom;
+                cam->minFoV       = _txTarget.MinFoV;
+                cam->maxFoV       = _txTarget.MaxFoV;
                 cam->minVRotation = _txTarget.MinVRotation;
                 cam->maxVRotation = _txTarget.MaxVRotation;
             }
@@ -185,17 +193,15 @@ public static class PresetManager
         }
         _liveDynamicsPreset = preset;
 
-        // ---- Bounds + invariants ----
-        // Most bounds snap immediately. VRotation bounds lerp so the
-        // camera doesn't snap pitch when the new preset has tighter
-        // limits than where currentVRotation is sitting (engine clamps
-        // current pitch on the same frame the bound changes — visible
-        // as a downward / upward jolt at transition start).
-        camera->minZoom = preset.MinZoom;
-        camera->maxZoom = preset.MaxZoom;
-        camera->minFoV  = preset.MinFoV;
-        camera->maxFoV  = preset.MaxFoV;
-        Game.FoVDelta   = preset.FoVDelta;
+        // ---- Invariants snap immediately ----
+        // FoVDelta only affects user wheel input, no visible motion.
+        // Zoom/FoV/VRotation bounds DO NOT snap — they lerp during a
+        // transition (see below). Snapping them clamped currentZoom
+        // and currentFoV on frame 0 (engine clips to new bounds the
+        // same frame the bound shrinks), producing the "initial
+        // height shift burst" the user reported. Lerping bounds lets
+        // the engine clamp gradually as bounds tighten.
+        Game.FoVDelta = preset.FoVDelta;
 
         // Resolve target zoom/FoV (clamped to preset's min/max).
         float targetZoom = preset.StartZoom > 0f
@@ -234,6 +240,10 @@ public static class PresetManager
             _txStartFoV    = camera->currentFoV;
             _txStartMinVRot = camera->minVRotation;
             _txStartMaxVRot = camera->maxVRotation;
+            _txStartMinZoom = camera->minZoom;
+            _txStartMaxZoom = camera->maxZoom;
+            _txStartMinFoV  = camera->minFoV;
+            _txStartMaxFoV  = camera->maxFoV;
             _txTargetZoom  = targetZoom;
             _txTargetFoV   = targetFoV;
             _txTarget      = preset;
@@ -256,6 +266,10 @@ public static class PresetManager
             // ---- No transition: snap everything immediately. ----
             _txActive = false;
             _txTarget = null;
+            camera->minZoom            = preset.MinZoom;
+            camera->maxZoom            = preset.MaxZoom;
+            camera->minFoV             = preset.MinFoV;
+            camera->maxFoV             = preset.MaxFoV;
             camera->currentZoom        = targetZoom;
             camera->currentFoV         = targetFoV;
             camera->tilt               = preset.Tilt;
@@ -320,23 +334,15 @@ public static class PresetManager
             if (t >= 1f) { t = 1f; _txActive = false; }
             float s = Smoothstep(t);
 
-            // Pivot semantics: lerp LookAtHeightOffset on a HEAVILY
-            // backloaded cubic curve (t^3) while HeightOffset uses
-            // the normal symmetric smoothstep. Effect: for most of
-            // the transition, the look-at point barely moves — so
-            // the camera ORBITS around the original focus point as
-            // its height changes (player stays framed). LookAt then
-            // catches up quickly in the last ~30% of the window and
-            // lands cleanly at the target by t=1, no end snap.
-            // Without the curve split, both Height and LookAt rose
-            // in parallel and the framing dragged upward as the
-            // camera ascended — the user reported it as "the
-            // center axis shifts up instead of pivoting around
-            // what we're looking at". Holding LookAt constant the
-            // whole way fixed the pivot but caused a visible reset
-            // at the end; the cubic curve gets both right.
-            float sLookAt = t * t * t;
-            EffectiveLookAtHeightOffset = Lerp(_txStartLookAt, _txTarget.LookAtHeightOffset, sLookAt);
+            // All four position axes (LookAt height, height, side,
+            // live height) share the SAME smoothstep curve so they
+            // start, accelerate, and finish in lockstep — the
+            // earlier cubic-on-LookAt curve made the look-at lag
+            // ~70% of the transition, which the user perceived as
+            // "horizontal axis adjusts first, then vertical, then
+            // height" — a staggered, jarring sequence. Unified
+            // smoothstep produces a single smooth pose change.
+            EffectiveLookAtHeightOffset = Lerp(_txStartLookAt, _txTarget.LookAtHeightOffset, s);
             EffectiveHeightOffset       = Lerp(_txStartHeight, _txTarget.HeightOffset,       s);
             EffectiveSideOffset         = Lerp(_txStartSide,   _txTarget.SideOffset,         s);
             EffectiveLiveHeightOffset   = Lerp(_txStartLive,   _txTarget.LiveHeightOffset,   s);
@@ -353,13 +359,32 @@ public static class PresetManager
                 {
                     cam->currentZoom = Lerp(_txStartZoom, _txTargetZoom, s);
                     cam->currentFoV  = Lerp(_txStartFoV,  _txTargetFoV,  s);
-                    // Lerp VRotation bounds so a tighter new preset
-                    // doesn't snap-clamp current pitch on the first
-                    // transition frame. Engine clamps each frame to
-                    // whatever the bounds are now, so the visible
-                    // pitch eases instead of jolting.
+                    // Lerp ALL bounds (zoom, FoV, VRotation) so a
+                    // tighter new preset doesn't snap-clamp current*
+                    // values on the first transition frame. Engine
+                    // clamps each frame to whatever the bounds are
+                    // now, so the visible value eases instead of
+                    // jolting at t=0 (the "initial burst").
+                    cam->minZoom      = Lerp(_txStartMinZoom, _txTarget.MinZoom,      s);
+                    cam->maxZoom      = Lerp(_txStartMaxZoom, _txTarget.MaxZoom,      s);
+                    cam->minFoV       = Lerp(_txStartMinFoV,  _txTarget.MinFoV,       s);
+                    cam->maxFoV       = Lerp(_txStartMaxFoV,  _txTarget.MaxFoV,       s);
                     cam->minVRotation = Lerp(_txStartMinVRot, _txTarget.MinVRotation, s);
                     cam->maxVRotation = Lerp(_txStartMaxVRot, _txTarget.MaxVRotation, s);
+                    // DO NOT write cam->lookAtHeightOffset every frame
+                    // here. PitchTilt uses subtract-prev-add on that
+                    // field and relies on it PERSISTING between the
+                    // engine's UpdateLookAtHeightOffset calls (which
+                    // are intentionally NOT every frame — that's why
+                    // PitchTilt's accumulator pattern works at all).
+                    // Writing every frame forces PitchTilt's
+                    // accumulated contribution to vanish, which on
+                    // frame 0 of a transition dropped the camera by
+                    // the PitchTilt amount — visible as "camera
+                    // pushed down at start of transition".
+                    // UpdateLookAtHeightOffsetDetour already writes
+                    // EffectiveLookAtHeightOffset whenever the engine
+                    // refreshes the field, which is sufficient.
                 }
             }
             catch { /* defensive */ }

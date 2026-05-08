@@ -95,6 +95,11 @@ public enum BuiltinPresetCondition
     // while standing still on a parked mount.
     [Display(Name = "Moving on Mount")] MovingMount,
     Sprinting,
+    // Running while in combat — narrower than WhileRunning since it
+    // also requires the InCombat flag. Useful for an action-camera
+    // preset that only kicks in during active combat movement, not
+    // overworld traversal.
+    [Display(Name = "Running in Combat")] RunningInCombat,
 }
 
 public class CameraConfigPreset
@@ -222,6 +227,9 @@ public class CameraConfigPreset
                 // statuses. Just check ID 50 here; broader status set
                 // can be added later if needed.
                 BuiltinPresetCondition.Sprinting    => HasSprintStatus(),
+                BuiltinPresetCondition.RunningInCombat
+                    => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
+                       && JobAura.IsMoving,
                 _ => false,
             };
         }

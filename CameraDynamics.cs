@@ -270,6 +270,20 @@ public static unsafe class CameraDynamics
             return;
         }
 
+        // During preset transitions, PresetManager owns cam->minVRotation
+        // via its own bound lerp. Skip our write entirely so the two
+        // don't fight (this writer chases preset.MinVRotation at ~175ms
+        // halflife, which clobbered the 5s preset lerp and made the
+        // pitch "quickly shift" while everything else lerped — visible
+        // as the sequenced motion the user reported). Re-init at
+        // transition end so the next tick snaps _smoothedPitchFloor
+        // to the new target without a catch-up arc.
+        if (PresetManager.IsTransitionActive)
+        {
+            _smoothedPitchFloorInit = false;
+            return;
+        }
+
         // Pick the target floor: the cap floor when zoomed past the
         // threshold, otherwise the preset's normal MinVRotation. The
         // cap only ever tightens — if the preset's MinVRotation is
@@ -436,6 +450,22 @@ public static unsafe class CameraDynamics
         if (!_smoothedOffsetsInit)
         {
             SnapOffsets();
+            return;
+        }
+
+        // During preset transitions, snap-track Effective values
+        // instead of lerp-chasing them. The transition lerp itself
+        // already produces the smooth motion; chasing it through a
+        // second exp-lerp at the user's CameraPositionSmoothingRate
+        // (typically 3/s, ~230 ms lag) made position offsets visibly
+        // trail the bounds/zoom/FoV that apply directly to the camera
+        // struct — perceived as "horizontal then vertical" sequencing
+        // even though everything's on the same smoothstep.
+        if (PresetManager.IsTransitionActive)
+        {
+            _smoothedHeightOffset       = PresetManager.EffectiveHeightOffset;
+            _smoothedSideOffset         = PresetManager.EffectiveSideOffset;
+            _smoothedGlobalHeightOffset = LiveHeightTarget;
             return;
         }
 

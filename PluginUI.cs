@@ -139,12 +139,33 @@ public static class PluginUI
             }
         }
         catch { /* defensive — fall back to defaults */ }
-        p.Name = $"Preset {noWickyXIV.Config.Presets.Count + 1}";
+        // Name = "<active preset> - Copy" so it's clear the new entry
+        // descends from the current state. Falls back to a sequential
+        // "Preset N" if there's no active preset (first-run path).
+        var src = CurrentPreset;
+        p.Name = src != null
+            ? $"{src.Name} - Copy"
+            : $"Preset {noWickyXIV.Config.Presets.Count + 1}";
         // Snapshot the current Camera-Dynamics + Misc tab state into
         // the new preset so it captures the full UI state, not just
         // the camera struct fields.
         try { p.Dynamics = PresetDynamicsState.SnapshotFrom(noWickyXIV.Config); } catch { }
         return p;
+    }
+
+    // Insert a new preset directly under the currently selected one
+    // (not at the end of the list). If nothing is selected (-1), the
+    // preset is appended.
+    private static void InsertPresetAfterSelected(CameraConfigPreset preset)
+    {
+        var presets = noWickyXIV.Config.Presets;
+        int insertAt = (selectedPreset >= 0 && selectedPreset < presets.Count)
+            ? selectedPreset + 1
+            : presets.Count;
+        presets.Insert(insertAt, preset);
+        // Move selection to the newly inserted entry so subsequent
+        // edits target the copy, not the source.
+        selectedPreset = insertAt;
     }
 
     private static unsafe void DrawPresetList()
@@ -158,7 +179,9 @@ public static class PluginUI
         {
             // Snapshot the live camera into the new preset rather than
             // creating a defaults-only entry the user has to fill in.
-            noWickyXIV.Config.Presets.Add(CaptureCurrentCameraPreset());
+            // Name comes out as "<active> - Copy" and the entry is
+            // inserted directly under the current selection.
+            InsertPresetAfterSelected(CaptureCurrentCameraPreset());
             noWickyXIV.Config.Save();
         }
 
@@ -166,7 +189,9 @@ public static class PluginUI
 
         if (ImGui.Button(FontAwesomeIcon.Copyright.ToIconString()) && hasSelectedPreset)
         {
-            noWickyXIV.Config.Presets.Add(CurrentPreset.Clone());
+            var copy = CurrentPreset.Clone();
+            copy.Name = $"{CurrentPreset.Name} - Copy";
+            InsertPresetAfterSelected(copy);
             noWickyXIV.Config.Save();
         }
 
@@ -511,6 +536,7 @@ public static class PluginUI
         BuiltinPresetCondition.WhileRunning => "While Running",
         BuiltinPresetCondition.MovingMount  => "Moving on Mount",
         BuiltinPresetCondition.Sprinting    => "Sprinting",
+        BuiltinPresetCondition.RunningInCombat => "Running in Combat",
         _                                    => c.ToString(),
     };
 

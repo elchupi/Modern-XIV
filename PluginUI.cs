@@ -1098,6 +1098,16 @@ public static class PluginUI
             ConfigSliderFloat("Size (px)##Crosshair",      ref noWickyXIV.Config.CrosshairSize,      2f,  40f,  8f);
             ConfigSliderFloat("Thickness##Crosshair",      ref noWickyXIV.Config.CrosshairThickness, 1f,  6f,   2f);
             ConfigSliderFloat("Fade speed##Crosshair",     ref noWickyXIV.Config.CrosshairFadeSpeed, 1f,  20f,  6f);
+            ConfigSliderFloat("Offset X (px)##Crosshair",  ref noWickyXIV.Config.CrosshairOffsetX,  -800f, 800f, 0f, "%.0f");
+            ConfigSliderFloat("Offset Y (px)##Crosshair",  ref noWickyXIV.Config.CrosshairOffsetY,  -600f, 600f, 0f, "%.0f");
+            ImGui.Separator();
+            ConfigCheckbox("Auto-target enemy under crosshair##XAutoT", ref noWickyXIV.Config.EnableCrosshairAutoTarget);
+            ImGui.TextDisabled(
+                "When you have NO target and the crosshair is over an enemy,\n" +
+                "auto-pick that enemy. Lets queued abilities / right-click\n" +
+                "attacks land without manually clicking the target first.\n" +
+                "Stops the moment a target is set (manual or otherwise).");
+            ConfigSliderFloat("Pick radius (px)##XAutoT",   ref noWickyXIV.Config.CrosshairAutoTargetRadius, 16f, 240f, 80f, "%.0f");
             // Color sliders (R/G/B/A as separate floats so they fit ConfigSliderFloat)
             ConfigSliderFloat("Color R##Crosshair", ref noWickyXIV.Config.CrosshairColorR, 0f, 1f, 1f);
             ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
@@ -1454,6 +1464,26 @@ public static class PluginUI
     // ---- Target UI tab (target name + cast bar + spell name) ----
     private static void DrawTargetUITab()
     {
+        // ----- Enemy HP rings -----
+        // Iterates ALL hostile enemies in the world and draws the
+        // JobAura HP ring (backdrop + pulse + inner core + emanating
+        // pulse) on each — no targeting required. Skips only the
+        // currently-targeted enemy when JobAura is already anchored
+        // to it, to avoid duplicating that one ring.
+        if (ImGuiEx.BeginGroupBox("Enemy HP rings"))
+        {
+            ConfigCheckbox("Show HP rings on all enemies##TgtHp", ref noWickyXIV.Config.EnableHpRingOnTarget);
+            ImGui.TextDisabled(
+                "Draws the JobAura-style HP ring on every hostile enemy in the\n" +
+                "world. Auto-skips the currently-targeted enemy when JobAura is\n" +
+                "anchored to target, since that already covers it.\n" +
+                "Requires the HP Ring feature to be enabled.");
+            ConfigCheckbox("Show HP rings on party members##TgtHpParty", ref noWickyXIV.Config.EnableHpRingOnParty);
+            ImGui.TextDisabled(
+                "Same visual on every other party member.");
+            ImGuiEx.EndGroupBox();
+        }
+
         // ----- Target name -----
         if (ImGuiEx.BeginGroupBox("Target name"))
         {

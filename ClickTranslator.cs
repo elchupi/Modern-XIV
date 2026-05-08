@@ -61,6 +61,28 @@ public static class ClickTranslator
         catch { return false; }
     }
 
+    // True when the local player has a HOSTILE BattleNpc currently
+    // targeted. With Crosshair auto-target picking enemies for the
+    // user, we want LMB to translate into the hotbar action even
+    // before the weapon is drawn — the engine auto-draws on the
+    // first action use, so the gate just has to acknowledge that
+    // a hostile target exists.
+    private static bool HasHostileTarget()
+    {
+        try
+        {
+            var t = DalamudApi.TargetManager?.Target;
+            if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return false;
+            if (!bn.IsTargetable) return false;
+            if (bn.CurrentHp <= 0) return false;
+            // BattleNpcKind 2 = friendly NPC. Anything else is fair
+            // game (enemy / striking dummy / event mob).
+            if ((byte)bn.BattleNpcKind == 2) return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT { public uint type; public InputUnion u; }
 
@@ -256,7 +278,12 @@ public static class ClickTranslator
         // title / character-select / login screens.
         bool loggedIn = false;
         try { loggedIn = DalamudApi.ClientState.IsLoggedIn; } catch { }
-        bool active = loggedIn && IsGameForeground() && IsWeaponDrawn();
+        // Translation fires when EITHER weapon is drawn OR a hostile
+        // target is selected. The hostile-target branch lets the
+        // crosshair auto-target → LMB → action chain work even while
+        // sheathed — the engine auto-draws on the first ability use.
+        bool active = loggedIn && IsGameForeground()
+                   && (IsWeaponDrawn() || HasHostileTarget());
         SetBothClickOverride(active);
 
         bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
@@ -311,10 +338,10 @@ public static class ClickTranslator
         bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
 
         // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → Ctrl+<n>.
-        // Gate on FFXIV-foreground + weapon-drawn so the chord doesn't leak
-        // into other apps and doesn't trigger out of combat stance (where
-        // plain hotbar slots are usually what the player wants).
-        if (rmb && IsGameForeground() && IsWeaponDrawn())
+        // Gate matches the LMB translator above: weapon drawn OR hostile
+        // target selected. Lets the auto-target → ability chain work
+        // while sheathed.
+        if (rmb && IsGameForeground() && (IsWeaponDrawn() || HasHostileTarget()))
         {
             int digitVk = isOne ? VK_1 : (isTwo ? VK_2 : VK_3);
             SendCtrlDigit(digitVk, kbCtrl);

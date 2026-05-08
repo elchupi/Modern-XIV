@@ -187,6 +187,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         PresetManager.Update();
         InputHandler.Update();
         CameraDynamics.Update();
+        Crosshair.Update();
         JobAura.Update();
         HpRing.Update();
         HotbarFader.Update();

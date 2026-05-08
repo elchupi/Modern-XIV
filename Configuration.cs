@@ -299,10 +299,24 @@ public class PresetDynamicsState
     public float CrosshairSize      = 8f;
     public float CrosshairThickness = 2f;
     public float CrosshairFadeSpeed = 6f;
+    // Pixel offsets from the screen center. (0, 0) = dead center,
+    // negative X = left, negative Y = up. Lets the user move the
+    // reticle off-center for shoulder-cam aiming.
+    public float CrosshairOffsetX   = 0f;
+    public float CrosshairOffsetY   = 0f;
     public float CrosshairColorR    = 1f;
     public float CrosshairColorG    = 1f;
     public float CrosshairColorB    = 1f;
     public float CrosshairColorA    = 0.85f;
+    // Pixel radius around the crosshair center used for auto-target
+    // hit-testing. When the user has no target and the crosshair is
+    // over an enemy within this many screen pixels, the plugin
+    // auto-picks that enemy as the current target.
+    public float CrosshairAutoTargetRadius = 80f;
+    // Master toggle for the auto-target behaviour. Off = reticle is
+    // a passive aim aid only; the user's existing manual target picks
+    // are the only thing that drives Target.
+    public bool  EnableCrosshairAutoTarget = true;
 
     // ---- Combat Zoom ----
     public bool  EnableCombatZoom         = false;
@@ -406,10 +420,14 @@ public class PresetDynamicsState
         s.CrosshairSize      = cfg.CrosshairSize;
         s.CrosshairThickness = cfg.CrosshairThickness;
         s.CrosshairFadeSpeed = cfg.CrosshairFadeSpeed;
+        s.CrosshairOffsetX   = cfg.CrosshairOffsetX;
+        s.CrosshairOffsetY   = cfg.CrosshairOffsetY;
         s.CrosshairColorR    = cfg.CrosshairColorR;
         s.CrosshairColorG    = cfg.CrosshairColorG;
         s.CrosshairColorB    = cfg.CrosshairColorB;
         s.CrosshairColorA    = cfg.CrosshairColorA;
+        s.EnableCrosshairAutoTarget = cfg.EnableCrosshairAutoTarget;
+        s.CrosshairAutoTargetRadius = cfg.CrosshairAutoTargetRadius;
 
         s.EnableCombatZoom         = cfg.EnableCombatZoom;
         s.CombatZoomDistance       = cfg.CombatZoomDistance;
@@ -495,10 +513,14 @@ public class PresetDynamicsState
         cfg.CrosshairSize      = s.CrosshairSize;
         cfg.CrosshairThickness = s.CrosshairThickness;
         cfg.CrosshairFadeSpeed = s.CrosshairFadeSpeed;
+        cfg.CrosshairOffsetX   = s.CrosshairOffsetX;
+        cfg.CrosshairOffsetY   = s.CrosshairOffsetY;
         cfg.CrosshairColorR    = s.CrosshairColorR;
         cfg.CrosshairColorG    = s.CrosshairColorG;
         cfg.CrosshairColorB    = s.CrosshairColorB;
         cfg.CrosshairColorA    = s.CrosshairColorA;
+        cfg.EnableCrosshairAutoTarget = s.EnableCrosshairAutoTarget;
+        cfg.CrosshairAutoTargetRadius = s.CrosshairAutoTargetRadius;
 
         cfg.EnableCombatZoom         = s.EnableCombatZoom;
         cfg.CombatZoomDistance       = s.CombatZoomDistance;
@@ -945,11 +967,16 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float CrosshairSize       = 8f;        // half-arm length, px (scaled)
     public float CrosshairThickness  = 2f;
     public float CrosshairFadeSpeed  = 6f;
+    public float CrosshairOffsetX    = 0f;        // px from screen center; +X = right
+    public float CrosshairOffsetY    = 0f;        // px from screen center; +Y = down
     // RGBA 0..1
     public float CrosshairColorR     = 1f;
     public float CrosshairColorG     = 1f;
     public float CrosshairColorB     = 1f;
     public float CrosshairColorA     = 0.85f;
+    // Auto-target enemy under crosshair when no target is set.
+    public bool  EnableCrosshairAutoTarget = true;
+    public float CrosshairAutoTargetRadius = 80f; // px hit-test radius
 
     // ---- Sensitivity (Phase E — fields added early so panel can show them) ----
     public float MouseSensitivityMul   = 1f;
@@ -1008,6 +1035,15 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // base alpha is high, and the ring shrinks toward the center
     // (urgent). Linear interpolation across the entire HP range.
     public bool  EnableHpRing             = false;
+    // Mirror the player's HP ring on the current target's bone (enemy
+    // body indicator). Same JobAura HP-ring visual (backdrop + throb +
+    // inner core + emanating pulse) as the player ring. HP read straight
+    // from IBattleChara.CurrentHp. ON by default so the target ring is
+    // visible out of the box — toggle lives in the Target UI tab.
+    public bool  EnableHpRingOnTarget     = true;
+    // Mirror it on every other party member too — quick at-a-glance
+    // ally HP indicator that doesn't depend on the party-list HUD.
+    public bool  EnableHpRingOnParty      = false;
     // Position as fractions of the viewport — (0.5, 0.5) = center.
     public float HpRingScreenX            = 0.5f;
     public float HpRingScreenY            = 0.85f;

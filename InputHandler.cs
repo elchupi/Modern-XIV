@@ -116,8 +116,18 @@ public static class InputHandler
 
             bool shift = ShiftHeld, ctrl = CtrlHeld, alt = AltHeld;
 
-            // Shift+Ctrl is reserved for zoom — let the game handle it.
-            if (shift && ctrl) return;
+            // Shift+Ctrl is reserved for zoom. Default behavior: let
+            // the engine zoom. With FOV-zoom continuation: take full
+            // ownership and apply currentZoom (when above MinZoom)
+            // OR currentFoV-narrow (when at MinZoom). Avoids the
+            // pivot-to-overhead feel at extreme close zoom by
+            // freezing camera position and "zooming in" optically.
+            if (shift && ctrl)
+            {
+                if (noWickyXIV.Config.EnableFovZoomContinuation)
+                    HandleFovZoomWheel(wheel);
+                return;
+            }
 
             // Ambiguous combos: skip
             if (ctrl && alt) return;
@@ -206,6 +216,69 @@ public static class InputHandler
                     try { preset.Apply(); } catch { }
                 }
                 SuppressNextZoom = true;
+            }
+        }
+        catch { /* defensive */ }
+    }
+
+    // FOV-zoom continuation. Takes ownership of the Shift+Ctrl+wheel
+    // chord:
+    //   currentZoom > MinZoom → normal zoom (decrease/increase distance)
+    //   currentZoom at MinZoom + scrolling in → narrow currentFoV
+    //   currentFoV narrowed + scrolling out → restore FoV first,
+    //                                          THEN zoom out
+    // Net effect: when zooming in past the configured min distance,
+    // the camera position freezes and the view continues to "zoom"
+    // optically via FoV. No pivot to overhead, no fight with wall
+    // collision.
+    private static unsafe void HandleFovZoomWheel(float wheel)
+    {
+        try
+        {
+            var cm = Common.CameraManager;
+            if (cm == null) return;
+            var cam = cm->worldCamera;
+            if (cam == null) return;
+            var preset = PresetManager.CurrentPreset;
+            if (preset == null) return;
+
+            // FFXIV default: scroll up (wheel +1) = zoom in (currentZoom decreases).
+            bool zoomingIn = wheel > 0;
+            float zoomStep = preset.ZoomDelta;
+            float fovStep  = preset.FoVDelta;
+            float minZoom  = preset.MinZoom;
+            float maxZoom  = preset.MaxZoom;
+            float minFoV   = MathF.Min(preset.MinFoV, noWickyXIV.Config.FovZoomMinFov);
+            float maxFoV   = preset.MaxFoV;
+
+            const float zoomSlop = 0.01f;
+            const float fovSlop  = 0.001f;
+            bool atMinZoom    = cam->currentZoom <= minZoom + zoomSlop;
+            bool fovNarrowed  = cam->currentFoV  <  maxFoV  - fovSlop;
+
+            if (zoomingIn)
+            {
+                if (atMinZoom)
+                {
+                    // Zoom in past min: narrow FoV instead.
+                    cam->currentFoV = MathF.Max(minFoV, cam->currentFoV - fovStep);
+                }
+                else
+                {
+                    cam->currentZoom = MathF.Max(minZoom, cam->currentZoom - zoomStep);
+                }
+            }
+            else
+            {
+                if (fovNarrowed)
+                {
+                    // Zoom out: restore FoV before changing distance.
+                    cam->currentFoV = MathF.Min(maxFoV, cam->currentFoV + fovStep);
+                }
+                else
+                {
+                    cam->currentZoom = MathF.Min(maxZoom, cam->currentZoom + zoomStep);
+                }
             }
         }
         catch { /* defensive */ }

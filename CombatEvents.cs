@@ -58,7 +58,6 @@ public static unsafe class CombatEvents
             }
             _hook = DalamudApi.GameInteropProvider.HookFromAddress<ReceiveDelegate>(addr, ReceiveDetour);
             _hook.Enable();
-            try { DalamudApi.PluginLog.Information($"[noWickyXIV] CombatEvents resolved: receive=0x{addr:X}"); } catch { }
         }
         catch (Exception ex)
         {
@@ -152,6 +151,16 @@ public static unsafe class CombatEvents
 
                     if (fromMe && !toMe)
                     {
+                        // LightSync crit feedback fires on ANY outgoing crit
+                        // (autos + actions). Independent of the JobAura
+                        // edge-flag suppression below — the light's
+                        // orange→red flash is short and reads cleanly even
+                        // mid-action animation, unlike the on-screen vfx
+                        // bleed the suppression window protects against.
+                        if (crit)
+                        {
+                            try { LightSync.OnCritHit(); } catch { }
+                        }
                         if (isAutoAttack)
                         {
                             // Suppress when within the action-bleed window

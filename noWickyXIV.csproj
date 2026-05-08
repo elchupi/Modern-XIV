@@ -8,6 +8,26 @@
 
     <ItemGroup>
         <None Include="assets\*.wav" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="assets\mount-audio\**\*.ogg" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="assets\mount-audio\**\*.wav" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- NAudio for the dynamic mount-audio system in MountAudio.cs.
+             Used to crossfade per-state engine layers (idle / accel /
+             cruise / decel) and pitch-shift the cruise loop with speed.
+             Standard NuGet, no DRM, ships as a single managed assembly
+             that Dalamud's loader handles fine. -->
+        <PackageReference Include="NAudio" Version="2.2.1" />
+        <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
+        <!-- Nefarius.ViGEm.Client = virtual XInput gamepad. Used by
+             MountMomentum.cs to emit analog left-stick values that
+             FFXIV's server interprets as variable-magnitude movement
+             input — gives real, server-respected momentum / coast /
+             braking instead of client-side visual fakery. Requires
+             ViGEmBus driver installed by user (one-time setup,
+             free + signed, used by Steam controller emulation). -->
+        <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
     </ItemGroup>
 
 </Project>

@@ -5,22 +5,24 @@ using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
 namespace noWickyXIV;
 
-// Spike #1: hook DrawObject.UpdateTransforms via the local player's
-// DrawObject vtable. UpdateTransforms is the per-frame method that
-// consumes drawObj->Rotation and computes the world matrix; modifying
-// the rotation just before calling original injects our roll into
-// the matrix the engine actually renders with.
+// Hooks DrawObject.UpdateTransforms via vtable[7] on the local
+// player's draw object. Writes the roll quaternion late in the
+// engine's frame setup — writes from Framework.Update get clobbered
+// when the engine IS rebuilding rotations, but for stationary actors
+// the engine skips that rebuild and our Tick write IS the only one
+// that runs (which is why the bank used to stay stuck at an angle
+// after motion stopped).
 //
-// Rationale: writing drawObj->Rotation from Framework.Update gets
-// silently overwritten by the engine's own per-frame rotation
-// rebuild before the matrix is computed. By hooking the consume-side
-// function, we land our write inside the engine's frame setup —
-// same pattern that fixed cam->tilt visibility (commit 1326cbb).
+// Two write points:
+//   - UpdateTransforms detour (active animation: engine rebuilds rotation,
+//     we write our value over its rebuild within the same frame).
+//   - Framework.Update (Tick) ForceWriteRotation: covers stationary-actor
+//     gap where UpdateTransforms isn't called and the last detour write
+//     would otherwise persist past _charRollCurrent's decay to 0.
 //
-// Filtering: we hook a SHARED vtable function, so the detour fires
-// for every DrawObject of that vtable. We filter by checking
-// whether the drawObj matches a tracked actor (local player + mount
-// actor) before applying any rotation modification.
+// Filter target by drawObj POINTER (vtable is shared, fires for every
+// actor) — match player + mount actor (slot[1] when present) so the
+// bike body itself banks alongside the rider.
 public static unsafe class CharacterRollHook
 {
     [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
@@ -28,26 +30,16 @@ public static unsafe class CharacterRollHook
 
     private static Hook<UpdateTransformsDelegate> _hook;
     private static bool _initialized;
-    // Cached vtable address we hooked. When the player's draw object
-    // changes type (e.g. job change), the vtable may differ; we
-    // re-hook in EnsureHookedForCurrentPlayer.
     private static IntPtr _hookedVtableFn;
-    // Per-frame "apply once" tokens — UpdateTransforms can fire
-    // multiple times per frame (multiple visibility passes / culling
-    // tests), and post-multiplying our roll on each call stacks the
-    // rotation (qY * qZ * qZ * qZ ...). Result: visible jitter +
-    // characters flipped upside-down. Reset to false at the start of
-    // each Framework.Update tick (in Tick); the detour sets to true
-    // on first apply this frame and skips subsequent calls.
-    private static bool _playerRolledThisFrame;
-    private static bool _mountRolledThisFrame;
 
-    public static void Initialize()
-    {
-        // Defer actual hook creation to per-frame check — the local
-        // player's DrawObject may not exist at plugin-load time.
-        _initialized = true;
-    }
+    // Stationary-actor write state — last quaternion we wrote per
+    // target so ForceWriteRotation is idempotent (no churn at zero).
+    private static Quaternion _lastPlayerWritten;
+    private static Quaternion _lastMountWritten;
+    private static bool _lastPlayerInit;
+    private static bool _lastMountInit;
+
+    public static void Initialize() => _initialized = true;
 
     public static void Dispose()
     {
@@ -56,20 +48,13 @@ public static unsafe class CharacterRollHook
         _hook = null;
         _hookedVtableFn = IntPtr.Zero;
         _initialized = false;
+        _lastPlayerInit = false;
+        _lastMountInit = false;
     }
 
-    // Ensure the UpdateTransforms vtable function is hooked for the
-    // current local player's DrawObject. Re-hook if the function
-    // pointer changed (zone load, gear swap that re-creates draw
-    // object). Called once per Framework.Update tick.
     public static void Tick()
     {
         if (!_initialized) return;
-        // Reset per-frame "applied" tokens at the start of every
-        // Framework.Update tick so the next render's UpdateTransforms
-        // calls get a fresh single-apply window.
-        _playerRolledThisFrame = false;
-        _mountRolledThisFrame = false;
         if (!noWickyXIV.Config.EnableCharacterRoll) return;
         try
         {
@@ -80,117 +65,117 @@ public static unsafe class CharacterRollHook
             var drawObj = go->DrawObject;
             if (drawObj == null) return;
 
-            // The vtable's first slot we care about for UpdateTransforms.
-            // DrawObject vtable layout (verified across CS releases):
-            //   [0] AddChild, [1] OnAddedToWorld, [2] Dtor,
-            //   [3] CleanupRender, [4] GetObjectType, [5] UpdateRender,
-            //   [6] UpdateCulling, [7] UpdateTransforms, ...
-            // We confirm at runtime by reading the vtable pointer and
-            // grabbing slot 7. If the actual layout shifts on a CS
-            // version bump, the hook will misfire; the try/catch and
-            // empty-Original guard protect from crashes either way.
-            var vtablePtr = *(IntPtr*)drawObj; // first 8 bytes of object = vtable*
-            if (vtablePtr == IntPtr.Zero) return;
-            var fnPtr = ((IntPtr*)vtablePtr)[7]; // UpdateTransforms slot
-            if (fnPtr == IntPtr.Zero) return;
-            if (fnPtr == _hookedVtableFn) return; // already hooked, current
+            // Vtable hook install (re-resolve only when fn pointer changes).
+            var vtablePtr = *(IntPtr*)drawObj;
+            if (vtablePtr != IntPtr.Zero)
+            {
+                var fnPtr = ((IntPtr*)vtablePtr)[7]; // UpdateTransforms
+                if (fnPtr != IntPtr.Zero && fnPtr != _hookedVtableFn)
+                {
+                    try { _hook?.Disable(); } catch { }
+                    try { _hook?.Dispose(); } catch { }
+                    _hook = DalamudApi.GameInteropProvider.HookFromAddress<UpdateTransformsDelegate>(
+                        fnPtr, UpdateTransformsDetour);
+                    _hook.Enable();
+                    _hookedVtableFn = fnPtr;
+                }
+            }
 
-            // Tear down any existing hook before re-creating against
-            // the new vtable function pointer.
-            try { _hook?.Disable(); } catch { }
-            try { _hook?.Dispose(); } catch { }
-            _hook = DalamudApi.GameInteropProvider.HookFromAddress<UpdateTransformsDelegate>(
-                fnPtr, UpdateTransformsDetour);
-            _hook.Enable();
-            _hookedVtableFn = fnPtr;
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] CharacterRollHook: hooked DrawObject.UpdateTransforms at 0x{(long)fnPtr:X}"); } catch { }
+            // Stationary-actor refresh: write the current rotation
+            // every Framework.Update tick, idempotent on the value.
+            // When the engine isn't rebuilding (stationary actor),
+            // this is the ONLY write that runs and it lets the
+            // visible angle decay smoothly with _charRollCurrent.
+            ForceWriteRotation();
         }
-        catch (Exception ex)
-        {
-            try { DalamudApi.PluginLog.Warning(
-                $"[noWickyXIV] CharacterRollHook tick threw: {ex.Message}"); } catch { }
-        }
+        catch { }
     }
 
     private static void UpdateTransformsDetour(DrawObject* drawObj, byte arg)
     {
         try
         {
-            // Match drawObj against player/mount. With rebuild-from-
-            // scratch (yaw+roll built fresh every call), applying on
-            // every UpdateTransforms call is idempotent — same
-            // deterministic value each time, no accumulation. This
-            // also wins against any intra-frame engine writes that
-            // may happen between our detour and the matrix compute.
             int target = MatchTarget(drawObj);
-            bool apply = target != 0;
-
-            if (apply)
+            if (target != 0)
             {
                 float rollDeg = CameraDynamics.GetCharacterRollCurrentDegrees();
-                if (MathF.Abs(rollDeg) > 0.01f)
-                {
-                    // REBUILD from scratch — read the actor's authoritative
-                    // float yaw from its GameObject.Rotation, build the
-                    // full qY * qZ quaternion, write it. This avoids the
-                    // accumulation problem that post-multiply suffered:
-                    // if the engine doesn't reset rotation between our
-                    // call and the next frame's call, post-multiply
-                    // would stack qZ over and over (qY * qZ * qZ * ...)
-                    // and the character would spin past 90° / 180°. With
-                    // rebuild-from-scratch each call writes the same
-                    // deterministic value: yaw + roll, no history.
-                    float yaw = ReadActorYaw(drawObj, target);
-                    float halfYaw  = yaw * 0.5f;
-                    float halfRoll = rollDeg * (MathF.PI / 180f) * 0.5f;
-                    float cy = MathF.Cos(halfYaw),  sy = MathF.Sin(halfYaw);
-                    float cr = MathF.Cos(halfRoll), sr = MathF.Sin(halfRoll);
-                    // qY * qZ in body frame: yaw first, then Z-roll
-                    // (banking around forward axis after yaw).
-                    drawObj->Rotation = new Quaternion(
-                        sy * sr, sy * cr, cy * sr, cy * cr);
-                }
+                // Apply on every UpdateTransforms call — rebuild-from-
+                // scratch is idempotent, no per-frame token needed.
+                // Always write so recovery to zero stays visible
+                // (skipping when |rollDeg|<0.01 left a stale banked
+                // quat in the rotation field after recovery).
+                float yaw = ReadActorYaw(target);
+                float halfYaw  = yaw * 0.5f;
+                float halfRoll = rollDeg * (MathF.PI / 180f) * 0.5f;
+                float cy = MathF.Cos(halfYaw),  sy = MathF.Sin(halfYaw);
+                float cr = MathF.Cos(halfRoll), sr = MathF.Sin(halfRoll);
+                // qY * qZ — yaw first, then Z-roll in body frame.
+                drawObj->Rotation = new Quaternion(
+                    sy * sr, sy * cr, cy * sr, cy * cr);
             }
         }
-        catch { /* never let a transform-hook exception crash render */ }
+        catch { }
 
         try { _hook?.Original(drawObj, arg); }
         catch { }
     }
 
-    // Read the GameObject.Rotation float yaw for whichever target
-    // (1 = player, 2 = mount) corresponds to this drawObj. Falls
-    // back to the player's yaw if mount lookup fails — when mounted,
-    // both share the same facing anyway.
-    private static float ReadActorYaw(DrawObject* drawObj, int target)
+    private static void ForceWriteRotation()
     {
         try
         {
-            if (target == 1)
+            float rollDeg = CameraDynamics.GetCharacterRollCurrentDegrees();
+            float halfRoll = rollDeg * (MathF.PI / 180f) * 0.5f;
+            float cr = MathF.Cos(halfRoll), sr = MathF.Sin(halfRoll);
+
+            // Player drawObj.
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp != null)
             {
-                var lp = DalamudApi.ObjectTable.LocalPlayer;
-                if (lp != null) return lp.Rotation;
+                var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)lp.Address;
+                if (go != null && go->DrawObject != null)
+                {
+                    float halfYaw = lp.Rotation * 0.5f;
+                    float cy = MathF.Cos(halfYaw), sy = MathF.Sin(halfYaw);
+                    var q = new Quaternion(sy * sr, sy * cr, cy * sr, cy * cr);
+                    if (!_lastPlayerInit || !QuatNearlyEqual(_lastPlayerWritten, q))
+                    {
+                        go->DrawObject->Rotation = q;
+                        _lastPlayerWritten = q;
+                        _lastPlayerInit = true;
+                    }
+                }
             }
-            else if (target == 2)
+
+            // Mount drawObj (slot[1] when present).
+            try
             {
                 var mountObj = DalamudApi.ObjectTable[1];
-                if (mountObj != null) return mountObj.Rotation;
-                // Fallback to player yaw — mount usually faces same direction.
-                var lp2 = DalamudApi.ObjectTable.LocalPlayer;
-                if (lp2 != null) return lp2.Rotation;
+                if (mountObj != null)
+                {
+                    var mgo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)mountObj.Address;
+                    if (mgo != null && mgo->DrawObject != null)
+                    {
+                        float halfYaw = mountObj.Rotation * 0.5f;
+                        float cy = MathF.Cos(halfYaw), sy = MathF.Sin(halfYaw);
+                        var q = new Quaternion(sy * sr, sy * cr, cy * sr, cy * cr);
+                        if (!_lastMountInit || !QuatNearlyEqual(_lastMountWritten, q))
+                        {
+                            mgo->DrawObject->Rotation = q;
+                            _lastMountWritten = q;
+                            _lastMountInit = true;
+                        }
+                    }
+                }
             }
+            catch { }
         }
         catch { }
-        return 0f;
     }
 
-    // Returns 0 if drawObj is neither, 1 if local player, 2 if the
-    // local player's mount actor.
     private static int MatchTarget(DrawObject* drawObj)
     {
         if (drawObj == null) return 0;
-        if (!noWickyXIV.Config.EnableCharacterRoll) return 0;
         try
         {
             var lp = DalamudApi.ObjectTable.LocalPlayer;
@@ -198,6 +183,7 @@ public static unsafe class CharacterRollHook
             var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)lp.Address;
             if (go == null) return 0;
             if (go->DrawObject == drawObj) return 1;
+
             try
             {
                 var mountObj = DalamudApi.ObjectTable[1];
@@ -211,5 +197,35 @@ public static unsafe class CharacterRollHook
         }
         catch { }
         return 0;
+    }
+
+    private static float ReadActorYaw(int target)
+    {
+        try
+        {
+            if (target == 1)
+            {
+                var lp = DalamudApi.ObjectTable.LocalPlayer;
+                if (lp != null) return lp.Rotation;
+            }
+            else if (target == 2)
+            {
+                var mountObj = DalamudApi.ObjectTable[1];
+                if (mountObj != null) return mountObj.Rotation;
+                var lp2 = DalamudApi.ObjectTable.LocalPlayer;
+                if (lp2 != null) return lp2.Rotation;
+            }
+        }
+        catch { }
+        return 0f;
+    }
+
+    private static bool QuatNearlyEqual(Quaternion a, Quaternion b)
+    {
+        const float eps = 0.0005f;
+        return MathF.Abs(a.X - b.X) < eps
+            && MathF.Abs(a.Y - b.Y) < eps
+            && MathF.Abs(a.Z - b.Z) < eps
+            && MathF.Abs(a.W - b.W) < eps;
     }
 }

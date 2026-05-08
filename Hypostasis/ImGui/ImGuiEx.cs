@@ -29,12 +29,6 @@ public static partial class ImGuiEx
     private static int     _pendingTooltipLastHoverFrame = -2;
     private static int     _pendingTooltipPrevHoverFrame = -2;
     private static float   _tooltipAlpha;
-    // Diagnostics — counts SetItemTooltip captures and
-    // RenderPendingTooltip draws so we can tell whether the path is
-    // firing at all when the user reports tooltips look default.
-    private static int     _tooltipCaptureCount;
-    private static int     _tooltipDrawCount;
-    private static double  _tooltipDiagLastLogT;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetItemTooltip(string s, ImGuiHoveredFlags flags = ImGuiHoveredFlags.None)
@@ -56,7 +50,6 @@ public static partial class ImGuiEx
         _pendingTooltipText = s;
         _pendingTooltipAnchor = anchor;
         _pendingTooltipLastHoverFrame = ImGui.GetFrameCount();
-        _tooltipCaptureCount++;
     }
 
     // Call this once at the end of the plugin's UI frame so the
@@ -98,24 +91,7 @@ public static partial class ImGuiEx
         _tooltipAlpha += (target - _tooltipAlpha) * k;
         if (MathF.Abs(target - _tooltipAlpha) < 0.002f) _tooltipAlpha = target;
 
-        // Periodic diagnostic emit (~1 Hz). Lets us see whether the
-        // custom tooltip path is firing at all from the user's
-        // PluginLog without spamming the log every frame.
-        try
-        {
-            var nowT = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
-            if (nowT - _tooltipDiagLastLogT > 1.0)
-            {
-                _tooltipDiagLastLogT = nowT;
-                DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] tooltip diag: captures={_tooltipCaptureCount} draws={_tooltipDrawCount} alpha={_tooltipAlpha:F2} active={active} text=\"{(_pendingTooltipText.Length > 32 ? _pendingTooltipText.Substring(0, 32) + "…" : _pendingTooltipText)}\"");
-            }
-        }
-        catch { }
-
         if (_tooltipAlpha < 0.01f || string.IsNullOrEmpty(_pendingTooltipText)) return;
-
-        _tooltipDrawCount++;
 
         var dl = ImGui.GetForegroundDrawList();
         var ts = ImGui.CalcTextSize(_pendingTooltipText, false, 320f);

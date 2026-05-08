@@ -930,11 +930,18 @@ public static unsafe class CameraDynamics
     // each frame in TPS regardless of either feature's enable flag so
     // a camera-tilt-off / character-bank-on configuration still has a
     // valid yaw-velocity signal to drive the model lean.
+    // Raw, unfiltered yaw rate this frame (rad/s). Direct joystick
+    // proxy for character bank — lets the character lean track the
+    // joystick magnitude without the input-smoothing tail that
+    // _rollSmoothedYawVel introduces.
+    private static float _rawYawVel;
+
     private static void UpdateYawVelocity(GameCamera* cam, bool tps, float dt)
     {
         if (!tps)
         {
             _rollSmoothedYawVel = 0f;
+            _rawYawVel = 0f;
             _rollInit = false;
             return;
         }
@@ -943,6 +950,7 @@ public static unsafe class CameraDynamics
         float yawDelta = AngleDelta(_rollPrevYaw, yaw);
         _rollPrevYaw = yaw;
         float yawVel = yawDelta / dt;
+        _rawYawVel = yawVel;
         _rollSmoothedYawVel = ExpDecay(_rollSmoothedYawVel, yawVel, 10f, dt);
     }
 
@@ -956,13 +964,51 @@ public static unsafe class CameraDynamics
     // by the engine's per-frame camera setup before render, which
     // is why the visible tilt used to be zero. This was the fix
     // landed in commit 1326cbb.
+    // Player position tracker — used by UpdateRollTilt's movement
+    // gate so the camera tilt recovers when the player stops
+    // moving (even if the camera is still being swung).
+    private static System.Numerics.Vector3 _rollLastPlayerPos;
+    private static bool _rollPosInit;
     private static void UpdateRollTilt(GameCamera* cam, bool tps, float dt)
     {
         if (noWickyXIV.Config.EnableRollTilt && tps)
         {
+            // Maintain the player-speed tracker — UpdateCharacterRoll
+            // (and any other future consumer) reads
+            // _charRollSmoothedSpeed. Camera RollTilt itself no
+            // longer gates on it.
+            try
+            {
+                var lp = DalamudApi.ObjectTable.LocalPlayer;
+                if (lp != null && dt > 0f)
+                {
+                    var pos = new System.Numerics.Vector3(
+                        lp.Position.X, lp.Position.Y, lp.Position.Z);
+                    if (_rollPosInit)
+                    {
+                        float dx = pos.X - _rollLastPlayerPos.X;
+                        float dz = pos.Z - _rollLastPlayerPos.Z;
+                        float raw = MathF.Sqrt(dx * dx + dz * dz) / dt;
+                        float k = 1f - MathF.Exp(-8f * dt);
+                        _charRollSmoothedSpeed += (raw - _charRollSmoothedSpeed) * k;
+                    }
+                    _rollLastPlayerPos = pos;
+                    _rollPosInit = true;
+                }
+            }
+            catch { }
+
+            // Camera roll: pure yaw-velocity-driven, smooth lerp
+            // recovery via configured On/Off rates. No movement gate,
+            // no forced fast rate, no snap-to-zero. When the user
+            // releases the camera, _rollSmoothedYawVel decays
+            // naturally → target → 0 → camera lerps back to level
+            // smoothly on RollTiltOffRate (default 1.0 = ~700 ms
+            // halflife, 1-2 s perceived recovery).
             float maxAngle = noWickyXIV.Config.RollTiltMaxAngle;
-            float target = Clamp(-_rollSmoothedYawVel * noWickyXIV.Config.RollTiltSensitivity,
-                                 -maxAngle, maxAngle);
+            float target = Clamp(
+                -_rollSmoothedYawVel * noWickyXIV.Config.RollTiltSensitivity,
+                -maxAngle, maxAngle);
             float rate = MathF.Abs(target) > MathF.Abs(_rollCurrent)
                 ? noWickyXIV.Config.RollTiltOnRate
                 : noWickyXIV.Config.RollTiltOffRate;
@@ -990,6 +1036,11 @@ public static unsafe class CameraDynamics
     // hook) to actually move the model. Use RollTilt for visible
     // lean in the meantime.
     private static float _charRollCurrent;
+    // Used by UpdateRollTilt's movement-gate; kept here so both roll
+    // updates can share the same speed reading.
+    private static float _charRollSmoothedSpeed;
+    private const float CharRollMotionThreshold = 0.4f; // m/s
+
     private static unsafe void UpdateCharacterRoll(GameCamera* cam, bool tps, float dt)
     {
         if (!noWickyXIV.Config.EnableCharacterRoll || !tps)
@@ -997,13 +1048,31 @@ public static unsafe class CameraDynamics
             _charRollCurrent = 0f;
             return;
         }
-        float maxAngle = noWickyXIV.Config.CharacterRollMaxAngle;
-        float target = Clamp(-_rollSmoothedYawVel * noWickyXIV.Config.CharacterRollSensitivity,
-            -maxAngle, maxAngle);
-        float rate = MathF.Abs(target) > MathF.Abs(_charRollCurrent)
-            ? noWickyXIV.Config.CharacterRollOnRate
-            : noWickyXIV.Config.CharacterRollOffRate;
-        _charRollCurrent = ExpDecay(_charRollCurrent, target, rate, dt);
+        var cfg = noWickyXIV.Config;
+        float maxAngle = cfg.CharacterRollMaxAngle;
+
+        // Movement gate — character only banks while the player is
+        // actually moving. Standing still and panning the camera
+        // shouldn't tilt the rider; only mounted/running motion
+        // should produce a body lean.
+        bool moving = _charRollSmoothedSpeed > CharRollMotionThreshold;
+
+        // Smoothed-input target (same _rollSmoothedYawVel the camera
+        // uses) — raw yawDelta jitters frame-to-frame because the
+        // game's HRotation isn't sampled every Framework.Update,
+        // which would make target oscillate 0 → high → 0 visibly
+        // during a continuous turn.
+        float target = moving
+            ? Clamp(-_rollSmoothedYawVel * cfg.CharacterRollSensitivity,
+                    -maxAngle, maxAngle)
+            : 0f;
+
+        // Fast forced output rate — 12/s = ~58 ms half-life. With
+        // the 10/s input smoothing that's ~165 ms total settle on
+        // joystick release, no slider-driven OffRate. The previous
+        // user-slider OffRate at 1.5/s gave a 460 ms output tail
+        // which was the visible "stuck" feel.
+        _charRollCurrent = ExpDecay(_charRollCurrent, target, 12f, dt);
     }
 
     // ---- PitchTilt: ports PlayerCameraPatch.cs:384-398 ----

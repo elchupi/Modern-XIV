@@ -72,8 +72,6 @@ public static unsafe class VfxBridge
                     int disp = Marshal.ReadInt32(triggerCallSite + 1);
                     var addrTrigger = triggerCallSite + 5 + disp;
                     _trigger = Marshal.GetDelegateForFunctionPointer<VfxUseTriggerDelegate>(addrTrigger);
-                    try { DalamudApi.PluginLog.Information(
-                        $"[noWickyXIV] VfxBridge resolved create=0x{addrCreate:X} trigger=0x{addrTrigger.ToInt64():X}"); } catch { }
                 }
                 else
                 {

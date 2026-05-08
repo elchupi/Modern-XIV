@@ -261,7 +261,6 @@ public static class JobAura
 
     public static void Initialize()
     {
-        try { DalamudApi.PluginLog.Information("[noWickyXIV] JobAura.Initialize start (v2-mci-diag)"); } catch { }
         _bornAt = Now();
         _firstUpdateDone = false;
         // Unique per-load prefix to avoid mci alias collisions when the
@@ -275,7 +274,6 @@ public static class JobAura
         // with old configs that had the toggle off still get real VFX
         // automatically.
         VfxBridge.Initialize();
-        try { DalamudApi.PluginLog.Information($"[noWickyXIV] JobAura.Initialize done (aliasPrefix={_aliasPrefix} vfxAvailable={VfxBridge.Available})"); } catch { }
     }
 
     public static void Dispose()
@@ -350,9 +348,6 @@ public static class JobAura
             _pathMax = File.Exists(max) ? max : null;
             _pathPt1 = File.Exists(p1)  ? p1  : null;
             _pathPt2 = File.Exists(p2)  ? p2  : null;
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] JobAura assets: baseDir=[{baseDir}] max={(_pathMax != null)} p1={(_pathPt1 != null)} p2={(_pathPt2 != null)}");
-            } catch { }
         }
         catch (Exception ex)
         {
@@ -535,10 +530,6 @@ public static class JobAura
                     $"[noWickyXIV] JobAura mci play FAILED rc={rcPlay} ({MciErrorString(rcPlay)}) alias={alias}");
                 } catch { }
             }
-            else
-            {
-                try { DalamudApi.PluginLog.Information($"[noWickyXIV] JobAura played: {Path.GetFileName(path)} vol={volume:F2} (alias={alias})"); } catch { }
-            }
             // Schedule cleanup — best-effort, runs after clip finishes.
             string capturedTemp = tempToCleanup;
             System.Threading.Tasks.Task.Run(async () =>
@@ -645,19 +636,12 @@ public static class JobAura
                     if (_meditateStatusId != (int)s.StatusId)
                     {
                         _meditateStatusId = (int)s.StatusId;
-                        try { DalamudApi.PluginLog.Information(
-                            $"[noWickyXIV] JobAura matched Meditate status id={s.StatusId}"); } catch { }
                     }
                     break;
                 }
             }
         }
         catch { }
-        if (_hasMeditate != hadMeditate)
-        {
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] JobAura Meditate {(_hasMeditate ? "ON" : "OFF")}"); } catch { }
-        }
 
         // Higanbana — DoT applied by player to a hostile target. Detect by
         // scanning the player's current target's StatusList for the named
@@ -696,11 +680,6 @@ public static class JobAura
             }
         }
         catch { }
-        if (_hasHiganbana != hadHigan)
-        {
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] JobAura Higanbana {(_hasHiganbana ? "ON (target DoT)" : "OFF")}"); } catch { }
-        }
 
         // Fuka / Fugetsu — SAM self-buffs from the speed/damage combos.
         // Same scan pattern as Meditate but capturing remaining time too.
@@ -729,10 +708,6 @@ public static class JobAura
             }
         }
         catch { }
-        if (_hasFuka != hadFuka)
-            try { DalamudApi.PluginLog.Information($"[noWickyXIV] JobAura Fuka {(_hasFuka ? "ON" : "OFF")}"); } catch { }
-        if (_hasFugetsu != hadFugetsu)
-            try { DalamudApi.PluginLog.Information($"[noWickyXIV] JobAura Fugetsu {(_hasFugetsu ? "ON" : "OFF")}"); } catch { }
 
         // Read Kenki (0..100) + Sen flags (Setsu/Getsu/Ka).
         // JobGauges API on the wrong job throws — guard.
@@ -758,11 +733,6 @@ public static class JobAura
         bool allSen = hasSetsu && hasGetsu && hasKa;
         _allSenPrev = _hasAllSen;
         _hasAllSen = allSen;
-        if (_hasAllSen != _allSenPrev)
-        {
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] JobAura AllSen {(_hasAllSen ? "ON (mangekyu ready)" : "OFF")}"); } catch { }
-        }
 
         // (Modular VFX layer engine moved to AFTER tier evaluation, below.)
 
@@ -803,8 +773,6 @@ public static class JobAura
                                 new Vector3(lp.Position.X, lp.Position.Y, lp.Position.Z),
                                 lp.Rotation, 0f, 0f, 0f);
                         }
-                        try { DalamudApi.PluginLog.Information(
-                            $"[noWickyXIV] JobAura vfx Burst fire handle=0x{h.ToInt64():X}"); } catch { }
                     }
                     catch { }
                 }
@@ -856,8 +824,6 @@ public static class JobAura
             {
                 if (_layerHandles.Count > 0)
                 {
-                    try { DalamudApi.PluginLog.Information(
-                        $"[noWickyXIV] JobAura zone change {_lastZone}→{curZone}: dropping {_layerHandles.Count} cached handles."); } catch { }
                     DropAllHandlesNoRemove();
                     _layerLastFire.Clear();
                 }
@@ -875,8 +841,6 @@ public static class JobAura
             {
                 if (_layerHandles.Count > 0)
                 {
-                    try { DalamudApi.PluginLog.Information(
-                        $"[noWickyXIV] JobAura player-address change 0x{_lastPlayerAddr.ToInt64():X}→0x{curPlayerAddr.ToInt64():X}: dropping {_layerHandles.Count} cached handles."); } catch { }
                     DropAllHandlesNoRemove();
                     _layerLastFire.Clear();
                 }
@@ -1006,8 +970,6 @@ public static class JobAura
                         if (_layerHandles.TryGetValue(layer.Id, out var hExisting)
                             && hExisting != IntPtr.Zero && layer.EndTriggerId >= 0)
                         {
-                            try { DalamudApi.PluginLog.Information(
-                                $"[noWickyXIV] JobAura layer '{layer.Name}' falling — Trigger({layer.EndTriggerId}) on handle=0x{hExisting.ToInt64():X}"); } catch { }
                             VfxBridge.Trigger(hExisting, (uint)layer.EndTriggerId);
                         }
                         // Drop our handle reference unconditionally on
@@ -1066,9 +1028,6 @@ public static class JobAura
                             // fire DelaySeconds later.
                             if (!string.IsNullOrEmpty(layer.Path))
                                 _layerPathLastFire[layer.Path] = now;
-
-                            try { DalamudApi.PluginLog.Information(
-                                $"[noWickyXIV] JobAura layer '{layer.Name}' fire mode={layer.Mode} src={layer.SourceMode} delay={layer.DelaySeconds:F2}s trigger={layer.Trigger} handle=0x{h.ToInt64():X}"); } catch { }
                         }
 
                         // Sound plays alongside the vfx, with the same
@@ -1364,17 +1323,6 @@ public static class JobAura
                                 // returns zero on certain animation frames.
                                 world = _boneCacheWorld;
                             }
-                        }
-                        // One-shot diag whenever the (anchor, boneIdx) combo
-                        // changes so we can see if the bone slider is taking
-                        // effect on the target.
-                        long key = ((long)anchor.GameObjectId << 16) | (uint)boneIdx;
-                        if (key != _lastBoneDiagKey)
-                        {
-                            _lastBoneDiagKey = key;
-                            try { DalamudApi.PluginLog.Information(
-                                $"[noWickyXIV] JobAura bone resolve: anchorIsTarget={anchorIsTarget} boneIdx={boneIdx} drawOk={drawOk} sigOk={sigOk} bonePos=({bw.X:F2},{bw.Y:F2},{bw.Z:F2}) root=({root.X:F2},{root.Y:F2},{root.Z:F2})");
-                            } catch { }
                         }
                     }
                     catch { /* fall back to root */ }
@@ -1811,6 +1759,30 @@ public static class JobAura
             cfg.JobAuraHpBackdropColorR, cfg.JobAuraHpBackdropColorG, cfg.JobAuraHpBackdropColorB,
             hpA * cfg.JobAuraHpBackdropAlpha);
         dl.AddCircleFilled(screen, backdropR, Dalamud.Bindings.ImGui.ImGui.GetColorU32(backdrop), 64);
+
+        // Outer throb ring — sine-modulated alpha + radius right at
+        // the backdrop edge, period tied to HP percentage. Mirrors
+        // the kenki tier-3 pulse style: at full HP, slow gentle
+        // throb (~1s); at low HP, fast urgent throb (~0.2s). Period
+        // and base alpha pull from JobAuraHpPulse* config so users
+        // can tune it via the existing sliders.
+        {
+            float hpPctSafeT = MathF.Max(0.05f, hpPct);
+            double throbPeriod = 0.20 + (1.00 - 0.20) * hpPctSafeT;
+            double tph = (Now() - _bornAt) % throbPeriod;
+            float throb = 0.5f + 0.5f * MathF.Sin((float)(tph * Math.PI * 2.0 / throbPeriod));
+            float throbR = backdropR * (1.02f + 0.06f * throb);
+            float throbA = (0.35f + 0.65f * throb) * cfg.JobAuraHpPulseAlpha * hpA;
+            if (throbA >= 0.01f)
+            {
+                var throbCol = new Vector4(
+                    cfg.JobAuraHpPulseColorR, cfg.JobAuraHpPulseColorG, cfg.JobAuraHpPulseColorB,
+                    throbA);
+                dl.AddCircle(screen, throbR,
+                    Dalamud.Bindings.ImGui.ImGui.GetColorU32(throbCol),
+                    96, cfg.JobAuraHpPulseThickness * uiScale);
+            }
+        }
 
         // Inner core — radius + alpha scale with HP.
         float coreR = baseR * cfg.JobAuraHpInnerRadiusFactor * hpPct;

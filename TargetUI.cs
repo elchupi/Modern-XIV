@@ -496,9 +496,6 @@ public static unsafe class TargetUI
             return;
         }
 
-        try { DalamudApi.PluginLog.Information(
-            $"[noWickyXIV] TargetUI font building: {System.IO.Path.GetFileName(path)} @ {size}px"); } catch { }
-
         try
         {
             var atlas = DalamudApi.PluginInterface.UiBuilder.FontAtlas;
@@ -559,11 +556,6 @@ public static unsafe class TargetUI
                 {
                     try { DalamudApi.PluginLog.Warning(
                         $"[noWickyXIV] TargetUI font build FAILED for {path}: {t.Exception?.GetBaseException().Message}"); } catch { }
-                }
-                else
-                {
-                    try { DalamudApi.PluginLog.Information(
-                        $"[noWickyXIV] TargetUI font ready: {System.IO.Path.GetFileName(path)} @ {size}px (Available={handle.Available})"); } catch { }
                 }
             }, System.Threading.Tasks.TaskScheduler.Default);
         }

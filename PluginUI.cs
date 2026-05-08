@@ -87,6 +87,14 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Light Sync"))
+            {
+                if (ImGui.BeginChild("##lightsync_scroll"))
+                    DrawLightSyncTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
             ImGui.EndTabBar();
         }
 
@@ -360,7 +368,13 @@ public static class PluginUI
 
         if (preset.UseStartZoom)
             ResetSliderFloat("Starting##Zoom", ref preset.StartZoom, preset.MinZoom, preset.MaxZoom, 6, "%.2f");
-        ResetSliderFloat("Minimum##Zoom", ref preset.MinZoom, 1, preset.MaxZoom, 1.5f, "%.2f");
+        // MinZoom slider floor was 1.0 — lifted to 0.1 so the user
+        // can pull the camera much closer to the player. The engine's
+        // "pivot to overhead at min zoom" behavior kicks in roughly
+        // when the configured MinZoom is hit, so giving the user a
+        // smaller MinZoom delays/avoids the pivot. The pitch-clamp
+        // detour below also disables the engine's auto-look-down.
+        ResetSliderFloat("Minimum##Zoom", ref preset.MinZoom, 0.1f, preset.MaxZoom, 1.5f, "%.2f");
         ResetSliderFloat("Maximum##Zoom", ref preset.MaxZoom, preset.MinZoom, 100, 20, "%.2f");
         ResetSliderFloat("Delta##Zoom", ref preset.ZoomDelta, 0, 5, 0.75f, "%.2f");
 
@@ -492,6 +506,7 @@ public static class PluginUI
         BuiltinPresetCondition.TalkingToNpc => "Talking to NPC",
         BuiltinPresetCondition.WhileRunning => "While Running",
         BuiltinPresetCondition.MovingMount  => "Moving on Mount",
+        BuiltinPresetCondition.Sprinting    => "Sprinting",
         _                                    => c.ToString(),
     };
 
@@ -969,10 +984,30 @@ public static class PluginUI
         if (DynamicsSectionMatches("Roll Tilt") && ImGuiEx.BeginGroupBox("Roll Tilt (bank into turns)"))
         {
             ConfigCheckbox("Enable##RollTilt", ref noWickyXIV.Config.EnableRollTilt);
-            ConfigSliderFloat("Max roll (deg)##RollTilt",       ref noWickyXIV.Config.RollTiltMaxAngle,    0f,    10f, 1.92f);
-            ConfigSliderFloat("Roll sensitivity##RollTilt",     ref noWickyXIV.Config.RollTiltSensitivity, 0.01f, 0.5f, 0.2f);
+            // Slider ranges bumped: max-angle 10→45° and sensitivity
+            // 0.5→10 because typical gameplay yaw velocity is 1-2 rad/s,
+            // so even at the old sens=0.5 max only ~1° of roll
+            // produced — the original defaults were tuned for very
+            // subtle camera tilt, not dramatic motorcycle-style
+            // banking. Higher ranges let users actually saturate
+            // MaxAngle when they want it.
+            ConfigSliderFloat("Max roll (deg)##RollTilt",       ref noWickyXIV.Config.RollTiltMaxAngle,    0f,    45f, 1.92f);
+            ConfigSliderFloat("Roll sensitivity##RollTilt",     ref noWickyXIV.Config.RollTiltSensitivity, 0.01f, 10f, 0.2f);
             ConfigSliderFloat("Roll onset speed##RollTilt",     ref noWickyXIV.Config.RollTiltOnRate,      0.5f,  20f, 2.47f);
             ConfigSliderFloat("Roll recovery speed##RollTilt",  ref noWickyXIV.Config.RollTiltOffRate,     0.5f,  15f, 1.0f);
+
+            ImGui.Separator();
+            ImGui.TextDisabled("Character Roll — banks the player MODEL into turns,\nnot just the camera. Independent toggle so they can run together.");
+            ConfigCheckbox("Enable character bank##CharRoll",  ref noWickyXIV.Config.EnableCharacterRoll);
+            ConfigSliderFloat("Max roll (deg)##CharRoll",      ref noWickyXIV.Config.CharacterRollMaxAngle,    0f,    45f, 4.0f);
+            ConfigSliderFloat("Roll sensitivity##CharRoll",    ref noWickyXIV.Config.CharacterRollSensitivity, 0.01f, 20.0f, 0.25f);
+            ConfigSliderFloat("Char onset speed##CharRoll",    ref noWickyXIV.Config.CharacterRollOnRate,      0.5f,  20f, 3.0f);
+            ConfigSliderFloat("Char recovery speed##CharRoll", ref noWickyXIV.Config.CharacterRollOffRate,     0.5f,  15f, 1.5f);
+            ImGui.TextDisabled(
+                "Writes a roll quaternion into the player's DrawObject every\n" +
+                "frame. Visible to other players (it's a model-rotation write,\n" +
+                "not a camera-only effect). Defaults conservative — push max\n" +
+                "angle higher for arcade-y leans, lower for subtle bank.");
             ImGuiEx.EndGroupBox();
         }
 
@@ -1083,6 +1118,22 @@ public static class PluginUI
             ConfigCheckbox("Smooth camera position offsets##PosSmooth", ref noWickyXIV.Config.EnableCameraPositionSmoothing);
             ImGui.TextDisabled("HeightOffset / SideOffset / Ctrl+scroll height lerp into place instead of snapping. Preset switches still snap.");
             ConfigSliderFloat("Position smoothing rate (1/s)##PosSmooth", ref noWickyXIV.Config.CameraPositionSmoothingRate, 3f, 60f, 12f, "%.1f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Section: Close-zoom pitch cap
+        if (DynamicsSectionMatches("Close Zoom Pitch Cap") && ImGuiEx.BeginGroupBox("Close-Zoom Pitch Cap"))
+        {
+            ConfigCheckbox("Enable##CloseZoomPitch", ref noWickyXIV.Config.EnableCloseZoomPitchCap);
+            ImGui.TextDisabled(
+                "Soft-clamps the camera's pitch floor when zoomed in close so the\n" +
+                "view doesn't pivot overhead and look down at the player. The cap\n" +
+                "engages when currentZoom drops below the threshold and relaxes\n" +
+                "back to the preset's normal MinVRotation past it.");
+            ConfigSliderFloat("Engage when zoom <##CloseZoomPitch",
+                ref noWickyXIV.Config.CloseZoomPitchCapZoom, 0.5f, 8f, 3f, "%.2f m");
+            ConfigSliderFloat("Pitch floor while engaged (rad)##CloseZoomPitch",
+                ref noWickyXIV.Config.CloseZoomPitchCapMinRad, -1.4f, 0f, -0.4f, "%.2f rad");
             ImGuiEx.EndGroupBox();
         }
 
@@ -1715,6 +1766,335 @@ public static class PluginUI
             ImGui.TextDisabled("Note: InstantMode is currently a no-op — FFXIV's camera struct doesn't expose smoothing rates.");
             ConfigSliderFloat("Ctrl+scroll height step", ref noWickyXIV.Config.HeightOffsetStep, 0.01f, 1f, 0.1f);
             ConfigSliderFloat("Live height offset (Ctrl/Alt+scroll)", ref noWickyXIV.Config.GlobalHeightOffset, -2f, 4f, 0f);
+
+            ImGui.Separator();
+            ConfigCheckbox("FOV-zoom continuation", ref noWickyXIV.Config.EnableFovZoomContinuation);
+            ImGui.TextDisabled(
+                "When zoom hits MinZoom, further Shift+Ctrl+scroll narrows FoV instead\n" +
+                "of pulling the camera closer. Stops the camera from pivoting overhead\n" +
+                "at extreme close zoom; gives a telephoto feel instead.");
+            ConfigSliderFloat("Tightest FoV (rad)##FovZoomMin",
+                ref noWickyXIV.Config.FovZoomMinFov, 0.1f, 0.78f, 0.25f, "%.2f");
+
+            ImGui.Separator();
+            ConfigCheckbox("Lock camera target during NPC dialogue", ref noWickyXIV.Config.LockCameraDuringNpcDialogue);
+            ImGui.TextDisabled(
+                "Prevents the engine from retargeting the camera to the NPC during\n" +
+                "OccupiedInQuestEvent / OccupiedInEvent. Combined with a TalkingToNpc\n" +
+                "preset condition, this makes our preset transition the only camera\n" +
+                "move on dialogue start/end — no engine 'dip then snap' override.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Mount Audio — dynamic per-mount engine sounds.
+        if (ImGuiEx.BeginGroupBox("Mount Audio (dynamic engine sounds)"))
+        {
+            ConfigCheckbox("Enable mount audio", ref noWickyXIV.Config.EnableMountAudio);
+            ImGui.TextDisabled(
+                "Reads local player's mount + speed each frame and crossfades user-\n" +
+                "provided .ogg loops (idle / accel / cruise / decel / mount / dismount).\n" +
+                "Audio files live in <plugin-dir>/assets/mount-audio/<mountId>/.\n" +
+                "Missing layers are skipped silently — partial packs work.");
+
+            ConfigSliderFloat("Master volume##MountAudio",
+                ref noWickyXIV.Config.MountAudioVolume, 0f, 1f, 0.6f, "%.2f");
+            ImGui.TextDisabled("Multiplied by per-layer base volume. 1.0 = full layer volume.");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Cruise pitch (engine RPM feel)");
+            ConfigSliderFloat("Speed for max pitch (m/s)##MountAudio",
+                ref noWickyXIV.Config.MountAudioMaxSpeed, 5f, 50f, 24f, "%.0f m/s");
+            ConfigSliderFloat("Cruise pitch at zero speed##MountAudio",
+                ref noWickyXIV.Config.MountAudioCruisePitchMin, 0.5f, 1.5f, 0.85f, "%.2fx");
+            ConfigSliderFloat("Cruise pitch at max speed##MountAudio",
+                ref noWickyXIV.Config.MountAudioCruisePitchMax, 0.5f, 2.0f, 1.20f, "%.2fx");
+            ImGui.TextDisabled(
+                "The cruise loop's playback rate is interpolated from min→max as your\n" +
+                "speed scales 0→max. SmbPitchShifting keeps the loop length constant\n" +
+                "so the engine pitch shifts without speeding up the loop itself.");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Sound slots — modify existing sounds + their trigger conditions");
+
+            // Mount-id selector for which mount's slots we're editing.
+            // Auto-fills from the currently mounted character on first
+            // open; user can override via the input.
+            ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+            ImGui.InputInt("Mount ID##slotEditId", ref _mountAudioEditId, 0, 0);
+            if (_mountAudioEditId < 0) _mountAudioEditId = 0;
+            ImGui.SameLine();
+            if (ImGui.Button("Use current mount##slotUseCur"))
+            {
+                try
+                {
+                    var lp = DalamudApi.ObjectTable.LocalPlayer;
+                    if (lp != null)
+                    {
+                        unsafe
+                        {
+                            var ch = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)lp.Address;
+                            if (ch != null)
+                            {
+                                int mid = (int)(byte)ch->Mount.MountId;
+                                if (mid > 0) _mountAudioEditId = mid;
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled("(decimal Mount.exh row id)");
+
+            // Speed-band thresholds. Three sliders define the four
+            // bands: Idle (< slow), Slow (slow..mid), Mid (mid..top),
+            // Top (>= top). Crossing band boundaries fires the
+            // appropriate transition one-shot.
+            ImGui.TextUnformatted("Speed-band thresholds (m/s)");
+            ConfigSliderFloat("Idle → Slow##band1",
+                ref noWickyXIV.Config.MountAudioSpeedSlowMin, 0.05f, 5f, 0.5f, "%.2f m/s");
+            ConfigSliderFloat("Slow → Mid##band2",
+                ref noWickyXIV.Config.MountAudioSpeedMidMin, 1f, 20f, 8f, "%.2f m/s");
+            ConfigSliderFloat("Mid → Top##band3",
+                ref noWickyXIV.Config.MountAudioSpeedTopMin, 5f, 35f, 15f, "%.2f m/s");
+            ImGui.TextDisabled(
+                "Speed below Idle→Slow = idle band. Crossing it going up\n" +
+                "fires idle2slow. Slow→Mid crossing going up fires revup.\n" +
+                "Mid→Top is a silent loop swap. Crossing back down through\n" +
+                "Idle→Slow fires decel.");
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Sound slots");
+
+            // Fixed 9-slot table. Each row = one of the slots the
+            // state machine actually drives. Four LOOP slots map to
+            // the four speed bands; five ONE-SHOT slots fire on
+            // band-crossing edges + mount/dismount events.
+            var slotDefs = new (string slot, string label, string trigger)[]
+            {
+                ("mount",     "Mount-up",        "One-shot on mount edge"),
+                ("idle",      "Idle (loop)",     "Looped while speed < Idle→Slow threshold"),
+                ("idle2slow", "Idle → Slow",     "One-shot when speed crosses Idle→Slow going up"),
+                ("slow",      "Slow (loop)",     "Looped while speed in [Idle→Slow, Slow→Mid)"),
+                ("revup",     "Slow → Mid (rev-up)", "One-shot when speed crosses Slow→Mid going up"),
+                ("mid",       "Mid → Top (one-shot)", "One-shot when entering Mid/Top from below; top loop waits for this to finish"),
+                ("top",       "Top (loop)",      "Looped while speed >= Mid→Top, debounced to start after mid one-shot ends"),
+                ("decel",     "Slow → Idle",     "One-shot when speed drops back into idle band (slowing to a stop)"),
+                ("dismount",  "Dismount",        "One-shot on dismount edge"),
+            };
+
+            for (int s = 0; s < slotDefs.Length; s++)
+            {
+                var def = slotDefs[s];
+                ImGui.PushID($"slotrow{s}");
+
+                // Find existing override for this (mountId, slot) — null if none.
+                var ovs = noWickyXIV.Config.MountAudioOverrides;
+                int existingIdx = ovs.FindIndex(o =>
+                    o.MountId == _mountAudioEditId
+                    && string.Equals(o.Slot, def.slot, StringComparison.OrdinalIgnoreCase));
+                string path = existingIdx >= 0 ? (ovs[existingIdx].FilePath ?? "") : "";
+
+                // Two-line row: header (label + trigger), then path input.
+                ImGui.TextUnformatted(def.label);
+                ImGui.SameLine();
+                ImGui.TextDisabled($"  ({def.trigger})");
+
+                ImGui.SetNextItemWidth(560 * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputText("##path", ref path, 1024))
+                {
+                    if (existingIdx >= 0)
+                    {
+                        ovs[existingIdx].FilePath = path;
+                    }
+                    else if (!string.IsNullOrEmpty(path))
+                    {
+                        ovs.Add(new MountAudioSlotOverride
+                        {
+                            MountId  = _mountAudioEditId,
+                            Slot     = def.slot,
+                            FilePath = path,
+                        });
+                    }
+                    noWickyXIV.Config.Save();
+                }
+                if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(path))
+                {
+                    string status = System.IO.File.Exists(path)
+                        ? "File exists ✓ (override active)"
+                        : "File NOT found ✗ (will fall back to convention)";
+                    ImGui.SetTooltip($"{path}\n{status}");
+                }
+
+                if (string.IsNullOrEmpty(path))
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("(no file picked — slot is silent)");
+                }
+                else
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("Clear##clr"))
+                    {
+                        if (existingIdx >= 0)
+                        {
+                            ovs.RemoveAt(existingIdx);
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                }
+
+                // Per-slot timing controls — DelayMs / FadeInMs /
+                // FadeOutMs. Find or create the matching timing
+                // entry on first edit. Three small numeric inputs on
+                // a single line keep the row compact.
+                var timings = noWickyXIV.Config.MountAudioTimings;
+                int tIdx = timings.FindIndex(t =>
+                    t.MountId == _mountAudioEditId
+                    && string.Equals(t.Slot, def.slot, StringComparison.OrdinalIgnoreCase));
+                MountAudioSlotTiming tEntry = tIdx >= 0 ? timings[tIdx] : null;
+                int delayMs   = tEntry?.DelayMs   ?? 0;
+                int fadeInMs  = tEntry?.FadeInMs  ?? 400;
+                int fadeOutMs = tEntry?.FadeOutMs ?? 400;
+                bool tChanged = false;
+
+                ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputInt("Delay ms##d", ref delayMs, 50, 200))
+                {
+                    if (delayMs < 0) delayMs = 0;
+                    tChanged = true;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Wait this long after the trigger event before the sound starts.\n"
+                        + "Useful for spacing — e.g. set 'idle' delay to 1500 to let the\n"
+                        + "mount-up one-shot finish before the idle hum begins.");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputInt("Fade-in ms##fi", ref fadeInMs, 50, 200))
+                {
+                    if (fadeInMs < 0) fadeInMs = 0;
+                    tChanged = true;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Fade-in ramp duration. Default 400 ms.");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputInt("Fade-out ms##fo", ref fadeOutMs, 50, 200))
+                {
+                    if (fadeOutMs < 0) fadeOutMs = 0;
+                    tChanged = true;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Fade-out ramp duration. Default 400 ms.\n"
+                        + "Crossfade overlap with the next loop happens naturally —\n"
+                        + "this fade-out runs concurrently with the next loop's fade-in.");
+
+                // Crossfade-loop only applies to LOOP slots (idle/
+                // slow/top). For one-shots (mount, idle2slow, revup,
+                // mid, decel, dismount) the field has no effect.
+                bool isLoopSlot = def.slot == "idle" || def.slot == "slow" || def.slot == "top";
+                int crossfadeLoopMs = tEntry?.CrossfadeLoopMs ?? 0;
+                if (isLoopSlot)
+                {
+                    ImGui.SameLine();
+                    ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+                    if (ImGui.InputInt("X-loop ms##xl", ref crossfadeLoopMs, 100, 500))
+                    {
+                        if (crossfadeLoopMs < 0) crossfadeLoopMs = 0;
+                        tChanged = true;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(
+                            "Two-instance crossfade-loop. When > 0, the layer plays\n" +
+                            "two copies of the .wav back-to-back, overlapping by this\n" +
+                            "many ms at the seam. Use this when your loop file's\n" +
+                            "start and end samples don't perfectly match (typical for\n" +
+                            "hand-recorded engine loops) — eliminates the audible\n" +
+                            "click/blip at the loop point.\n\n" +
+                            "0 = simple LoopStream rewind (fast but seam may click).\n" +
+                            "500-1000 = good crossfade for engine drones.\n" +
+                            "Only applies to loop slots; one-shots ignore this.");
+                }
+
+                if (tChanged)
+                {
+                    if (tEntry == null)
+                    {
+                        tEntry = new MountAudioSlotTiming
+                        {
+                            MountId = _mountAudioEditId,
+                            Slot    = def.slot,
+                        };
+                        timings.Add(tEntry);
+                    }
+                    tEntry.DelayMs         = delayMs;
+                    tEntry.FadeInMs        = fadeInMs;
+                    tEntry.FadeOutMs       = fadeOutMs;
+                    tEntry.CrossfadeLoopMs = crossfadeLoopMs;
+                    noWickyXIV.Config.Save();
+                }
+
+                ImGui.PopID();
+                ImGui.Spacing();
+            }
+
+            ImGui.Separator();
+            ImGui.TextDisabled(
+                "No convention-based auto-discovery. A slot stays\n" +
+                "silent unless you've explicitly picked a file path\n" +
+                "for it above — leaving a slot empty lets you A/B\n" +
+                "test which sound is causing problems.");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Native sound suppression (PlaySound hook)");
+            ImGui.TextDisabled(
+                "While mounted with a custom pack loaded, any sound whose path\n" +
+                "contains one of these substrings is suppressed at the engine\n" +
+                "play-call site — used to silence the game's native engine\n" +
+                "loops so they don't double up with your custom audio.");
+
+            ConfigCheckbox("Log every distinct sound path to /xllog (diagnose)",
+                ref noWickyXIV.Config.LogMountSoundPaths);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(
+                    "Turn this on, mount the target mount, idle / drive / dismount.\n" +
+                    "Each new sound path that fires is logged once. Identify the\n" +
+                    "mount-engine paths in /xllog (typically contain 'mount' or\n" +
+                    "the mount's internal name) and add their substrings below.\n" +
+                    "Turn this OFF when done — every new path costs a log line.");
+
+            var mutes = noWickyXIV.Config.MountAudioMutePatterns;
+            int muteRemoveIdx = -1;
+            for (int i = 0; i < mutes.Count; i++)
+            {
+                ImGui.PushID($"mp{i}");
+                ImGui.SetNextItemWidth(560 * ImGuiHelpers.GlobalScale);
+                string s = mutes[i] ?? "";
+                if (ImGui.InputText("##pat", ref s, 256))
+                {
+                    mutes[i] = s;
+                    noWickyXIV.Config.Save();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("X##rmpat")) muteRemoveIdx = i;
+                ImGui.PopID();
+            }
+            if (muteRemoveIdx >= 0)
+            {
+                mutes.RemoveAt(muteRemoveIdx);
+                noWickyXIV.Config.Save();
+            }
+            if (ImGui.Button("+ Add mute pattern"))
+            {
+                mutes.Add("");
+                noWickyXIV.Config.Save();
+            }
+            ImGui.TextDisabled(
+                "Pattern is a case-insensitive substring match on the sound\n" +
+                "path. Examples: 'sound/mount/' suppresses everything in the\n" +
+                "mount sound folder; 'mount_71' targets a specific mount id\n" +
+                "if the path encodes it.");
+
             ImGuiEx.EndGroupBox();
         }
 
@@ -1723,9 +2103,478 @@ public static class PluginUI
         DrawOtherSettings();
     }
 
+    private static void DrawLightSyncTab()
+    {
+        ImGui.TextWrapped(
+            "Govee event-driven lighting. The plugin sends an HTTP override to your Sync Box "
+            + "when a game event fires (death, low HP, duty pop, tells, etc.) and restores it "
+            + "to Video Sync mode after the event window closes.");
+        ImGui.Spacing();
+
+        ConfigCheckbox("Enable Light Sync", ref noWickyXIV.Config.EnableLightSync);
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Backend");
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        var modes = new[] { "Cloud", "Chroma" };
+        int modeIdx = Array.IndexOf(modes, noWickyXIV.Config.LightSyncMode);
+        if (modeIdx < 0) modeIdx = 0;
+        if (ImGui.Combo("##LightSyncMode", ref modeIdx, modes, modes.Length))
+        {
+            noWickyXIV.Config.LightSyncMode = modes[modeIdx];
+            noWickyXIV.Config.Save();
+        }
+        ImGui.TextDisabled(
+            "Cloud  — Govee REST. Per-color override; no Video Sync auto-restore on H6603.\n" +
+            "Chroma — Local Razer Chroma SDK (localhost:54235). Requires Razer Synapse 3 +\n" +
+            "         Chroma Connect AND Govee Desktop with Chroma toggle on. The H6603\n" +
+            "         auto-reverts to Video Sync when our session releases — same path\n" +
+            "         Apex / LoL use, no Cloud rate limit, no manual restore needed.");
+
+        ImGui.Separator();
+
+        // API key — paste field. Stored in local Configuration.json.
+        // No masking ImGui input flag is reliably exposed by the
+        // binding here, so we just label it loud and let the user
+        // see it. Local file, no transmission outside Govee's API.
+        ImGui.TextUnformatted("API Key");
+        ImGui.SameLine();
+        ImGui.TextDisabled("(Govee Home → Profile → Apply for API Key)");
+
+        ImGui.SetNextItemWidth(380 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputText("##LightSyncApiKey", ref noWickyXIV.Config.LightSyncApiKey, 128))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine();
+        if (ImGui.Button("Clear##LightSyncApiKey"))
+        {
+            noWickyXIV.Config.LightSyncApiKey = "";
+            noWickyXIV.Config.Save();
+        }
+
+        ImGui.Spacing();
+
+        // SKU and MAC — typed in for now; the device picker comes after
+        // we see what /lightsync devices returns for H6603 specifically.
+        ImGui.TextUnformatted("Device SKU");
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputText("##LightSyncSku", ref noWickyXIV.Config.LightSyncDeviceSku, 16))
+            noWickyXIV.Config.Save();
+
+        ImGui.TextUnformatted("Device ID");
+        ImGui.SetNextItemWidth(280 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputText("##LightSyncMac", ref noWickyXIV.Config.LightSyncDeviceMac, 64))
+            noWickyXIV.Config.Save();
+        ImGui.TextDisabled(
+            "Single-device fallback used when no devices are ticked in the list below.");
+
+        // ---- Multi-device target list ----
+        ImGui.Separator();
+        ImGui.TextUnformatted("Devices");
+        ImGui.TextDisabled(
+            "Auto-populated from /lightsync devices. Tick the lights you want events\n" +
+            "to drive. Each enabled device receives a parallel colorRgb POST per\n" +
+            "event (~300-500ms latency). Lights stay on the most-recent event color\n" +
+            "until the next event overrides — no Video Sync restore needed for\n" +
+            "non-SyncBox lights.");
+
+        var devices = noWickyXIV.Config.LightSyncDevices;
+        if (devices == null || devices.Count == 0)
+        {
+            ImGui.TextDisabled("No devices discovered yet. Click 'Discover devices' below.");
+        }
+        else
+        {
+            // Header row
+            ImGui.TextDisabled("  on  device                              backend  LAN IP");
+            for (int i = 0; i < devices.Count; i++)
+            {
+                var d = devices[i];
+                ImGui.PushID($"lsdev_{d.DeviceId}");
+
+                if (ImGui.Checkbox("##en", ref d.Enabled))
+                    noWickyXIV.Config.Save();
+
+                ImGui.SameLine();
+                ImGui.TextUnformatted($"{d.Name}");
+                ImGui.SameLine();
+                ImGui.TextDisabled($"({d.Sku})");
+
+                // Backend tag + LAN IP edit on a second line, indented
+                // so the device row stays the visually dominant
+                // element.
+                ImGui.SameLine(380 * ImGuiHelpers.GlobalScale);
+                bool hasLan = !string.IsNullOrEmpty(d.LanIp);
+                if (hasLan && d.UseLan)
+                {
+                    ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.9f, 0.4f, 1f), "LAN");
+                }
+                else if (hasLan)
+                {
+                    ImGui.TextColored(new System.Numerics.Vector4(0.7f, 0.7f, 0.4f, 1f), "Cloud (LAN avail)");
+                }
+                else
+                {
+                    ImGui.TextColored(new System.Numerics.Vector4(0.7f, 0.7f, 0.7f, 1f), "Cloud");
+                }
+
+                ImGui.SameLine(540 * ImGuiHelpers.GlobalScale);
+                ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputText("##lanip", ref d.LanIp, 24))
+                    noWickyXIV.Config.Save();
+                ImGui.SameLine();
+                if (ImGui.Checkbox("Use LAN##uselan", ref d.UseLan))
+                    noWickyXIV.Config.Save();
+
+                // Segment-aware footstep alternation. When SegmentCount
+                // > 1, footstep right/left alternates by addressing
+                // segment halves via the Govee Cloud
+                // segmentedBrightness capability instead of treating
+                // the device as a single endpoint. Used for one-
+                // device, multi-bar / multi-segment setups (e.g.
+                // H6056 bars driven by a multi-segment controller).
+                ImGui.SetNextItemWidth(80 * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputInt("Segments##segcount", ref d.SegmentCount, 1, 1))
+                {
+                    if (d.SegmentCount < 0) d.SegmentCount = 0;
+                    noWickyXIV.Config.Save();
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(
+                        "Total addressable segments on this device. " +
+                        "Set to 0 to disable per-segment control. " +
+                        "When > 1 and this is the only enabled device, " +
+                        "the first half of segments = RIGHT foot, " +
+                        "second half = LEFT foot during running/walking " +
+                        "alternation. (Cloud-only — adds ~200ms latency " +
+                        "vs LAN single-endpoint sends.)");
+                ImGui.SameLine();
+                if (ImGui.Checkbox("Swap sides##swapseg", ref d.SwapSegmentSides))
+                    noWickyXIV.Config.Save();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Flip which segment half maps to right vs left, if the bars are physically reversed.");
+
+                ImGui.PopID();
+            }
+
+            ImGui.Spacing();
+            ImGui.TextDisabled(
+                "LAN routing requires 'LAN Control' enabled per-device in Govee Home,\n" +
+                "the device on the same network segment as this PC, and Windows\n" +
+                "Firewall to allow inbound UDP 4002. Failed LAN sends fall through\n" +
+                "to Cloud automatically — events still fire.");
+        }
+
+        ImGui.Separator();
+
+        ImGui.TextUnformatted("Test");
+        ImGui.TextDisabled("Or run /lightsync devices and /lightsync test red from chat.");
+
+        if (ImGui.Button("Discover devices (logs to /xllog)"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync devices");
+        ImGui.SameLine();
+        if (ImGui.Button("LAN scan (sub-30ms targeting)"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync lanscan");
+        ImGui.SameLine();
+        if (ImGui.Button("LAN sweep (when multicast is blocked)"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync lansweep");
+        ImGui.SameLine();
+        if (ImGui.Button("ARP dump (find IP manually)"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync arpdump");
+        ImGui.SameLine();
+        if (ImGui.Button("Test red"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync test red");
+        ImGui.SameLine();
+        if (ImGui.Button("Test blue"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync test blue");
+        ImGui.SameLine();
+        if (ImGui.Button("Restore Video"))
+            DalamudApi.CommandManager.ProcessCommand("/lightsync restore");
+
+        ImGui.Spacing();
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Default flash duration (ms)",
+            ref noWickyXIV.Config.LightSyncDefaultFlashMs, 100, 5000, 1500);
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Restore method");
+        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        var methods = new[] { "Snapshot", "HdmiSource", "Manual" };
+        int methodIdx = Array.IndexOf(methods, noWickyXIV.Config.LightSyncRestoreMethod);
+        if (methodIdx < 0) methodIdx = 0;
+        if (ImGui.Combo("##LightSyncRestoreMethod", ref methodIdx, methods, methods.Length))
+        {
+            noWickyXIV.Config.LightSyncRestoreMethod = methods[methodIdx];
+            noWickyXIV.Config.Save();
+        }
+        ImGui.TextDisabled(
+            "Snapshot (recommended): save Video Sync as a Snapshot in the Govee Home app,\n" +
+            "  then run /lightsync devices and paste the snapshot id below. This is the\n" +
+            "  actual mechanism the Home app uses for Video mode on H6603.\n" +
+            "HdmiSource: works on H6602 only; on H6603 returns 200 but doesn't re-engage.\n" +
+            "Manual: don't auto-restore — use /lightsync restore or the Home app.");
+
+        if (noWickyXIV.Config.LightSyncRestoreMethod == "Snapshot")
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Video Sync snapshot id");
+            ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+            if (ImGui.InputInt("##LightSyncSnapshotId", ref noWickyXIV.Config.LightSyncSnapshotId))
+                noWickyXIV.Config.Save();
+            ImGui.TextDisabled(
+                "Steps:\n" +
+                "  1. Govee Home app → put H6603 in Video mode → save as a Snapshot.\n" +
+                "  2. Run /lightsync devices here. The new snapshot appears in the\n" +
+                "     dynamic_scene/snapshot capability's options[] with a numeric id.\n" +
+                "  3. Paste that id above.");
+        }
+        else if (noWickyXIV.Config.LightSyncRestoreMethod == "HdmiSource")
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("HDMI source for restore");
+            ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderInt("##LightSyncHdmi", ref noWickyXIV.Config.LightSyncHdmiSource, 1, 4, "HDMI %d"))
+                noWickyXIV.Config.Save();
+        }
+
+        // ---- Per-event configuration ----
+        ImGui.Separator();
+        ImGui.TextUnformatted("Events");
+        ImGui.TextDisabled("Each event fires a one-shot color override on the Sync Box. With Restore method = Manual, the box stays on the most-recent event color until you /lightsync restore or restart Video mode in the Govee Home app.");
+        ImGui.Spacing();
+
+        DrawLightSyncEventRow("Death",
+            ref noWickyXIV.Config.LightSyncEventDeath,
+            ref noWickyXIV.Config.LightSyncEventDeathColor,
+            ref noWickyXIV.Config.LightSyncEventDeathDurationMs);
+        DrawLightSyncEventRow("Low HP",
+            ref noWickyXIV.Config.LightSyncEventLowHp,
+            ref noWickyXIV.Config.LightSyncEventLowHpColor,
+            ref noWickyXIV.Config.LightSyncEventLowHpDurationMs);
+        // Slider exposes the threshold as an integer percent so the
+        // display reads "30%" instead of "0%" (the previous SliderFloat
+        // with %.0f%% printed the raw float — 0.30 → "0%"). Range is
+        // 10..50% — anything below 10 is essentially-dead and 50 is
+        // the user's stated upper bound.
+        {
+            int pctInt = (int)MathF.Round(noWickyXIV.Config.LightSyncEventLowHpThreshold * 100f);
+            if (pctInt < 10) pctInt = 10;
+            if (pctInt > 50) pctInt = 50;
+            ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderInt("Low-HP threshold##LightSyncLowHpThreshold",
+                    ref pctInt, 10, 50, "%d%%"))
+            {
+                noWickyXIV.Config.LightSyncEventLowHpThreshold = Math.Clamp(pctInt / 100f, 0.10f, 0.50f);
+                noWickyXIV.Config.Save();
+            }
+        }
+        // Low-HP pulse pattern (kept simple — comma-separated brightness
+        // values entered as text since List<int> editor would balloon
+        // the UI; defaults to "25,50,75").
+        {
+            string patternText = string.Join(",", noWickyXIV.Config.LightSyncEventLowHpPulse);
+            ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+            if (ImGui.InputText("Low-HP pulse pattern (% values, comma-sep)##LightSyncLowHpPulse",
+                    ref patternText, 64))
+            {
+                var list = new System.Collections.Generic.List<int>();
+                foreach (var s in patternText.Split(','))
+                {
+                    if (int.TryParse(s.Trim(), out var v))
+                        list.Add(Math.Clamp(v, 1, 100));
+                }
+                if (list.Count > 0) noWickyXIV.Config.LightSyncEventLowHpPulse = list;
+                noWickyXIV.Config.Save();
+            }
+            ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+            ConfigSliderInt("Low-HP pulse step (ms)##LightSyncLowHpPulseStep",
+                ref noWickyXIV.Config.LightSyncEventLowHpPulseStepMs, 50, 1000, 200);
+        }
+
+        // Tell — one-shot quick pulse 3x brightness on/off
+        DrawLightSyncEventRow("Tell received",
+            ref noWickyXIV.Config.LightSyncEventTell,
+            ref noWickyXIV.Config.LightSyncEventTellColor,
+            ref noWickyXIV.Config.LightSyncEventTellDurationMs);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Tell pulse count##LightSyncTellPulseCount",
+            ref noWickyXIV.Config.LightSyncEventTellPulseCount, 1, 10, 3);
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Tell pulse step (ms)##LightSyncTellPulseStep",
+            ref noWickyXIV.Config.LightSyncEventTellPulseStepMs, 50, 500, 100);
+
+        // Duty pop — alternating-group flash
+        DrawLightSyncEventRow("Duty pop",
+            ref noWickyXIV.Config.LightSyncEventDutyPop,
+            ref noWickyXIV.Config.LightSyncEventDutyPopColor,
+            ref noWickyXIV.Config.LightSyncEventDutyPopDurationMs);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Duty alt count##LightSyncDutyAltCount",
+            ref noWickyXIV.Config.LightSyncEventDutyPopAltCount, 1, 10, 2);
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Duty alt step (ms)##LightSyncDutyAltStep",
+            ref noWickyXIV.Config.LightSyncEventDutyPopAltStepMs, 50, 500, 150);
+
+        // Critical hit — orange→red fade. Triggered externally via
+        // LightSync.OnCritHit() once we wire it from CombatEvents.
+        ImGui.Separator();
+        if (ImGui.Checkbox("Critical hit (orange → red fade)##LightSyncCrit",
+                ref noWickyXIV.Config.LightSyncEventCrit))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine(220 * ImGuiHelpers.GlobalScale);
+        DrawLightSyncColorEdit("##LightSyncCritStartColor",
+            ref noWickyXIV.Config.LightSyncEventCritStartColor);
+        ImGui.SameLine();
+        ImGui.TextDisabled("→");
+        ImGui.SameLine();
+        DrawLightSyncColorEdit("##LightSyncCritEndColor",
+            ref noWickyXIV.Config.LightSyncEventCritEndColor);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("##LightSyncCritFade",
+            ref noWickyXIV.Config.LightSyncEventCritFadeMs, 100, 2000, 300);
+
+        // Riding — continuous cyan with speed-scaled brightness
+        ImGui.Separator();
+        if (ImGui.Checkbox("Riding (mounted + moving)##LightSyncRiding",
+                ref noWickyXIV.Config.LightSyncEventRiding))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine(220 * ImGuiHelpers.GlobalScale);
+        DrawLightSyncColorEdit("##LightSyncRidingColor",
+            ref noWickyXIV.Config.LightSyncEventRidingColor);
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ConfigSliderFloat("Max speed (m/s)##LightSyncRidingMaxSpeed",
+            ref noWickyXIV.Config.LightSyncEventRidingMaxSpeed, 1f, 50f, 14f, "%.0f");
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Min brightness (%)##LightSyncRidingMin",
+            ref noWickyXIV.Config.LightSyncEventRidingMinBright, 1, 100, 10);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Max brightness (%)##LightSyncRidingMax",
+            ref noWickyXIV.Config.LightSyncEventRidingMaxBright, 1, 100, 100);
+
+        // Running — continuous warm white with footstep cadence pulse
+        ImGui.Separator();
+        if (ImGui.Checkbox("Running on foot##LightSyncRunning",
+                ref noWickyXIV.Config.LightSyncEventRunning))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine(220 * ImGuiHelpers.GlobalScale);
+        DrawLightSyncColorEdit("##LightSyncRunningColor",
+            ref noWickyXIV.Config.LightSyncEventRunningColor);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Step peak (%)##LightSyncRunningPeak",
+            ref noWickyXIV.Config.LightSyncEventRunningPulsePeak, 1, 100, 75);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Step low (%)##LightSyncRunningLow",
+            ref noWickyXIV.Config.LightSyncEventRunningPulseLow, 1, 100, 30);
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Step cadence (ms)##LightSyncRunningStep",
+            ref noWickyXIV.Config.LightSyncEventRunningPulseStepMs, 100, 1000, 350);
+
+        // Walking — softer step-pulse for slower foot movement
+        ImGui.Separator();
+        if (ImGui.Checkbox("Walking on foot##LightSyncWalking",
+                ref noWickyXIV.Config.LightSyncEventWalking))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine(220 * ImGuiHelpers.GlobalScale);
+        DrawLightSyncColorEdit("##LightSyncWalkingColor",
+            ref noWickyXIV.Config.LightSyncEventWalkingColor);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Walk peak (%)##LightSyncWalkPeak",
+            ref noWickyXIV.Config.LightSyncEventWalkingPulsePeak, 1, 100, 55);
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Walk low (%)##LightSyncWalkLow",
+            ref noWickyXIV.Config.LightSyncEventWalkingPulseLow, 1, 100, 35);
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Walk cadence (ms)##LightSyncWalkStep",
+            ref noWickyXIV.Config.LightSyncEventWalkingPulseStepMs, 100, 2000, 550);
+        ImGui.SetNextItemWidth(140 * ImGuiHelpers.GlobalScale);
+        ConfigSliderFloat("Walk/run speed split (m/s)##LightSyncWalkThreshold",
+            ref noWickyXIV.Config.LightSyncWalkSpeedThreshold, 1f, 10f, 4.5f, "%.1f");
+        ImGui.TextDisabled(
+            "Below this smoothed-speed threshold, foot movement uses the walking pulse.\n" +
+            "FFXIV defaults: /walk ≈ 3.5 m/s, run ≈ 5 m/s, so 4.5 cleanly splits them.");
+
+        // Sprinting — continuous light green while Sprint buff active
+        ImGui.Separator();
+        if (ImGui.Checkbox("Sprinting (Sprint buff active)##LightSyncSprinting",
+                ref noWickyXIV.Config.LightSyncEventSprinting))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine(220 * ImGuiHelpers.GlobalScale);
+        DrawLightSyncColorEdit("##LightSyncSprintingColor",
+            ref noWickyXIV.Config.LightSyncEventSprintingColor);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Brightness (%)##LightSyncSprintingBright",
+            ref noWickyXIV.Config.LightSyncEventSprintingBrightness, 1, 100, 90);
+
+        // In-combat — continuous yellow while ConditionFlag.InCombat
+        ImGui.Separator();
+        if (ImGui.Checkbox("In combat##LightSyncCombat",
+                ref noWickyXIV.Config.LightSyncEventCombat))
+            noWickyXIV.Config.Save();
+        ImGui.SameLine(220 * ImGuiHelpers.GlobalScale);
+        DrawLightSyncColorEdit("##LightSyncCombatColor",
+            ref noWickyXIV.Config.LightSyncEventCombatColor);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ConfigSliderInt("Brightness (%)##LightSyncCombatBright",
+            ref noWickyXIV.Config.LightSyncEventCombatBrightness, 1, 100, 80);
+    }
+
+    // Helper for inline color picker on per-event rows that don't
+    // use DrawLightSyncEventRow (continuous events, crit fade, etc.)
+    private static void DrawLightSyncColorEdit(string id, ref int rgb)
+    {
+        var col = new System.Numerics.Vector3(
+            ((rgb >> 16) & 0xFF) / 255f,
+            ((rgb >> 8)  & 0xFF) / 255f,
+            ( rgb        & 0xFF) / 255f);
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        if (ImGui.ColorEdit3(id, ref col, ImGuiColorEditFlags.NoInputs))
+        {
+            rgb = (Math.Clamp((int)(col.X * 255f), 0, 255) << 16)
+                | (Math.Clamp((int)(col.Y * 255f), 0, 255) << 8)
+                |  Math.Clamp((int)(col.Z * 255f), 0, 255);
+            noWickyXIV.Config.Save();
+        }
+    }
+
+    // Renders one event row: enable checkbox + RGB color picker + ms slider.
+    private static void DrawLightSyncEventRow(string label, ref bool enabled, ref int rgb, ref int durationMs)
+    {
+        var pushId = ImGui.GetID(label);
+        ImGui.PushID(label);
+        if (ImGui.Checkbox(label, ref enabled))
+            noWickyXIV.Config.Save();
+
+        ImGui.SameLine(180 * ImGuiHelpers.GlobalScale);
+        var col = new System.Numerics.Vector3(
+            ((rgb >> 16) & 0xFF) / 255f,
+            ((rgb >> 8)  & 0xFF) / 255f,
+            ( rgb        & 0xFF) / 255f);
+        ImGui.SetNextItemWidth(180 * ImGuiHelpers.GlobalScale);
+        if (ImGui.ColorEdit3("##color", ref col, ImGuiColorEditFlags.NoInputs))
+        {
+            rgb = (Math.Clamp((int)(col.X * 255f), 0, 255) << 16)
+                | (Math.Clamp((int)(col.Y * 255f), 0, 255) << 8)
+                |  Math.Clamp((int)(col.Z * 255f), 0, 255);
+            noWickyXIV.Config.Save();
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderInt("##duration", ref durationMs, 100, 5000, "%dms"))
+            noWickyXIV.Config.Save();
+        ImGui.PopID();
+    }
+
     // Render a hotkey row: shows current binding, "Set" button to capture next
     // key pressed, "Clear" to unbind, "Reset" to default. Stores raw VirtualKey int.
     private static int _hotkeyCapturingFor; // 0 = nothing, else field-id we're capturing for; we use the address-of-int via a static set-target
+    // Selected mount id for the per-slot Mount Audio editor. Defaults
+    // to 71 (Fenrir) since that's the currently set up pack, but the
+    // "Use current mount" button in the panel sets it from the live
+    // player.
+    private static int _mountAudioEditId = 71;
     private static System.Action<int> _hotkeyCaptureCallback;
     // Tracks which VK codes were already down WHEN capture started so
     // we don't immediately rebind to whatever was held while clicking

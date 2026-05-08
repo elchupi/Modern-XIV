@@ -99,13 +99,22 @@ public static unsafe class ChatTypingEmote
             if (ui == null) return;
             var rsm = ui->GetRaptureShellModule();
             if (rsm == null) return;
-            var shell = rsm->ShellCommandModule;
+            // ShellCommandModule is an EMBEDDED struct on RaptureShellModule
+            // — not a pointer. Taking it by value
+            // (`var shell = rsm->ShellCommandModule`) copies the
+            // struct to the stack; calling shell.ExecuteCommandInner
+            // then runs the C++ member function with a stack-copy
+            // `this` pointer, and the function's first vtable
+            // dispatch (vf2) reads off that bogus this → C0000005
+            // crash. Use the field's ADDRESS instead so `this` is
+            // the real heap-resident module.
+            var shellPtr = &rsm->ShellCommandModule;
 
             var bytes = System.Text.Encoding.UTF8.GetBytes(command);
             var utf8 = Utf8String.FromSequence(bytes);
             try
             {
-                shell.ExecuteCommandInner(utf8, ui);
+                shellPtr->ExecuteCommandInner(utf8, ui);
             }
             finally
             {

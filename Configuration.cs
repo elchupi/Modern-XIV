@@ -4,6 +4,81 @@ using Dalamud.Configuration;
 
 namespace noWickyXIV;
 
+// One Govee device target for LightSync. Auto-populated from
+// /lightsync devices responses; user can tick which ones participate
+// in event broadcasts. Non-SyncBox lights (WiFi strips, ambient
+// lights) are the typical use case — they just change color on
+// events with no Video-Sync restore needed.
+public class LightSyncDevice
+{
+    public bool   Enabled  = false;
+    public string Sku      = "";
+    public string DeviceId = "";
+    public string Name     = "";
+    // LAN-API discovery — populated by /lightsync lanscan when the
+    // device responds to UDP multicast on 239.255.255.250:4001.
+    // Empty = LAN not detected (device might not support LAN, or
+    // the "LAN Control" toggle in Govee Home is off, or the device
+    // is on a different network segment).
+    public string LanIp    = "";
+    // When true and LanIp is set, the per-event color POST routes
+    // through UDP directly (sub-30ms latency). When false or LanIp
+    // is empty, falls back to Cloud REST (~300-500ms).
+    public bool   UseLan   = true;
+
+    // Segment-aware control for lights with multiple addressable
+    // segments (e.g. H6056 light bars, controllers driving multi-bar
+    // setups). When SegmentCount > 0, footstep alternation uses the
+    // Govee Cloud `segmentedBrightness` capability to drive the
+    // right/left halves separately. When 0, the device is treated
+    // as a single endpoint and footstep alternation is disabled
+    // (the whole device pulses uniformly).
+    //
+    // Splitting convention: segments [0..SegmentCount/2-1] = RIGHT,
+    // segments [SegmentCount/2..SegmentCount-1] = LEFT. User can
+    // swap the two halves by setting SwapSegmentSides=true if the
+    // physical bars are reversed.
+    public int    SegmentCount     = 0;
+    public bool   SwapSegmentSides = false;
+}
+
+// Per-slot custom file path for a specific mount's audio pack.
+// User-defined overrides take priority over the convention-based
+// lookup (assets/mount-audio/<mountId>/<slot>.wav). Empty FilePath
+// = no override → fall back to convention.
+public class MountAudioSlotOverride
+{
+    public int    MountId  = 0;
+    // Slot name — must match one of the layer base names the
+    // 9-slot state machine uses: "mount", "idle", "idle2slow",
+    // "slow", "revup", "mid", "top", "decel", "dismount".
+    public string Slot     = "idle";
+    public string FilePath = "";
+}
+
+// Per-slot timing override. DelayMs delays the sound's start
+// after its trigger event fires (lets you space out e.g. mount-up
+// → idle so the mount one-shot has room). FadeInMs/FadeOutMs
+// control envelope ramps (loops crossfade naturally when the
+// outgoing one fades out and the incoming one fades in
+// simultaneously). All three default to 0/400/400 if no entry
+// matches.
+public class MountAudioSlotTiming
+{
+    public int    MountId   = 0;
+    public string Slot      = "idle";
+    public int    DelayMs   = 0;
+    public int    FadeInMs  = 400;
+    public int    FadeOutMs = 400;
+    // When > 0 AND the slot is a loop, the layer uses a two-
+    // instance crossfade-loop (CrossfadeLoopLayer) instead of a
+    // single LoopStream. CrossfadeLoopMs controls how long before
+    // each iteration's end the next instance starts ramping in;
+    // both fade across that window so the seam is inaudible. Set
+    // to 0 (default) to use the simpler LoopStream-with-rewind.
+    public int    CrossfadeLoopMs = 0;
+}
+
 // Built-in game-state conditions a preset can auto-activate on. Lives
 // alongside QoL Bar's ConditionSet so users can pick either source —
 // the Condition Set dropdown surfaces both.
@@ -19,6 +94,7 @@ public enum BuiltinPresetCondition
     // presets that should only kick in while actually riding, not
     // while standing still on a parked mount.
     [Display(Name = "Moving on Mount")] MovingMount,
+    Sprinting,
 }
 
 public class CameraConfigPreset
@@ -82,6 +158,24 @@ public class CameraConfigPreset
         return ConditionSet < 0 || IPC.QoLBarEnabled && IPC.CheckConditionSet(ConditionSet);
     }
 
+    // Sprint detection — checks the local player's status list for
+    // Sprint (status ID 50). Used by both the BuiltinPresetCondition
+    // dispatch and LightSync's foot-movement state machine.
+    public static bool HasSprintStatus()
+    {
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) return false;
+            foreach (var s in lp.StatusList)
+            {
+                if (s != null && s.StatusId == 50) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
     private static bool EvaluateBuiltinCondition(BuiltinPresetCondition c)
     {
         try
@@ -106,6 +200,11 @@ public class CameraConfigPreset
                 BuiltinPresetCondition.MovingMount  => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Mounted]
                                                        && !cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.RidingPillion]
                                                        && JobAura.IsMoving,
+                // Sprint status (ID 50) — set when the user has the
+                // Sprint ability active, or peloton-class group sprint
+                // statuses. Just check ID 50 here; broader status set
+                // can be added later if needed.
+                BuiltinPresetCondition.Sprinting    => HasSprintStatus(),
                 _ => false,
             };
         }
@@ -168,6 +267,24 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float RollTiltOnRate      = 2.47f;
     public float RollTiltOffRate     = 1.0f;
 
+    // CharacterRoll: writes roll into the player character's
+    // DrawObject quaternion so the MODEL banks into turns alongside
+    // the camera. Independent of the camera's RollTilt — the camera
+    // can roll without the character or both can roll together.
+    // Defaults are conservative; max 4° lean produces a perceptible
+    // but not arcade-y bank.
+    public bool  EnableCharacterRoll      = false;
+    // ON-FOOT bank — applied when player is not mounted.
+    public float CharacterRollMaxAngle    = 4.0f;  // degrees
+    public float CharacterRollSensitivity = 0.25f;
+    // MOUNTED bank — applied when on a mount. Defaults higher than
+    // on-foot since vehicle/bike-style mounts read more naturally
+    // with a stronger lean.
+    public float CharacterRollMaxAngleMounted    = 18.0f; // degrees
+    public float CharacterRollSensitivityMounted = 5.0f;
+    public float CharacterRollOnRate      = 3.0f;
+    public float CharacterRollOffRate     = 1.5f;
+
     // PitchTilt: was defaulted to true with Wicked's PitchTiltMaxOffset=1.24,
     // but FFXIV's pitch convention is INVERTED from Unity (positive
     // currentVRotation = looking up; Wicked treats negative as up). At default
@@ -195,6 +312,117 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // softness" toggle. Doesn't affect the dynamic-feel knobs above.
     public bool  InstantMode         = false;
 
+    // ---- Close-zoom pitch cap ----
+    // Replaced by FOV-zoom continuation below — the cap fought the
+    // engine's wall-collision push (engine pulls zoom in on
+    // collision → cap engages → camera springs up) and didn't
+    // actually solve the "pivot to overhead at close zoom" feel
+    // because the geometry pivots regardless of pitch floor. Kept
+    // for users who specifically want a pitch ceiling at close zoom
+    // but defaulted off.
+    public bool  EnableCloseZoomPitchCap     = false;
+    public float CloseZoomPitchCapZoom       = 3.0f;
+    public float CloseZoomPitchCapMinRad     = -0.4f;
+
+    // ---- NPC dialogue camera lock ----
+    // When ON, GetCameraTargetDetour forces the camera target back to
+    // the local player whenever ConditionFlag.OccupiedInQuestEvent /
+    // OccupiedInEvent is true. The engine's dialogue camera takeover
+    // (retarget to NPC + auto-zoom + pitch shift) is what produced
+    // the "dips underground on dialogue start" visual; this lock
+    // hands camera control back to our preset transitions
+    // (TalkingToNpc condition) instead.
+    public bool  LockCameraDuringNpcDialogue = true;
+
+    // ---- FOV zoom continuation ----
+    // Standard FFXIV camera math (cam = lookAt + rotate * -dist)
+    // pivots around the lookAt point, so reducing distance produces
+    // a "swing under" feel instead of "pull camera in." When the
+    // user scrolls past MinZoom, we keep currentZoom locked at
+    // MinZoom and narrow currentFoV instead — the camera position
+    // doesn't move at all, but the view zooms in optically (telephoto
+    // feel). Scroll-out restores FoV first, then backs the camera
+    // off normally.
+    public bool  EnableFovZoomContinuation   = true;
+    // Smallest FoV the continuation can narrow to. The preset's own
+    // MinFoV typically clamps at ~0.69 rad (40°); this lets FoV go
+    // tighter for the telephoto feel. 0.25 rad ≈ 14° (cinematic close).
+    public float FovZoomMinFov               = 0.25f;
+
+    // ---- Mount audio (dynamic engine sounds) ----
+    // Reads local player's mount + speed each frame and crossfades
+    // user-provided .ogg loops (idle / accel / cruise / decel /
+    // mount / dismount). Audio files live in
+    // <plugin-dir>/assets/mount-audio/<mountId>/. Missing layers
+    // are skipped silently; user can ship a partial pack.
+    public bool  EnableMountAudio        = false;
+    public float MountAudioVolume        = 0.6f;   // 0..1, multiplied with per-layer
+    public float MountAudioMaxSpeed      = 24f;    // m/s anchor for cruise pitch (above = max pitch)
+    public float MountAudioCruisePitchMin = 0.85f; // pitch at speed = 0
+    public float MountAudioCruisePitchMax = 1.20f; // pitch at speed = MountAudioMaxSpeed
+
+    // Speed-band thresholds (m/s) for the 9-slot state machine.
+    // Below SlowMin = idle band. Crossing SlowMin going up fires the
+    // idle2slow one-shot, then the slow loop runs. Crossing MidMin
+    // going up fires the revup one-shot, then the mid loop runs.
+    // Above TopMin = top band. Crossing back down fires the decel
+    // one-shot. User-tunable to match each mount's feel.
+    public float MountAudioSpeedSlowMin  = 0.5f;
+    public float MountAudioSpeedMidMin   = 8.0f;
+    public float MountAudioSpeedTopMin   = 15.0f;
+
+    // Per-slot file path overrides for mount audio. When an entry
+    // here matches the (mountId, slot) being loaded, its FilePath
+    // wins over the assets/mount-audio/<mountId>/<slot>.* convention.
+    // Lets the user point at any wav anywhere on disk without
+    // copying files into the assets dir.
+    public List<MountAudioSlotOverride> MountAudioOverrides = new();
+
+    // Per-slot timing (delay / fade-in / fade-out). When an entry
+    // here matches the (mountId, slot) being triggered, those values
+    // override the defaults used by the state machine.
+    public List<MountAudioSlotTiming> MountAudioTimings = new();
+
+    // ---- Native mount sound suppression via PlaySound hook ----
+    // When LogMountSoundPaths is true, every distinct sound path
+    // passing through SoundManager.PlaySound is logged once to
+    // /xllog so the user can identify the engine's mount sound
+    // file paths. Path substrings added to MountAudioMutePatterns
+    // are then suppressed (PlaySound is skipped entirely) while the
+    // player is mounted with a custom audio pack loaded.
+    public bool         LogMountSoundPaths     = false;
+    public List<string> MountAudioMutePatterns = new();
+
+    // ---- Mount momentum (analog-stick magnitude envelope) ----
+    // Emits a virtual XInput gamepad with left-stick magnitude that
+    // tapers from full → zero on release (coast) and faster → zero
+    // on S-held (brake). Server reads the analog magnitude and
+    // computes real movement speed → other clients see the coast,
+    // hitbox tracks correctly, walls catch as normal.
+    //
+    // Enabled per-mount (only motorcycle / vehicle mounts where
+    // momentum makes sense). Mount IDs listed in
+    // MountMomentumIds — user adds whichever mount(s) they want
+    // to feel momentum. Default empty so on-foot + non-vehicle
+    // mounts behave normally.
+    public bool      EnableMountMomentum    = false;
+    public List<int> MountMomentumIds       = new();
+    // Lerp rates in seconds: time from 0 → 1 magnitude (or vice
+    // versa). Lower = snappier, higher = more inertia.
+    public float MountMomentumAccelSec      = 0.5f;  // rev-up: how long to reach full speed from rest
+    public float MountMomentumCoastSec      = 0.6f;  // release: how long to coast from full → 0
+    public float MountMomentumBrakeSec      = 0.25f; // S-held: faster than coast, but not instant
+
+    // ---- Mount idle-animation freeze on mount-up ----
+    // When the player mounts up, freeze the mount's idle animation
+    // (e.g. motorcycle vibration) for a short window so the audio
+    // "turn-on" one-shot reads as actually starting the engine
+    // instead of overlaying on an already-jiggling bike. After the
+    // window expires the animation resumes normally and idle.ogg
+    // takes over the audio bed.
+    public bool  EnableMountAnimationFreeze   = true;
+    public int   MountAnimationFreezeMs       = 400;
+
     // Ctrl+scroll height nudge step (live, in-game).
     public float HeightOffsetStep    = 0.1f;
 
@@ -202,6 +430,170 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // of the preset's HeightOffset so scrolling persists across preset switches
     // and across sessions. Range matches Wicked's clamp (-2..4).
     public float GlobalHeightOffset  = 0f;
+
+    // ---- Govee Light Sync (event-driven RGB) ----
+    // API key is stored as plain text in the local Configuration.json
+    // file. Same exposure as any other Dalamud plugin's stored creds —
+    // no worse than the user typing it into the Govee Home app itself.
+    public bool   EnableLightSync      = false;
+    // Multi-device targets. Auto-populated from /lightsync devices
+    // responses. Each entry has its own enable flag so the user can
+    // pick which lights receive event flashes (e.g. all the WiFi
+    // strips that aren't part of the SyncBox's scene). The legacy
+    // single-target fields below are kept as a fallback when this
+    // list is empty.
+    public List<LightSyncDevice> LightSyncDevices = new();
+    // Idle-dim mode: when ON, lights stay at 0% brightness whenever
+    // no event is active, "pseudo-off." Events bring brightness up
+    // to the per-event level for their duration; on expiry brightness
+    // drops back to 0. Low-HP pulse cycles its own pattern while
+    // active and falls to 0 on recovery.
+    public bool  LightSyncIdleDim       = true;
+    public int   LightSyncEventBright   = 100; // 1..100, brightness during a non-pulse event flash
+    // Backend the events route through:
+    //   "Cloud"  — Govee Cloud REST. Per-color override, no auto
+    //              restore on H6603 (Govee API limitation).
+    //   "Chroma" — Razer Chroma SDK on localhost:54235. Requires
+    //              Razer Synapse 3 + Chroma Connect AND Govee
+    //              Desktop with Chroma toggle on. The H6603 then
+    //              auto-reverts to Video Sync when our session
+    //              releases — same path Apex / LoL use.
+    // Cloud is the default because the H6603 (the SKU most likely
+    // targeted) explicitly doesn't support Razer Chroma per Govee's
+    // own product page — confirmed via testing. Users with H6602 or
+    // other Chroma-supported Govee SKUs can switch this to Chroma in
+    // the Light Sync tab.
+    public string LightSyncMode        = "Cloud";
+    public string LightSyncApiKey      = "";
+    public string LightSyncDeviceSku   = "H6603"; // Gaming Sync Box Kit (AI 4K)
+    public string LightSyncDeviceMac   = "";       // populated via /lightsync devices
+    // Default restore mode after an event override fires. "Video" sends
+    // the box back to HDMI capture; "Previous" reads + restores whatever
+    // mode was active when the event triggered (Apex/LoL pattern).
+    public string LightSyncRestoreMode = "Previous";
+    // Default flash duration (ms) for one-shot events when the per-event
+    // map below doesn't override it.
+    public int    LightSyncDefaultFlashMs = 1500;
+    // Which HDMI input the SyncBox should switch back to after a
+    // restore. H6603 has no dreamViewToggle capability that actually
+    // works — selecting an hdmiSource is what re-engages Video Sync
+    // capture from that input. 1..4 valid; pick whichever your box
+    // is configured to use as its primary capture source.
+    public int    LightSyncHdmiSource = 1;
+    // Restore method. Govee deliberately doesn't expose Video Sync as
+    // a public capability value, so the actual community-verified path
+    // (used by govee2mqtt, hacs-govee, etc.) is:
+    //   1. User saves "Video Sync" as a Snapshot in the Govee Home app.
+    //   2. /user/devices now returns the snapshot in dynamic_scene/snapshot
+    //      options[] with a numeric value.id.
+    //   3. We POST that id via dynamic_scene/snapshot to restore.
+    //
+    //   "Snapshot"   — recommended. Recalls the saved Snapshot id below.
+    //   "HdmiSource" — selects HDMI input. Works on H6602; on H6603
+    //                  returns 200 but doesn't actually re-engage.
+    //   "Manual"     — don't auto-restore. User does it themselves.
+    public string LightSyncRestoreMethod = "Snapshot";
+    // Snapshot id captured from /user/devices (dynamic_scene/snapshot
+    // options[]). 0 means not yet configured.
+    public int    LightSyncSnapshotId    = 0;
+
+    // ---- Per-event toggles + colors ----
+    // Death: rising-edge of LocalPlayer.IsDead.
+    public bool LightSyncEventDeath           = true;
+    public int  LightSyncEventDeathColor      = 0xCC0000;
+    public int  LightSyncEventDeathDurationMs = 2500;
+
+    // Low HP: HP percentage below threshold. Sets color (red) on
+    // entry and pulses brightness through the configured pattern
+    // continuously until HP recovers above threshold + 5%, then
+    // restores brightness to 100%. Color stays red until another
+    // event overrides it.
+    public bool       LightSyncEventLowHp           = true;
+    public int        LightSyncEventLowHpColor      = 0xFF2020;
+    public int        LightSyncEventLowHpDurationMs = 1500; // legacy, unused now (kept so existing JSON deserializes)
+    public float      LightSyncEventLowHpThreshold  = 0.30f;
+    public List<int>  LightSyncEventLowHpPulse      = new() { 25, 50, 75 };
+    public int        LightSyncEventLowHpPulseStepMs = 200;
+
+    // Tell received: XivChatType.TellIncoming. Skipped for self.
+    // Fires a quick on/off pulse (count × stepMs each on, then
+    // stepMs off) ending dimmed.
+    public bool LightSyncEventTell            = true;
+    public int  LightSyncEventTellColor       = 0xFF40C0;
+    public int  LightSyncEventTellDurationMs  = 1200; // legacy, unused since pulse model
+    public int  LightSyncEventTellPulseCount  = 3;
+    public int  LightSyncEventTellPulseStepMs = 100;
+
+    // Duty pop: rising-edge of ConditionFlag.WaitingForDutyFinder
+    // turning OFF (the queue popping = condition clearing).
+    // Fires an alternating-group flash: enabled devices are split
+    // into two groups (by index), groups swap on/off N times.
+    // Falls back to a regular pulse when only one device is enabled.
+    public bool LightSyncEventDutyPop          = true;
+    public int  LightSyncEventDutyPopColor     = 0xFFD000;
+    public int  LightSyncEventDutyPopDurationMs = 3000; // legacy, unused since alt model
+    public int  LightSyncEventDutyPopAltCount   = 2;
+    public int  LightSyncEventDutyPopAltStepMs  = 150;
+
+    // Riding: continuous speed-driven event while mounted + moving.
+    // Color = cyan, brightness scales linearly from RidingMinBright
+    // (at the motion threshold) to RidingMaxBright (at RidingMaxSpeed
+    // m/s and beyond). Lower priority than Low HP — Low-HP pulse
+    // takes precedence when both are active.
+    public bool  LightSyncEventRiding          = true;
+    public int   LightSyncEventRidingColor     = 0x00E0FF; // cyan
+    public float LightSyncEventRidingMaxSpeed  = 14f;       // m/s — typical FFXIV mount cruise
+    public int   LightSyncEventRidingMinBright = 10;        // % at motion threshold
+    public int   LightSyncEventRidingMaxBright = 100;       // % at MaxSpeed
+
+    // Running on foot: continuous footstep-cadence brightness pulse
+    // while NOT mounted and moving. Color = neutral warm white,
+    // brightness alternates between Low and Peak every StepMs to
+    // read as actual footsteps. Lowest priority of the continuous
+    // events (mount riding wins if mounted; low-HP wins always).
+    public bool  LightSyncEventRunning             = true;
+    public int   LightSyncEventRunningColor        = 0xFFE0B0; // neutral warm white
+    public int   LightSyncEventRunningPulsePeak    = 75;
+    public int   LightSyncEventRunningPulseLow     = 30;
+    public int   LightSyncEventRunningPulseStepMs  = 350;     // ~170 BPM step cadence
+
+    // Walking (slower foot movement — typically /walk toggled on,
+    // or briefly while accelerating from rest). Same step-pulse
+    // mechanism as running but with a smaller swing and slower
+    // cadence so it reads as gentler bounces.
+    public bool  LightSyncEventWalking             = true;
+    public int   LightSyncEventWalkingColor        = 0xFFE0B0; // same warm white default
+    public int   LightSyncEventWalkingPulsePeak    = 55;
+    public int   LightSyncEventWalkingPulseLow     = 35;
+    public int   LightSyncEventWalkingPulseStepMs  = 550;     // slower cadence
+    // Speed (m/s) below which foot movement is treated as walking.
+    // FFXIV defaults: /walk ≈ 3.5 m/s, run ≈ 5 m/s, so 4.5 splits.
+    public float LightSyncWalkSpeedThreshold       = 4.5f;
+
+    // Sprinting (Sprint status active, ID 50). Continuous light
+    // green; no pulse, just a steady glow at the configured
+    // brightness. Higher priority than walking/running because
+    // the buff is the explicit signal.
+    public bool  LightSyncEventSprinting           = true;
+    public int   LightSyncEventSprintingColor      = 0x80FF80; // light green
+    public int   LightSyncEventSprintingBrightness = 90;
+
+    // Critical hit: one-shot color sting on outgoing crits. Flashes
+    // start color (orange) then fades to end color (red) over
+    // FadeMs, then drops brightness to 0. Triggered externally by
+    // CombatEvents (or any other module) calling LightSync.OnCritHit.
+    public bool  LightSyncEventCrit              = true;
+    public int   LightSyncEventCritStartColor    = 0xFF8800; // orange
+    public int   LightSyncEventCritEndColor      = 0xFF0000; // red
+    public int   LightSyncEventCritFadeMs        = 300;      // total flash duration
+
+    // In-combat: continuous color while ConditionFlag.InCombat is
+    // true. Higher priority than riding/running (overrides them
+    // while engaged); lower priority than Low HP (low-HP red wins).
+    // Color = yellow by default — the combat-engaged warning tone.
+    public bool  LightSyncEventCombat            = true;
+    public int   LightSyncEventCombatColor       = 0xFFC000; // amber-yellow
+    public int   LightSyncEventCombatBrightness  = 80;
 
     // ---- Hotkeys (Phase B) ----
     // VirtualKey int values; 0 = unbound. Default F6 matches Wicked's KeyMenu.

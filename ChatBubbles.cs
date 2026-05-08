@@ -215,8 +215,6 @@ public static class ChatBubbles
 
         try
         {
-            DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] ChatBubbles font building: useFile={useFile} path='{path}' size={size}px");
             var atlas = DalamudApi.PluginInterface.UiBuilder.FontAtlas;
             handle = atlas.NewDelegateFontHandle(e =>
             {
@@ -274,11 +272,6 @@ public static class ChatBubbles
                 {
                     try { DalamudApi.PluginLog.Warning(
                         $"[noWickyXIV] ChatBubbles font build FAILED for path='{path}' size={size}px: {t.Exception?.GetBaseException().Message}"); } catch { }
-                }
-                else
-                {
-                    try { DalamudApi.PluginLog.Information(
-                        $"[noWickyXIV] ChatBubbles font ready: path='{path}' size={size}px Available={h.Available}"); } catch { }
                 }
             }, System.Threading.Tasks.TaskScheduler.Default);
         }
@@ -405,28 +398,6 @@ public static class ChatBubbles
         if (hovered)
             _hoverHoldUntilT = now + MathF.Max(0f, cfg.ChatBubblesHoverHoldSeconds);
         bool revealActive = now < _hoverHoldUntilT;
-
-        // Once-per-second diagnostic so we can see WHY scroll isn't
-        // working when the user reports it. Logs cursor position,
-        // the column-hover rect, the resulting hovered flag, the
-        // wheel value, and the buffer size. Three signal patterns
-        // tell us where to look:
-        //   - hovered=true + wheel != 0  → scroll math; check entries
-        //   - hovered=true + wheel == 0  → wheel consumed elsewhere
-        //   - hovered=false              → cursor position vs rect
-        if (now - _diagLastLogT > 1.0)
-        {
-            try
-            {
-                DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] ChatBubbles diag: cursor=({cursor.X:F0},{cursor.Y:F0}) " +
-                    $"rect=({colHoverTL.X:F0},{colHoverTL.Y:F0})-({colHoverBR.X:F0},{colHoverBR.Y:F0}) " +
-                    $"hovered={hovered} wheel={io.MouseWheel:F2} offset={_scrollOffsetPx:F0} " +
-                    $"entries={_entries.Count} wantCaptureMouse={io.WantCaptureMouse}");
-            }
-            catch { }
-            _diagLastLogT = now;
-        }
 
         // Wheel input is forwarded via ChatBubbles.OnWheel (called
         // from InputHandler when the cursor is over the column).
@@ -1077,25 +1048,6 @@ public static class ChatBubbles
         if (hasMapLink) clean = "[map] " + clean;
         else if (hasItemLink) clean = "[item] " + clean;
 
-        // One-shot diagnostic when a link payload was seen, so if
-        // links still don't render the user can paste the log line
-        // and we can see exactly what payload types + final text we
-        // produced.
-        if (hasMapLink || hasItemLink)
-        {
-            try
-            {
-                var types = new System.Text.StringBuilder();
-                foreach (var p in seString.Payloads)
-                {
-                    if (types.Length > 0) types.Append(',');
-                    types.Append(p.GetType().Name);
-                }
-                DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] link extracted: types=[{types}] clean=\"{clean}\" rawTextValue=\"{seString.TextValue}\"");
-            }
-            catch { }
-        }
         return clean;
     }
 
@@ -1429,9 +1381,6 @@ public static class ChatBubbles
                 _entries.InsertRange(0, fresh);
             if (_entries.Count > MAX_ENTRIES)
                 _entries.RemoveRange(0, _entries.Count - MAX_ENTRIES);
-
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] ChatBubbles backfill: loaded={loaded} skipped={skipped} totalBuffer={_entries.Count}"); } catch { }
         }
         catch (Exception ex)
         {

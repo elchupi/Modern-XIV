@@ -121,8 +121,6 @@ public static class ClickTranslator
     private const int HOTBAR_SHIFT = 1;
     private const int HOTBAR_CTRL  = 2;
 
-    private static int _fireDiagCount;
-
     // Send a Shift+<vk> chord via SendInput. Routes through the OS input stack
     // so FFXIV's keybind handler sees it like a physical keypress.
     //
@@ -149,14 +147,6 @@ public static class ClickTranslator
 
     private static void SendModifierDigit(int modifierVk, int digitVk, bool physicalModifier)
     {
-        if (_fireDiagCount < 8)
-        {
-            _fireDiagCount++;
-            try { DalamudApi.PluginLog.Information(
-                $"[noWickyXIV] SendModifierDigit(mod=0x{modifierVk:X2}, vk=0x{digitVk:X2}, physical={physicalModifier})");
-            } catch { }
-        }
-
         System.Threading.Tasks.Task.Run(() =>
         {
             try

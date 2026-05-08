@@ -17,6 +17,20 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         TargetArrowHider.Initialize();
         ChatFader.Initialize();
         ChatBubbles.Initialize();
+        LightSync.Initialize();
+        MountAudio.Initialize();
+        // MountSoundFilter DISABLED — the PlaySound hook ended up
+        // suppressing too much of the game's audio when patterns were
+        // even slightly broad. Custom mount audio plays alongside the
+        // game's native mount sounds for now. Re-enable here if/when
+        // we have a more targeted suppression mechanism.
+        // MountSoundFilter.Initialize();
+        CharacterRollHook.Initialize();
+        // MountMomentum DISABLED — ViGEm-emitted analog stick was
+        // observed pushing the character / camera continuously even
+        // with the feature flag off. Re-enable once the stuck-input
+        // root cause is resolved (see MountMomentum.cs comment).
+        // MountMomentum.Initialize();
         DalamudApi.ClientState.Login += Login;
 
         // One-shot migration: MouseSensitivityMul values < 0.56 produce
@@ -48,12 +62,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
                 sanitized = true;
             }
         }
-        if (sanitized)
-        {
-            Config.Save();
-            try { DalamudApi.PluginLog.Information(
-                "[noWickyXIV] Sanitized corrupted preset LookAtHeightOffset values (out of -10..10 range)."); } catch { }
-        }
+        if (sanitized) Config.Save();
         // Hypostasis base wires Draw + OpenConfigUi only. OpenMainUi was
         // added later by Dalamud as a distinct "open the plugin's primary
         // window" entrypoint (the click-to-open button in the installer);
@@ -186,6 +195,11 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         ChatFader.Update();
         ChatBubbles.Update();
         ChatTypingEmote.Update();
+        LightSync.Update();
+        // MountMomentum DISABLED — see Initialize() above.
+        // MountMomentum.Update();
+        MountAudio.Update();
+        CharacterRollHook.Tick();
     }
 
     protected override void Draw()
@@ -231,6 +245,10 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { TargetUI.Dispose(); } catch { }
         try { ChatFader.Dispose(); } catch { }
         try { ChatBubbles.Dispose(); } catch { }
+        try { LightSync.Dispose(); } catch { }
+        try { MountAudio.Dispose(); } catch { }
+        try { MountSoundFilter.Dispose(); } catch { }
+        try { CharacterRollHook.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;
 

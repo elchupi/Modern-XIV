@@ -149,7 +149,6 @@ public static unsafe class CameraDynamics
         // frame's delta — see _mouseLookSkipNextDelta comment.
         _mouseLookInit = false;
         _mouseLookSkipNextDelta = true;
-        try { DalamudApi.PluginLog.Debug($"[noWickyXIV] Cursor release toggled -> {(_cursorReleased ? "RELEASED (UI mode)" : "GRABBED (mouselook)")}"); } catch { }
     }
 
     public static bool IsMouseLookActive
@@ -158,6 +157,20 @@ public static unsafe class CameraDynamics
     private static bool _instantModeNoteLogged;
 
     public static Vector3 GetPositionFloatOffset() => _floatOffset;
+
+    /// <summary>Current roll value in radians, ready to write into cam->tilt
+    /// from Game.SetCameraLookAtDetour (inline). Direct writes to cam->tilt
+    /// from Framework.Update get overwritten by the game's per-frame camera
+    /// setup before render — that's why the camera tilt was invisible. The
+    /// detour pattern was the working version (commit 1326cbb) before its
+    /// accidental revert as collateral on a PositionFloat fix.</summary>
+    public static float GetCurrentRollRadians() => _rollCurrent * (MathF.PI / 180f);
+
+    /// <summary>Current character-roll angle in degrees, consumed by
+    /// CharacterRollHook to bake the lean into the per-frame transform
+    /// matrix. Separate from camera RollTilt's _rollCurrent so the
+    /// two roll effects can be tuned independently.</summary>
+    public static float GetCharacterRollCurrentDegrees() => _charRollCurrent;
 
     // Returns the SideOffset value Game.GetCameraPositionDetour should apply
     // for this frame. During an auto-swap lerp, this returns the lerped
@@ -181,6 +194,14 @@ public static unsafe class CameraDynamics
 
         bool tps = cam->mode == 1;
 
+        // Close-zoom pitch cap. Tightens the camera's minVRotation
+        // (and clamps currentVRotation to match) when zoom is below
+        // the configured threshold, preventing the camera from ending
+        // up overhead-looking-down at extreme close distance. The
+        // cap relaxes back to the preset's normal MinVRotation as
+        // the user zooms out past the threshold.
+        UpdateCloseZoomPitchCap(cam);
+
         // Sensitivity FIRST so subsequent writes (Swivel, etc.) operate on
         // the corrected H/V rotation and don't get inadvertently scaled by
         // the next-frame delta-replay.
@@ -190,7 +211,13 @@ public static unsafe class CameraDynamics
         // user feels, but after Sensitivity so it operates on un-scaled deltas.
         UpdateMouseLook(cam, tps);
 
+        // Yaw-velocity tracker runs BEFORE both roll features so they
+        // share the same smoothed input. Without this split, CharacterRoll
+        // would see _rollSmoothedYawVel=0 whenever camera RollTilt is
+        // disabled (the velocity tracker used to live inside RollTilt).
+        UpdateYawVelocity(cam, tps, dt);
         UpdateRollTilt(cam, tps, dt);
+        UpdateCharacterRoll(cam, tps, dt);
         UpdatePitchTilt(cam, tps, dt);
         UpdatePositionFloat(cam, dt);
         UpdateAds(cam, tps, dt);
@@ -214,6 +241,72 @@ public static unsafe class CameraDynamics
     // this-frame delta, scale by user multiplier, write the scaled value
     // back. Identity at multiplier=1 + InvertY=false.
     //
+    // Pitch cap that activates when currentZoom is below the
+    // configured threshold. The default MinVRotation is around -85°
+    // (camera can pitch nearly straight down) which combined with
+    // close zoom puts the camera above the player looking at the
+    // ground. We tighten the floor to a much shallower angle
+    // (default ~-23°) when zoom is close. As the user zooms out
+    // past the threshold the cap relaxes back to the preset's
+    // configured MinVRotation. Currently-applied currentVRotation
+    // is also pushed up to the new floor so the user doesn't have
+    // to manually un-pitch after the cap engages.
+    // Smoothed pitch-floor state. Lerps toward the active target
+    // (preset's MinVRotation outside the cap zone, or the cap floor
+    // when inside) over CAP_FLOOR_LERP_RATE so engaging/leaving the
+    // cap zone — including via a preset transition that crosses the
+    // zoom threshold mid-flight — doesn't snap the camera.
+    private static float _smoothedPitchFloor;
+    private static bool  _smoothedPitchFloorInit;
+    private const float  CAP_FLOOR_LERP_RATE = 4f; // ~175 ms halflife
+
+    private static void UpdateCloseZoomPitchCap(GameCamera* cam)
+    {
+        var cfg = noWickyXIV.Config;
+        var preset = PresetManager.CurrentPreset;
+        if (!cfg.EnableCloseZoomPitchCap || preset == null)
+        {
+            _smoothedPitchFloorInit = false;
+            return;
+        }
+
+        // Pick the target floor: the cap floor when zoomed past the
+        // threshold, otherwise the preset's normal MinVRotation. The
+        // cap only ever tightens — if the preset's MinVRotation is
+        // already above the cap floor, preset wins.
+        bool inCap = cam->currentZoom < cfg.CloseZoomPitchCapZoom;
+        float target = preset.MinVRotation;
+        if (inCap)
+        {
+            float capFloor = cfg.CloseZoomPitchCapMinRad;
+            if (preset.MinVRotation > capFloor) capFloor = preset.MinVRotation;
+            target = capFloor;
+        }
+
+        if (!_smoothedPitchFloorInit)
+        {
+            _smoothedPitchFloor = target;
+            _smoothedPitchFloorInit = true;
+        }
+        else
+        {
+            float dt;
+            try { dt = (float)DalamudApi.Framework.UpdateDelta.TotalSeconds; } catch { dt = 0.016f; }
+            if (dt <= 0f) dt = 0.016f;
+            float k = 1f - MathF.Exp(-CAP_FLOOR_LERP_RATE * dt);
+            _smoothedPitchFloor += (target - _smoothedPitchFloor) * k;
+        }
+
+        // Set minVRotation to the smoothed floor so the engine's own
+        // clamp logic enforces it on user input. Don't snap
+        // currentVRotation — the engine will clamp it naturally as
+        // minVRotation moves up, producing a smooth glide instead of
+        // the visible "spring" the immediate-snap version produced
+        // (which fired when a preset transition crossed the cap zoom
+        // threshold mid-flight).
+        cam->minVRotation = _smoothedPitchFloor;
+    }
+
     // Single multiplier (Config.MouseSensitivityMul) used for ALL input —
     // gamepad-vs-mouse differentiation requires a per-frame source check
     // that's deferred. Y-inversion uses InvertMouseY (sole vertical knob).
@@ -833,21 +926,40 @@ public static unsafe class CameraDynamics
         }
     }
 
+    // Yaw-velocity tracker shared by RollTilt + CharacterRoll. Runs
+    // each frame in TPS regardless of either feature's enable flag so
+    // a camera-tilt-off / character-bank-on configuration still has a
+    // valid yaw-velocity signal to drive the model lean.
+    private static void UpdateYawVelocity(GameCamera* cam, bool tps, float dt)
+    {
+        if (!tps)
+        {
+            _rollSmoothedYawVel = 0f;
+            _rollInit = false;
+            return;
+        }
+        float yaw = cam->currentHRotation;
+        if (!_rollInit) { _rollPrevYaw = yaw; _rollInit = true; return; }
+        float yawDelta = AngleDelta(_rollPrevYaw, yaw);
+        _rollPrevYaw = yaw;
+        float yawVel = yawDelta / dt;
+        _rollSmoothedYawVel = ExpDecay(_rollSmoothedYawVel, yawVel, 10f, dt);
+    }
+
     // ---- RollTilt: ports WickedTPS.cs:2051-2088 ----
-    // Yaw velocity drives a target roll angle; smoothed onto _rollCurrent
-    // with asymmetric on/off rates (snappy onset, gentle recovery).
+    // Camera tilt driven by the shared yaw-velocity signal. Asymmetric
+    // on/off rates give a snappy onset + gentle recovery feel.
+    //
+    // COMPUTE-ONLY HERE. The cam->tilt write happens INLINE from
+    // Game.SetCameraLookAtDetour using GetCurrentRollRadians() —
+    // direct writes from Framework.Update are silently overwritten
+    // by the engine's per-frame camera setup before render, which
+    // is why the visible tilt used to be zero. This was the fix
+    // landed in commit 1326cbb.
     private static void UpdateRollTilt(GameCamera* cam, bool tps, float dt)
     {
         if (noWickyXIV.Config.EnableRollTilt && tps)
         {
-            float yaw = cam->currentHRotation;
-            if (!_rollInit) { _rollPrevYaw = yaw; _rollInit = true; }
-            float yawDelta = AngleDelta(_rollPrevYaw, yaw);
-            _rollPrevYaw = yaw;
-
-            float yawVel = yawDelta / dt;
-            _rollSmoothedYawVel = ExpDecay(_rollSmoothedYawVel, yawVel, 10f, dt);
-
             float maxAngle = noWickyXIV.Config.RollTiltMaxAngle;
             float target = Clamp(-_rollSmoothedYawVel * noWickyXIV.Config.RollTiltSensitivity,
                                  -maxAngle, maxAngle);
@@ -855,22 +967,43 @@ public static unsafe class CameraDynamics
                 ? noWickyXIV.Config.RollTiltOnRate
                 : noWickyXIV.Config.RollTiltOffRate;
             _rollCurrent = ExpDecay(_rollCurrent, target, rate, dt);
-
-            cam->tilt = _rollCurrent * (MathF.PI / 180f);  // game expects radians
+        }
+        else if (MathF.Abs(_rollCurrent) > 0.001f)
+        {
+            // Decay toward zero when disabled / out of TPS so re-
+            // enabling doesn't snap from a stale value.
+            _rollCurrent = ExpDecay(_rollCurrent, 0f, 4f, dt);
         }
         else
         {
-            // Disabled or out of TPS — decay back to zero so the camera
-            // doesn't sit at whatever roll we'd written last.
-            if (MathF.Abs(_rollCurrent) > 0.001f)
-            {
-                _rollCurrent = ExpDecay(_rollCurrent, 0f, 4f, dt);
-                if (cam != null) cam->tilt = _rollCurrent * (MathF.PI / 180f);
-            }
-            else _rollCurrent = 0f;
-            _rollSmoothedYawVel = 0f;
-            _rollInit = false;
+            _rollCurrent = 0f;
         }
+    }
+
+    // CharacterRoll — banks the player MODEL into turns by writing
+    // a roll component into the DrawObject's rotation quaternion.
+    // Currently INERT — the drawObj->Rotation write didn't produce
+    // a visible bank in this game version (engine overwrites the
+    // field per-frame). Kept as a stub to preserve the toggle/
+    // sliders so user config doesn't break; needs a different
+    // injection point (skeleton-level rotation, or a render-pass
+    // hook) to actually move the model. Use RollTilt for visible
+    // lean in the meantime.
+    private static float _charRollCurrent;
+    private static unsafe void UpdateCharacterRoll(GameCamera* cam, bool tps, float dt)
+    {
+        if (!noWickyXIV.Config.EnableCharacterRoll || !tps)
+        {
+            _charRollCurrent = 0f;
+            return;
+        }
+        float maxAngle = noWickyXIV.Config.CharacterRollMaxAngle;
+        float target = Clamp(-_rollSmoothedYawVel * noWickyXIV.Config.CharacterRollSensitivity,
+            -maxAngle, maxAngle);
+        float rate = MathF.Abs(target) > MathF.Abs(_charRollCurrent)
+            ? noWickyXIV.Config.CharacterRollOnRate
+            : noWickyXIV.Config.CharacterRollOffRate;
+        _charRollCurrent = ExpDecay(_charRollCurrent, target, rate, dt);
     }
 
     // ---- PitchTilt: ports PlayerCameraPatch.cs:384-398 ----

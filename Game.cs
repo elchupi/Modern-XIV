@@ -50,6 +50,12 @@ public static unsafe class Game
                 // Cancel any in-flight preset transition so the
                 // user's wheel zoom doesn't fight the lerp.
                 PresetManager.CancelTransitionToTarget();
+                // FOV-zoom continuation: when on, InputHandler takes
+                // full ownership of Shift+Ctrl+wheel — applies zoom
+                // OR FoV-narrow itself based on whether currentZoom
+                // is at MinZoom. Returning 0 here tells the engine
+                // not to also zoom on top of our writes.
+                if (noWickyXIV.Config.EnableFovZoomContinuation) return 0f;
                 return PresetManager.CurrentPreset.ZoomDelta;
             }
         }
@@ -101,6 +107,15 @@ public static unsafe class Game
             lookAtPosition->Y += off.Y;
             lookAtPosition->Z += off.Z;
         }
+
+        // RollTilt — write cam->tilt INLINE here (this detour fires
+        // INSIDE the game's per-frame camera setup). Writes from
+        // Framework.Update get silently overwritten before render —
+        // that's why the visible tilt used to be zero despite the
+        // math running correctly. Always write (even when disabled
+        // / decaying to zero) so a stale value can't linger.
+        if (camera != null)
+            camera->tilt = CameraDynamics.GetCurrentRollRadians();
 
         camera->VTable.setCameraLookAt.Original(camera, lookAtPosition, cameraPosition, a4);
     }
@@ -157,14 +172,25 @@ public static unsafe class Game
                 prevCameraTarget = null;
             }
 
-            // CameraDynamics.Display* are exp-lerped copies of the
-            // height / side / global offsets when EnableCamera-
-            // PositionSmoothing is on; otherwise they just pass through
-            // EffectiveHeightOffset / EffectiveSideOffset / Config.
-            // GlobalHeightOffset directly. Using these getters means
-            // a slider drag or Ctrl+scroll height tweak smoothly rides
-            // into place instead of snapping.
-            position->Y += CameraDynamics.DisplayHeightOffset + CameraDynamics.DisplayGlobalHeightOffset;
+            // Height/side offsets are calibrated assuming the camera
+            // tracks the LOCAL PLAYER. During NPC dialogue / cutscene
+            // mode the engine retargets the camera to the NPC (or
+            // another GameObject), and applying the player-relative
+            // offset on top of an NPC-anchored position pushes the
+            // camera through the floor (e.g. an NPC at floor level +
+            // user's negative HeightOffset = below ground). Gate the
+            // offset on the camera's current target. Mirrors the
+            // same gate UpdateLookAtHeightOffsetDetour already uses.
+            bool targetIsLocalPlayer = (nint)target == DalamudApi.ObjectTable.LocalPlayer?.Address;
+            if (targetIsLocalPlayer)
+            {
+                // CameraDynamics.Display* are exp-lerped copies of the
+                // height / side / global offsets when EnableCamera-
+                // PositionSmoothing is on; otherwise they just pass
+                // through EffectiveHeightOffset / EffectiveSideOffset /
+                // Config.GlobalHeightOffset directly.
+                position->Y += CameraDynamics.DisplayHeightOffset + CameraDynamics.DisplayGlobalHeightOffset;
+            }
 
             // PositionFloat is applied in CameraDynamics now (writes to
             // cam->lookAtX/Y/Z, not camera position) so the character appears
@@ -184,6 +210,10 @@ public static unsafe class Game
             // to-character vector lengthening when the camera moves
             // off the look axis) are inherent to lateral camera
             // movement; the smoothing softens them across frames.
+            // Side offset is also player-relative — gate on the same
+            // target check as the height offset above. NPC-anchored
+            // positions get neither.
+            if (!targetIsLocalPlayer) return;
             float effectiveSide = CameraDynamics.GetActiveSideOffset(CameraDynamics.DisplaySideOffset);
             if (effectiveSide == 0 || camera->mode != 1) return;
 
@@ -219,6 +249,34 @@ public static unsafe class Game
         {
             IsSpectating = true;
             return (GameObject*)target.Address;
+        }
+
+        // NPC dialogue camera takeover lock: when the user enables
+        // it, force the camera target back to the local player while
+        // OccupiedInQuestEvent / OccupiedInEvent is true. The engine
+        // would otherwise retarget the camera to the NPC and apply
+        // its own dialogue-framing pose (zoom-in + pitch shift),
+        // which produced the "dips underground on dialogue start"
+        // visual the user reported. With this lock, our preset
+        // transition (driven by the TalkingToNpc condition) is the
+        // sole camera move, no engine override on top.
+        if (noWickyXIV.Config.LockCameraDuringNpcDialogue)
+        {
+            try
+            {
+                var cond = DalamudApi.Condition;
+                if (cond[ConditionFlag.OccupiedInQuestEvent]
+                 || cond[ConditionFlag.OccupiedInEvent])
+                {
+                    var lp = DalamudApi.ObjectTable.LocalPlayer;
+                    if (lp != null)
+                    {
+                        IsSpectating = false;
+                        return (GameObject*)lp.Address;
+                    }
+                }
+            }
+            catch { /* fall through to engine default */ }
         }
 
         IsSpectating = false;

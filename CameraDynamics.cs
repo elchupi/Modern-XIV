@@ -394,16 +394,22 @@ public static unsafe class CameraDynamics
 
     // The "live height adjustment" is now per-preset (preset.LiveHeightOffset)
     // so user tuning travels with the preset across condition swaps
-    // instead of stacking globally. Falls back to legacy
-    // Config.GlobalHeightOffset for the DefaultPreset (which has no
-    // saved adjustment) so existing user setups don't lose their saved
-    // tweak when this change ships.
+    // instead of stacking globally. Reads from PresetManager's lerped
+    // EffectiveLiveHeightOffset so transitions don't snap this value
+    // (the cause of "camera starts high and drifts down slowly" /
+    // "dips below floor and floats up" on default→combat / dialogue
+    // swaps — without lerping LiveHeightOffset along with HeightOffset,
+    // Global was jumping while position smoothing chased over ~500 ms).
+    // Falls back to legacy Config.GlobalHeightOffset for the
+    // DefaultPreset (which has no saved adjustment) so existing user
+    // setups don't lose their saved tweak.
     private static float LiveHeightTarget
     {
         get
         {
             var p = PresetManager.CurrentPreset;
-            if (p != null && p != PresetManager.DefaultPreset) return p.LiveHeightOffset;
+            if (p != null && p != PresetManager.DefaultPreset)
+                return PresetManager.EffectiveLiveHeightOffset;
             return noWickyXIV.Config.GlobalHeightOffset;
         }
     }
@@ -1085,6 +1091,21 @@ public static unsafe class CameraDynamics
     // frame — only when the game itself invokes UpdateLookAtHeightOffset.
     private static void UpdatePitchTilt(GameCamera* cam, bool tps, float dt)
     {
+        // During preset transitions, decay our contribution toward
+        // zero smoothly via the same subtract-prev-add path so the
+        // lookAtHeightOffset field eases instead of snapping when the
+        // hook fired. Rate is fast enough to be near-zero by the end
+        // of the transition window for typical PresetTransitionSeconds.
+        if (PresetManager.IsTransitionActive)
+        {
+            if (cam == null) return;
+            _pitchTiltCurrent = ExpDecay(_pitchTiltCurrent, 0f, 8f, dt);
+            cam->lookAtHeightOffset -= _pitchTiltLastApplied;
+            cam->lookAtHeightOffset += _pitchTiltCurrent;
+            _pitchTiltLastApplied = _pitchTiltCurrent;
+            return;
+        }
+
         if (noWickyXIV.Config.EnablePitchTilt && tps)
         {
             float pitch = cam->currentVRotation;
@@ -1122,6 +1143,19 @@ public static unsafe class CameraDynamics
     private static bool _positionFloatErrorLogged;
     private static void UpdatePositionFloat(GameCamera* cam, float dt)
     {
+        // During preset transitions, decay _floatOffset toward zero
+        // smoothly instead of zeroing it instantly — the instant-zero
+        // caused a visible height snap on joystick-release preset swaps
+        // (running → standing) because the velocity-based offset
+        // disappeared on the same frame the lerp began. Don't sample
+        // velocity during the transition (sampling old motion against
+        // the new preset's lerping camera produces phantom offsets).
+        if (PresetManager.IsTransitionActive)
+        {
+            _floatOffset = ExpDecayV(_floatOffset, Vector3.Zero, 8f, dt);
+            return;
+        }
+
         // Compute the offset only. Application is in Game.SetCameraLookAtDetour
         // which is the inline detour the game calls each frame to set up the
         // look-at position. Writing the offset there guarantees it sticks
@@ -1195,6 +1229,33 @@ public static unsafe class CameraDynamics
             } catch { }
         }
         if (!noWickyXIV.Config.InstantMode) _instantModeNoteLogged = false;
+    }
+
+    /// <summary>
+    /// Called by PresetManager at the moment a preset transition begins.
+    /// Marks dynamics for smooth decay during the lerp instead of
+    /// instant-zeroing — the instant approach made joystick-release
+    /// preset swaps (running → standing) feel like a height-snap
+    /// because PositionFloat's velocity-based offset disappeared on
+    /// the same frame the lerp started. Decay during the transition
+    /// window unwinds both layers smoothly while still preventing the
+    /// "carry-over distorts the new preset's lerp target" bug —
+    /// they're at zero by the time the transition completes.
+    /// </summary>
+    public static unsafe void OnPresetTransitionStart(GameCamera* cam)
+    {
+        // Drop velocity sampling so PositionFloat doesn't re-target
+        // based on the old preset's player motion during the lerp.
+        // Keep _floatOffset's current value; it will exp-decay to
+        // zero in UpdatePositionFloat while _txActive. Force re-init
+        // so the next sample after transition end doesn't synthesize
+        // a phantom velocity from stale _lastPlayerPos.
+        _floatVelocity = Vector3.Zero;
+        _floatInit = false;
+        // PitchTilt: state is left intact. While _txActive,
+        // UpdatePitchTilt drives _pitchTiltCurrent toward zero so
+        // the subtract-prev-add pattern smoothly unwinds our
+        // contribution to cam->lookAtHeightOffset across the lerp.
     }
 
     private static void ResetState()

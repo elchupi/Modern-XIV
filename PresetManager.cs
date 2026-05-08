@@ -58,6 +58,14 @@ public static class PresetManager
     public static float EffectiveLookAtHeightOffset{ get; private set; }
     public static float EffectiveHeightOffset      { get; private set; }
     public static float EffectiveSideOffset        { get; private set; }
+    // Per-preset live height nudge — also lerped during transitions so
+    // it doesn't jump when the active preset flips. Without this, a
+    // preset swap would snap LiveHeightOffset to the new preset's value
+    // instantly while the camera-position smoothing chased it over
+    // ~500 ms, producing the "camera starts high and slowly drifts
+    // down" / "dips below floor and floats back up" glitch on
+    // default→combat / NPC-dialogue swaps.
+    public static float EffectiveLiveHeightOffset  { get; private set; }
 
     // ---- Transition state ----
     // Captured at ApplyPreset(transition=true) time. While _txActive,
@@ -69,6 +77,9 @@ public static class PresetManager
     private static float  _txStartLookAt;
     private static float  _txStartHeight;
     private static float  _txStartSide;
+    private static float  _txStartLive;
+    private static float  _txStartMinVRot;
+    private static float  _txStartMaxVRot;
     // Zoom/FoV captured at transition start so the engine's
     // currentZoom/currentFoV can lerp visibly toward the target
     // preset's StartZoom/StartFoV. User scroll input cancels the
@@ -93,6 +104,7 @@ public static class PresetManager
         EffectiveLookAtHeightOffset = _txTarget.LookAtHeightOffset;
         EffectiveHeightOffset       = _txTarget.HeightOffset;
         EffectiveSideOffset         = _txTarget.SideOffset;
+        EffectiveLiveHeightOffset   = _txTarget.LiveHeightOffset;
         EffectiveTilt               = _txTarget.Tilt;
         try
         {
@@ -101,6 +113,8 @@ public static class PresetManager
             {
                 cam->currentZoom = _txTargetZoom;
                 cam->currentFoV  = _txTargetFoV;
+                cam->minVRotation = _txTarget.MinVRotation;
+                cam->maxVRotation = _txTarget.MaxVRotation;
             }
         }
         catch { /* defensive */ }
@@ -125,6 +139,13 @@ public static class PresetManager
     public static unsafe void ApplyPreset(CameraConfigPreset preset, bool isLoggingIn = false)
         => ApplyPreset(preset, isLoggingIn, transition: false);
 
+    // The preset whose Dynamics state corresponds to the values
+    // currently sitting in noWickyXIV.Config. On preset swap we
+    // snapshot Config back into THIS preset's Dynamics before
+    // applying the new preset, so any UI edits the user made while
+    // it was active get persisted.
+    private static CameraConfigPreset _liveDynamicsPreset;
+
     public static unsafe void ApplyPreset(CameraConfigPreset preset, bool isLoggingIn, bool transition)
     {
         if (preset == null) return;
@@ -132,14 +153,49 @@ public static class PresetManager
         var camera = Common.CameraManager->worldCamera;
         if (camera == null) return;
 
-        // ---- Bounds + invariants snap immediately ----
+        // ---- Per-preset Dynamics swap ----
+        // 1. Snapshot live Config into the OUTGOING preset's Dynamics
+        //    (captures any UI edits the user made while it was active).
+        // 2. Lazy-migrate INCOMING preset's Dynamics from current Config
+        //    if it's null (preset saved before this field existed).
+        // 3. Apply incoming preset's Dynamics back into Config.
+        // Skipped on login (RestoreLastActivePreset) so the saved
+        // global Config values aren't clobbered before they're snapshot.
+        if (!isLoggingIn)
+        {
+            try
+            {
+                if (_liveDynamicsPreset != null && _liveDynamicsPreset != preset)
+                {
+                    _liveDynamicsPreset.Dynamics ??= new PresetDynamicsState();
+                    PresetDynamicsState.ApplyConfigToState(noWickyXIV.Config, _liveDynamicsPreset.Dynamics);
+                }
+                preset.Dynamics ??= PresetDynamicsState.SnapshotFrom(noWickyXIV.Config);
+                PresetDynamicsState.ApplyStateToConfig(preset.Dynamics, noWickyXIV.Config);
+            }
+            catch { /* defensive */ }
+        }
+        else
+        {
+            // On login, lazy-migrate but DO NOT overwrite Config
+            // (keeps the user's saved global state as the source of
+            // truth for the very first preset to activate).
+            try { preset.Dynamics ??= PresetDynamicsState.SnapshotFrom(noWickyXIV.Config); }
+            catch { /* defensive */ }
+        }
+        _liveDynamicsPreset = preset;
+
+        // ---- Bounds + invariants ----
+        // Most bounds snap immediately. VRotation bounds lerp so the
+        // camera doesn't snap pitch when the new preset has tighter
+        // limits than where currentVRotation is sitting (engine clamps
+        // current pitch on the same frame the bound changes — visible
+        // as a downward / upward jolt at transition start).
         camera->minZoom = preset.MinZoom;
         camera->maxZoom = preset.MaxZoom;
         camera->minFoV  = preset.MinFoV;
         camera->maxFoV  = preset.MaxFoV;
         Game.FoVDelta   = preset.FoVDelta;
-        camera->minVRotation = preset.MinVRotation;
-        camera->maxVRotation = preset.MaxVRotation;
 
         // Resolve target zoom/FoV (clamped to preset's min/max).
         float targetZoom = preset.StartZoom > 0f
@@ -153,6 +209,15 @@ public static class PresetManager
         if (transition && !isLoggingIn
             && noWickyXIV.Config.PresetTransitionSeconds > 0.06f)
         {
+            // Tell CameraDynamics the lerp is about to start so it can
+            // cleanly remove its additive contributions (PitchTilt,
+            // PositionFloat) from the camera fields. Without this, those
+            // accumulated offsets distort the lerp target — visible as
+            // the camera dipping below the floor or starting at a high
+            // angle and slowly drifting down on default→combat /
+            // NPC-dialogue swaps.
+            try { CameraDynamics.OnPresetTransitionStart(camera); } catch { }
+
             // Capture the CURRENT values as the lerp's start point.
             // Mid-transition switches pick up smoothly from wherever
             // the lerp is, not a stale point before this transition
@@ -164,8 +229,11 @@ public static class PresetManager
             _txStartLookAt = EffectiveLookAtHeightOffset;
             _txStartHeight = EffectiveHeightOffset;
             _txStartSide   = EffectiveSideOffset;
+            _txStartLive   = EffectiveLiveHeightOffset;
             _txStartZoom   = camera->currentZoom;
             _txStartFoV    = camera->currentFoV;
+            _txStartMinVRot = camera->minVRotation;
+            _txStartMaxVRot = camera->maxVRotation;
             _txTargetZoom  = targetZoom;
             _txTargetFoV   = targetFoV;
             _txTarget      = preset;
@@ -192,10 +260,13 @@ public static class PresetManager
             camera->currentFoV         = targetFoV;
             camera->tilt               = preset.Tilt;
             camera->lookAtHeightOffset = preset.LookAtHeightOffset;
+            camera->minVRotation       = preset.MinVRotation;
+            camera->maxVRotation       = preset.MaxVRotation;
             EffectiveTilt               = preset.Tilt;
             EffectiveLookAtHeightOffset = preset.LookAtHeightOffset;
             EffectiveHeightOffset       = preset.HeightOffset;
             EffectiveSideOffset         = preset.SideOffset;
+            EffectiveLiveHeightOffset   = preset.LiveHeightOffset;
             try { CameraDynamics.SnapOffsets(); } catch { /* defensive */ }
         }
     }
@@ -268,6 +339,7 @@ public static class PresetManager
             EffectiveLookAtHeightOffset = Lerp(_txStartLookAt, _txTarget.LookAtHeightOffset, sLookAt);
             EffectiveHeightOffset       = Lerp(_txStartHeight, _txTarget.HeightOffset,       s);
             EffectiveSideOffset         = Lerp(_txStartSide,   _txTarget.SideOffset,         s);
+            EffectiveLiveHeightOffset   = Lerp(_txStartLive,   _txTarget.LiveHeightOffset,   s);
             EffectiveTilt               = _txTarget.Tilt;
 
             // Lerp camera struct fields directly. User wheel input
@@ -281,6 +353,13 @@ public static class PresetManager
                 {
                     cam->currentZoom = Lerp(_txStartZoom, _txTargetZoom, s);
                     cam->currentFoV  = Lerp(_txStartFoV,  _txTargetFoV,  s);
+                    // Lerp VRotation bounds so a tighter new preset
+                    // doesn't snap-clamp current pitch on the first
+                    // transition frame. Engine clamps each frame to
+                    // whatever the bounds are now, so the visible
+                    // pitch eases instead of jolting.
+                    cam->minVRotation = Lerp(_txStartMinVRot, _txTarget.MinVRotation, s);
+                    cam->maxVRotation = Lerp(_txStartMaxVRot, _txTarget.MaxVRotation, s);
                 }
             }
             catch { /* defensive */ }
@@ -297,6 +376,7 @@ public static class PresetManager
                 EffectiveLookAtHeightOffset = preset.LookAtHeightOffset;
                 EffectiveHeightOffset       = preset.HeightOffset;
                 EffectiveSideOffset         = preset.SideOffset;
+                EffectiveLiveHeightOffset   = preset.LiveHeightOffset;
             }
         }
 

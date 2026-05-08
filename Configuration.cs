@@ -147,7 +147,24 @@ public class CameraConfigPreset
     // two triggers don't collide.
     public BuiltinPresetCondition Condition = BuiltinPresetCondition.None;
 
-    public CameraConfigPreset Clone() => (CameraConfigPreset)MemberwiseClone();
+    // Per-preset Camera-Dynamics + Misc-tab snapshot. Lazy-populated by
+    // PresetManager.ApplyPreset on first activation if null (migration
+    // path for presets saved before this field existed). On preset
+    // switch, the OUTGOING preset's Dynamics is rewritten from the live
+    // Configuration values, then the INCOMING preset's Dynamics is
+    // applied back into Configuration. The runtime keeps reading
+    // Configuration as before — Dynamics is just the per-preset store.
+    public PresetDynamicsState Dynamics = null;
+
+    public CameraConfigPreset Clone()
+    {
+        var c = (CameraConfigPreset)MemberwiseClone();
+        // MemberwiseClone is shallow — Dynamics would be shared between
+        // the original and the clone, so editing one mutates the other.
+        // Deep-copy it explicitly.
+        c.Dynamics = Dynamics?.Clone();
+        return c;
+    }
 
     public bool CheckConditionSet()
     {
@@ -212,6 +229,312 @@ public class CameraConfigPreset
     }
 
     public void Apply(bool isLoggingIn = false) => PresetManager.ApplyPreset(this, isLoggingIn);
+}
+
+// Per-preset snapshot of Camera-Dynamics + Misc tab settings. Hotkeys
+// stay global (per-preset hotkeys would mean the user wouldn't know
+// which key to press in any given context). Chat-overlay style fields
+// (positions, colors, font sizes, ChatBubbles) and MountAudio /
+// LightSync stay global per the user's scope direction — those are
+// system-wide style/system, not camera-context.
+//
+// Field defaults match Configuration.cs originals so a fresh
+// PresetDynamicsState() yields the same initial state as a fresh
+// Configuration. Migration on load: if a preset has Dynamics == null
+// (saved before this field existed), PresetManager snapshots the
+// current Configuration into it on first activation so the user's
+// existing tuning becomes the default for that preset.
+public class PresetDynamicsState
+{
+    // ---- Roll Tilt ----
+    public bool  EnableRollTilt      = true;
+    public float RollTiltMaxAngle    = 1.92f;
+    public float RollTiltSensitivity = 0.2f;
+    public float RollTiltOnRate      = 2.47f;
+    public float RollTiltOffRate     = 1.0f;
+
+    // ---- Character Roll ----
+    public bool  EnableCharacterRoll      = false;
+    public float CharacterRollMaxAngle    = 4.0f;
+    public float CharacterRollSensitivity = 0.25f;
+    public float CharacterRollOnRate      = 3.0f;
+    public float CharacterRollOffRate     = 1.5f;
+
+    // ---- Pitch Tilt ----
+    public bool  EnablePitchTilt     = false;
+    public float PitchTiltMaxOffset  = 0.4f;
+    public float PitchTiltSmoothRate = 3.19f;
+
+    // ---- Position Float ----
+    public bool  EnablePositionFloat     = true;
+    public float PositionFloatLagFactor  = 0.15f;
+    public float PositionFloatSmoothTime = 0.18f;
+
+    // ---- Yaw Lag ----
+    public bool  EnableYawLag    = false;
+    public float YawLagHalflife  = 0.8f;
+
+    // ---- Swivel On Move ----
+    public bool  SwivelOnMove        = false;
+    public float SwivelMoveThreshold = 0.05f;
+    public float SwivelDelay         = 0.15f;
+    public float SwivelSpeed         = 240f;
+
+    // ---- Auto-shoulder Swap ----
+    public bool  EnableAutoShoulderSwap   = false;
+    public float ShoulderLerpDuration     = 0.35f;
+    public float ShoulderSwapCheckHz      = 5f;
+    public float ShoulderSwapSafetyMargin = 0.4f;
+
+    // ---- Crosshair ----
+    public bool  EnableCrosshair    = false;
+    public float CrosshairSize      = 8f;
+    public float CrosshairThickness = 2f;
+    public float CrosshairFadeSpeed = 6f;
+    public float CrosshairColorR    = 1f;
+    public float CrosshairColorG    = 1f;
+    public float CrosshairColorB    = 1f;
+    public float CrosshairColorA    = 0.85f;
+
+    // ---- Combat Zoom ----
+    public bool  EnableCombatZoom         = false;
+    public float CombatZoomDistance       = 12f;
+    public float CombatZoomTransitionSpeed = 4f;
+
+    // ---- ADS ----
+    public bool  EnableAdsOnRmb     = false;
+    public float AdsZoomFactor      = 1.5f;
+    public float AdsTransitionSpeed = 8f;
+
+    // ---- Input Smoothing ----
+    public bool  EnableInputSmoothing       = false;
+    public float InputSmoothingZoomRate     = 12f;
+    public float InputSmoothingRotateRate   = 22f;
+    public bool  EnableCameraPositionSmoothing = false;
+    public float CameraPositionSmoothingRate = 12f;
+
+    // ---- Sensitivity ----
+    public float MouseSensitivityMul = 1f;
+    public bool  InvertMouseY        = false;
+
+    // ---- Mouselook (always-on FPS-style) ----
+    public bool  EnableMouseLookAlways = false;
+    public float MouseLookSensitivity  = 0.005f;
+    public bool  MouseLookCenterCursor = true;
+    public bool  MouseLookInvertX      = false;
+    public bool  MouseLookInvertY      = false;
+
+    // ---- Close Zoom Pitch Cap ----
+    public bool  EnableCloseZoomPitchCap = false;
+    public float CloseZoomPitchCapZoom   = 3.0f;
+    public float CloseZoomPitchCapMinRad = -0.4f;
+
+    // ---- Misc tab fields (camera-context-relevant only) ----
+    public bool  EnableHotbarFader                 = false;
+    public float HotbarFaderRate                   = 6.0f;
+    public float HotbarFaderCascadeDelay           = 0.95f;
+    public float HotbarFaderDrawnAlpha             = 1.0f;
+    public float HotbarFaderSheathedAlpha          = 0.0f;
+    public bool  HotbarFaderHoverActivates         = true;
+    public int   HotbarFaderComboPromptBar         = 0;
+    public int   HotbarFaderAvailabilityBar        = 0;
+    public float HotbarFaderAvailabilityFlashSeconds = 1.5f;
+
+    public bool  HideTargetArrow                   = false;
+    public bool  EnableThirdPersonClickTranslation = false;
+    public bool  EnableFovZoomContinuation         = true;
+    public float FovZoomMinFov                     = 0.25f;
+    public bool  LockCameraDuringNpcDialogue       = true;
+
+    public PresetDynamicsState Clone() => (PresetDynamicsState)MemberwiseClone();
+
+    // Snapshot the live Configuration into a new state object —
+    // used when creating a new preset and on the lazy-migration path
+    // for old presets that don't have Dynamics yet.
+    public static PresetDynamicsState SnapshotFrom(Configuration cfg)
+    {
+        var s = new PresetDynamicsState();
+        ApplyConfigToState(cfg, s);
+        return s;
+    }
+
+    // Copy live Configuration → state (snapshot in).
+    public static void ApplyConfigToState(Configuration cfg, PresetDynamicsState s)
+    {
+        s.EnableRollTilt      = cfg.EnableRollTilt;
+        s.RollTiltMaxAngle    = cfg.RollTiltMaxAngle;
+        s.RollTiltSensitivity = cfg.RollTiltSensitivity;
+        s.RollTiltOnRate      = cfg.RollTiltOnRate;
+        s.RollTiltOffRate     = cfg.RollTiltOffRate;
+
+        s.EnableCharacterRoll      = cfg.EnableCharacterRoll;
+        s.CharacterRollMaxAngle    = cfg.CharacterRollMaxAngle;
+        s.CharacterRollSensitivity = cfg.CharacterRollSensitivity;
+        s.CharacterRollOnRate      = cfg.CharacterRollOnRate;
+        s.CharacterRollOffRate     = cfg.CharacterRollOffRate;
+
+        s.EnablePitchTilt     = cfg.EnablePitchTilt;
+        s.PitchTiltMaxOffset  = cfg.PitchTiltMaxOffset;
+        s.PitchTiltSmoothRate = cfg.PitchTiltSmoothRate;
+
+        s.EnablePositionFloat     = cfg.EnablePositionFloat;
+        s.PositionFloatLagFactor  = cfg.PositionFloatLagFactor;
+        s.PositionFloatSmoothTime = cfg.PositionFloatSmoothTime;
+
+        s.EnableYawLag    = cfg.EnableYawLag;
+        s.YawLagHalflife  = cfg.YawLagHalflife;
+
+        s.SwivelOnMove        = cfg.SwivelOnMove;
+        s.SwivelMoveThreshold = cfg.SwivelMoveThreshold;
+        s.SwivelDelay         = cfg.SwivelDelay;
+        s.SwivelSpeed         = cfg.SwivelSpeed;
+
+        s.EnableAutoShoulderSwap   = cfg.EnableAutoShoulderSwap;
+        s.ShoulderLerpDuration     = cfg.ShoulderLerpDuration;
+        s.ShoulderSwapCheckHz      = cfg.ShoulderSwapCheckHz;
+        s.ShoulderSwapSafetyMargin = cfg.ShoulderSwapSafetyMargin;
+
+        s.EnableCrosshair    = cfg.EnableCrosshair;
+        s.CrosshairSize      = cfg.CrosshairSize;
+        s.CrosshairThickness = cfg.CrosshairThickness;
+        s.CrosshairFadeSpeed = cfg.CrosshairFadeSpeed;
+        s.CrosshairColorR    = cfg.CrosshairColorR;
+        s.CrosshairColorG    = cfg.CrosshairColorG;
+        s.CrosshairColorB    = cfg.CrosshairColorB;
+        s.CrosshairColorA    = cfg.CrosshairColorA;
+
+        s.EnableCombatZoom         = cfg.EnableCombatZoom;
+        s.CombatZoomDistance       = cfg.CombatZoomDistance;
+        s.CombatZoomTransitionSpeed = cfg.CombatZoomTransitionSpeed;
+
+        s.EnableAdsOnRmb     = cfg.EnableAdsOnRmb;
+        s.AdsZoomFactor      = cfg.AdsZoomFactor;
+        s.AdsTransitionSpeed = cfg.AdsTransitionSpeed;
+
+        s.EnableInputSmoothing          = cfg.EnableInputSmoothing;
+        s.InputSmoothingZoomRate        = cfg.InputSmoothingZoomRate;
+        s.InputSmoothingRotateRate      = cfg.InputSmoothingRotateRate;
+        s.EnableCameraPositionSmoothing = cfg.EnableCameraPositionSmoothing;
+        s.CameraPositionSmoothingRate   = cfg.CameraPositionSmoothingRate;
+
+        s.MouseSensitivityMul = cfg.MouseSensitivityMul;
+        s.InvertMouseY        = cfg.InvertMouseY;
+
+        s.EnableMouseLookAlways = cfg.EnableMouseLookAlways;
+        s.MouseLookSensitivity  = cfg.MouseLookSensitivity;
+        s.MouseLookCenterCursor = cfg.MouseLookCenterCursor;
+        s.MouseLookInvertX      = cfg.MouseLookInvertX;
+        s.MouseLookInvertY      = cfg.MouseLookInvertY;
+
+        s.EnableCloseZoomPitchCap = cfg.EnableCloseZoomPitchCap;
+        s.CloseZoomPitchCapZoom   = cfg.CloseZoomPitchCapZoom;
+        s.CloseZoomPitchCapMinRad = cfg.CloseZoomPitchCapMinRad;
+
+        s.EnableHotbarFader                 = cfg.EnableHotbarFader;
+        s.HotbarFaderRate                   = cfg.HotbarFaderRate;
+        s.HotbarFaderCascadeDelay           = cfg.HotbarFaderCascadeDelay;
+        s.HotbarFaderDrawnAlpha             = cfg.HotbarFaderDrawnAlpha;
+        s.HotbarFaderSheathedAlpha          = cfg.HotbarFaderSheathedAlpha;
+        s.HotbarFaderHoverActivates         = cfg.HotbarFaderHoverActivates;
+        s.HotbarFaderComboPromptBar         = cfg.HotbarFaderComboPromptBar;
+        s.HotbarFaderAvailabilityBar        = cfg.HotbarFaderAvailabilityBar;
+        s.HotbarFaderAvailabilityFlashSeconds = cfg.HotbarFaderAvailabilityFlashSeconds;
+
+        s.HideTargetArrow                   = cfg.HideTargetArrow;
+        s.EnableThirdPersonClickTranslation = cfg.EnableThirdPersonClickTranslation;
+        s.EnableFovZoomContinuation         = cfg.EnableFovZoomContinuation;
+        s.FovZoomMinFov                     = cfg.FovZoomMinFov;
+        s.LockCameraDuringNpcDialogue       = cfg.LockCameraDuringNpcDialogue;
+    }
+
+    // Copy state → live Configuration (apply on preset activation).
+    public static void ApplyStateToConfig(PresetDynamicsState s, Configuration cfg)
+    {
+        cfg.EnableRollTilt      = s.EnableRollTilt;
+        cfg.RollTiltMaxAngle    = s.RollTiltMaxAngle;
+        cfg.RollTiltSensitivity = s.RollTiltSensitivity;
+        cfg.RollTiltOnRate      = s.RollTiltOnRate;
+        cfg.RollTiltOffRate     = s.RollTiltOffRate;
+
+        cfg.EnableCharacterRoll      = s.EnableCharacterRoll;
+        cfg.CharacterRollMaxAngle    = s.CharacterRollMaxAngle;
+        cfg.CharacterRollSensitivity = s.CharacterRollSensitivity;
+        cfg.CharacterRollOnRate      = s.CharacterRollOnRate;
+        cfg.CharacterRollOffRate     = s.CharacterRollOffRate;
+
+        cfg.EnablePitchTilt     = s.EnablePitchTilt;
+        cfg.PitchTiltMaxOffset  = s.PitchTiltMaxOffset;
+        cfg.PitchTiltSmoothRate = s.PitchTiltSmoothRate;
+
+        cfg.EnablePositionFloat     = s.EnablePositionFloat;
+        cfg.PositionFloatLagFactor  = s.PositionFloatLagFactor;
+        cfg.PositionFloatSmoothTime = s.PositionFloatSmoothTime;
+
+        cfg.EnableYawLag    = s.EnableYawLag;
+        cfg.YawLagHalflife  = s.YawLagHalflife;
+
+        cfg.SwivelOnMove        = s.SwivelOnMove;
+        cfg.SwivelMoveThreshold = s.SwivelMoveThreshold;
+        cfg.SwivelDelay         = s.SwivelDelay;
+        cfg.SwivelSpeed         = s.SwivelSpeed;
+
+        cfg.EnableAutoShoulderSwap   = s.EnableAutoShoulderSwap;
+        cfg.ShoulderLerpDuration     = s.ShoulderLerpDuration;
+        cfg.ShoulderSwapCheckHz      = s.ShoulderSwapCheckHz;
+        cfg.ShoulderSwapSafetyMargin = s.ShoulderSwapSafetyMargin;
+
+        cfg.EnableCrosshair    = s.EnableCrosshair;
+        cfg.CrosshairSize      = s.CrosshairSize;
+        cfg.CrosshairThickness = s.CrosshairThickness;
+        cfg.CrosshairFadeSpeed = s.CrosshairFadeSpeed;
+        cfg.CrosshairColorR    = s.CrosshairColorR;
+        cfg.CrosshairColorG    = s.CrosshairColorG;
+        cfg.CrosshairColorB    = s.CrosshairColorB;
+        cfg.CrosshairColorA    = s.CrosshairColorA;
+
+        cfg.EnableCombatZoom         = s.EnableCombatZoom;
+        cfg.CombatZoomDistance       = s.CombatZoomDistance;
+        cfg.CombatZoomTransitionSpeed = s.CombatZoomTransitionSpeed;
+
+        cfg.EnableAdsOnRmb     = s.EnableAdsOnRmb;
+        cfg.AdsZoomFactor      = s.AdsZoomFactor;
+        cfg.AdsTransitionSpeed = s.AdsTransitionSpeed;
+
+        cfg.EnableInputSmoothing          = s.EnableInputSmoothing;
+        cfg.InputSmoothingZoomRate        = s.InputSmoothingZoomRate;
+        cfg.InputSmoothingRotateRate      = s.InputSmoothingRotateRate;
+        cfg.EnableCameraPositionSmoothing = s.EnableCameraPositionSmoothing;
+        cfg.CameraPositionSmoothingRate   = s.CameraPositionSmoothingRate;
+
+        cfg.MouseSensitivityMul = s.MouseSensitivityMul;
+        cfg.InvertMouseY        = s.InvertMouseY;
+
+        cfg.EnableMouseLookAlways = s.EnableMouseLookAlways;
+        cfg.MouseLookSensitivity  = s.MouseLookSensitivity;
+        cfg.MouseLookCenterCursor = s.MouseLookCenterCursor;
+        cfg.MouseLookInvertX      = s.MouseLookInvertX;
+        cfg.MouseLookInvertY      = s.MouseLookInvertY;
+
+        cfg.EnableCloseZoomPitchCap = s.EnableCloseZoomPitchCap;
+        cfg.CloseZoomPitchCapZoom   = s.CloseZoomPitchCapZoom;
+        cfg.CloseZoomPitchCapMinRad = s.CloseZoomPitchCapMinRad;
+
+        cfg.EnableHotbarFader                 = s.EnableHotbarFader;
+        cfg.HotbarFaderRate                   = s.HotbarFaderRate;
+        cfg.HotbarFaderCascadeDelay           = s.HotbarFaderCascadeDelay;
+        cfg.HotbarFaderDrawnAlpha             = s.HotbarFaderDrawnAlpha;
+        cfg.HotbarFaderSheathedAlpha          = s.HotbarFaderSheathedAlpha;
+        cfg.HotbarFaderHoverActivates         = s.HotbarFaderHoverActivates;
+        cfg.HotbarFaderComboPromptBar         = s.HotbarFaderComboPromptBar;
+        cfg.HotbarFaderAvailabilityBar        = s.HotbarFaderAvailabilityBar;
+        cfg.HotbarFaderAvailabilityFlashSeconds = s.HotbarFaderAvailabilityFlashSeconds;
+
+        cfg.HideTargetArrow                   = s.HideTargetArrow;
+        cfg.EnableThirdPersonClickTranslation = s.EnableThirdPersonClickTranslation;
+        cfg.EnableFovZoomContinuation         = s.EnableFovZoomContinuation;
+        cfg.FovZoomMinFov                     = s.FovZoomMinFov;
+        cfg.LockCameraDuringNpcDialogue       = s.LockCameraDuringNpcDialogue;
+    }
 }
 
 public class Configuration : PluginConfiguration, IPluginConfiguration

@@ -140,6 +140,10 @@ public static class PluginUI
         }
         catch { /* defensive — fall back to defaults */ }
         p.Name = $"Preset {noWickyXIV.Config.Presets.Count + 1}";
+        // Snapshot the current Camera-Dynamics + Misc tab state into
+        // the new preset so it captures the full UI state, not just
+        // the camera struct fields.
+        try { p.Dynamics = PresetDynamicsState.SnapshotFrom(noWickyXIV.Config); } catch { }
         return p;
     }
 

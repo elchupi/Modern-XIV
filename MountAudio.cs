@@ -172,13 +172,28 @@ public static unsafe class MountAudio
     {
         var cfg = noWickyXIV.Config;
 
-        // Heartbeat: confirms Update is running every second + logs
-        // any state changes immediately. If you don't see ANY of
-        // these in /xllog, MountAudio.Update isn't being called or
-        // EnableMountAudio is off.
+        // Fast-path early-out: when the feature is off OR we're not
+        // mounted AND the state machine is at rest, skip ALL the
+        // per-frame work (state ticks, heartbeat log, position-delta
+        // computations). Re-entry happens automatically the moment
+        // the user mounts up (the rising-edge path below picks it up).
+        if (!cfg.EnableMountAudio)
+        {
+            if (_state != State.Off) ExitToOff();
+            return;
+        }
+
+        // Heartbeat: state-change always logs immediately (so mount
+        // up/down/state transitions remain visible in /xllog).
+        // Periodic 1-Hz heartbeat ONLY runs while there's something
+        // active (state != Off OR a layer is loaded) — silences the
+        // log while the player is on foot and the bike is dormant.
         var nowS = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
         bool stateChanged = _state != _lastLoggedState;
-        if (stateChanged || nowS - _lastHeartbeatT > 1.0)
+        bool somethingActive = _state != State.Off
+            || _idleLayer != null || _slowLayer != null
+            || _midLayer != null  || _topLayer  != null;
+        if (stateChanged || (somethingActive && nowS - _lastHeartbeatT > 1.0))
         {
             _lastHeartbeatT = nowS;
             _lastLoggedState = _state;
@@ -199,12 +214,6 @@ public static unsafe class MountAudio
                 + $"layers(idle={_idleLayer != null},slow={_slowLayer != null},mid={_midLayer != null},top={_topLayer != null},"
                 + $"mount={_mountOneShot != null},i2s={_idle2SlowOneShot != null},rev={_revupOneShot != null},"
                 + $"decel={_decelOneShot != null},dis={_dismountOneShot != null})"); } catch { }
-        }
-
-        if (!cfg.EnableMountAudio)
-        {
-            if (_state != State.Off) ExitToOff();
-            return;
         }
 
         var lp = DalamudApi.ObjectTable.LocalPlayer;
@@ -228,9 +237,6 @@ public static unsafe class MountAudio
                 $"[noWickyXIV] MountAudio: mount-up detected — mountId={mountId}"); } catch { }
             _currentMountId = mountId;
             EnsureLayersForMount(mountId);
-            // Suppress the engine's native mount sounds IMMEDIATELY
-            // on the mount-up edge.
-            SuppressNativeMountSounds();
             // Bump generation so any leftover pending actions from
             // a previous mounted session are dropped.
             _scheduleGeneration++;
@@ -403,19 +409,6 @@ public static unsafe class MountAudio
         // the engine may overwrite Timeline.Speed every animation
         // tick so a one-shot write at mount-up wouldn't stick.
         TickAnimationFreeze(lp);
-
-        // Mute the game's native mount audio while we have a custom
-        // pack loaded — without this, the engine's default Fenrir
-        // engine hum / gallop loop plays alongside our custom layers.
-        // Per-frame re-write because the engine may reset the override
-        // when the mount actor refreshes its sound state.
-        if (_idleLayer != null || _slowLayer != null
-            || _midLayer != null || _topLayer != null
-            || _idle2SlowOneShot != null || _revupOneShot != null
-            || _decelOneShot != null)
-        {
-            SuppressNativeMountSounds();
-        }
     }
 
     private static void HandleStateTransition(State from, State to)
@@ -790,110 +783,6 @@ public static unsafe class MountAudio
         catch { return null; }
     }
 
-    // ---- Native mount audio suppression ----
-    // Walk to the mount character via the player's MountedEntityIds
-    // and write SoundVolumeCategoryOverride = NoPlay so the game's
-    // native engine hum / gallop loop doesn't play alongside our
-    // custom audio pack. Per-frame re-write because the engine may
-    // reset the override when the mount actor refreshes its sound
-    // state. No cleanup needed — when the player dismounts, the
-    // mount character object is destroyed and the override goes
-    // with it.
-    private static double _lastMuteDiagT;
-    private static uint _lastMutedEntityId;
-    private static byte _lastObservedOverrideValue;
-    private static void SuppressNativeMountSounds()
-    {
-        try
-        {
-            var lp = DalamudApi.ObjectTable.LocalPlayer;
-            if (lp == null) return;
-            var ch = (Character*)lp.Address;
-            if (ch == null) return;
-
-            // First entry of MountedEntityIds is the mount actor's
-            // entity ID. 0 / 0xE0000000 are sentinel "no mount" values.
-            var ids = ch->Mount.MountedEntityIds;
-            if (ids.Length == 0) return;
-            uint mountEntityId = ids[0];
-            if (mountEntityId == 0 || mountEntityId == 0xE0000000) return;
-
-            // Resolve the mount actor through Dalamud's ObjectTable.
-            // FFXIV uses a fixed indexing convention for "owned"
-            // objects: player at index 0, mount at index 1, minion
-            // at index 2. Try the mount slot first — it's O(1) and
-            // always correct. Fall back to a full scan matching by
-            // GameObjectId (Dalamud's wrapper, which handles the
-            // struct-offset correctly) if the slot is empty for
-            // some reason. We don't trust raw `Character.EntityId`
-            // pointer-arithmetic anymore — observation showed the
-            // CS struct offset reads the OwnerId field on this game
-            // version, which is why earlier iter-by-EntityId scans
-            // missed the mount entirely.
-            Dalamud.Game.ClientState.Objects.Types.IGameObject mountObj = null;
-            try { mountObj = DalamudApi.ObjectTable[1]; } catch { }
-            if (mountObj == null
-                || (uint)(ulong)mountObj.GameObjectId != mountEntityId)
-            {
-                // Slot 1 didn't match — fallback scan by GameObjectId.
-                mountObj = null;
-                foreach (var obj in DalamudApi.ObjectTable)
-                {
-                    if (obj == null) continue;
-                    if ((uint)(ulong)obj.GameObjectId == mountEntityId)
-                    {
-                        mountObj = obj;
-                        break;
-                    }
-                }
-            }
-            if (mountObj == null)
-            {
-                ThrottledMuteDiag($"mount actor not in ObjectTable (entityId=0x{mountEntityId:X}) — slot[1] empty + GoId scan missed");
-                return;
-            }
-            var mountChar = (Character*)mountObj.Address;
-            if (mountChar == null) return;
-            string mountObjName = mountObj.Name?.ToString() ?? "";
-
-            byte beforeOverride = mountChar->SoundVolumeCategoryOverride;
-            byte beforeCategory = mountChar->SoundVolumeCategory;
-            // Aggressive mute: write NoPlay to BOTH the override AND
-            // the natural category. Some sound paths check Override
-            // first, others read Category directly — clobber both
-            // so whichever code path the engine takes for mount
-            // engine/idle sounds, our mute is on the path.
-            mountChar->SoundVolumeCategoryOverride = (byte)SoundVolumeCategory.NoPlay;
-            mountChar->SoundVolumeCategory         = (byte)SoundVolumeCategory.NoPlay;
-            byte afterOverride = mountChar->SoundVolumeCategoryOverride;
-            byte afterCategory = mountChar->SoundVolumeCategory;
-            _lastObservedOverrideValue = beforeOverride;
-
-            if (mountEntityId != _lastMutedEntityId
-                || beforeOverride != (byte)SoundVolumeCategory.NoPlay
-                || beforeCategory != (byte)SoundVolumeCategory.NoPlay)
-            {
-                ThrottledMuteDiag(
-                    $"writing NoPlay to mount actor entityId=0x{mountEntityId:X} "
-                    + $"name='{mountObjName}' "
-                    + $"override:{beforeOverride}->{afterOverride} "
-                    + $"category:{beforeCategory}->{afterCategory}");
-                _lastMutedEntityId = mountEntityId;
-            }
-        }
-        catch (Exception ex)
-        {
-            ThrottledMuteDiag($"threw: {ex.Message}");
-        }
-    }
-
-    private static void ThrottledMuteDiag(string msg)
-    {
-        var now = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
-        if (now - _lastMuteDiagT < 1.0) return;
-        _lastMuteDiagT = now;
-        try { DalamudApi.PluginLog.Information($"[noWickyXIV] MountAudio mute: {msg}"); } catch { }
-    }
 
     // ---- Animation freeze ----
     // Schedules an N-millisecond window during which the mount's

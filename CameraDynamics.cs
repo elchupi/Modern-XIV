@@ -771,6 +771,11 @@ public static unsafe class CameraDynamics
     // already in place.
     private static void UpdateAutoShoulderSwap(GameCamera* cam, bool tps, float dt)
     {
+        // Don't kick off a new shoulder swap during preset transitions
+        // — preset's SideOffset is being lerped, layering a swap on
+        // top would fight that lerp. An in-progress swap continues
+        // (its own lerp) so toggling off mid-swap still settles, but
+        // we won't START a new one.
         // Always advance an in-progress lerp, regardless of toggle state, so
         // toggling off mid-swap settles cleanly instead of snapping.
         if (_shoulderLerping)
@@ -810,6 +815,7 @@ public static unsafe class CameraDynamics
         _lastSwapCheckTime = now;
 
         if (_shoulderLerping) return;  // already swapping; let it finish
+        if (PresetManager.IsTransitionActive) return; // preset lerp owns SideOffset
 
         // Build the probe ray: from the camera position outward along the
         // shoulder-side direction (camera right, signed by current SideOffset).
@@ -861,6 +867,20 @@ public static unsafe class CameraDynamics
     private static void UpdateAds(GameCamera* cam, bool tps, float dt)
     {
         if (!noWickyXIV.Config.EnableAdsOnRmb || !tps)
+        {
+            _adsActive = false;
+            return;
+        }
+        // During preset transitions, PresetManager owns currentZoom/
+        // currentFoV via its lerp. ADS would otherwise pull those
+        // fields toward _adsBaseZoom / factor (captured at RMB
+        // press, i.e., from the OLD preset) at ~170 ms halflife,
+        // which fights the 5 s preset lerp — visible as the camera
+        // settling at a "middle" zoom while position offsets keep
+        // moving. Drop ADS during transitions; user can re-engage
+        // RMB after the lerp completes and ADS will rebaseline to
+        // the new preset's zoom.
+        if (PresetManager.IsTransitionActive)
         {
             _adsActive = false;
             return;
@@ -928,6 +948,9 @@ public static unsafe class CameraDynamics
         // out of combat that happens during ADS gets dropped (rising-edge state
         // wiped, falling-edge lerp never runs, camera stuck at combat zoom).
         if (_adsActive) return;
+        // Same logic for preset transitions — the lerp owns currentZoom
+        // for the duration. Suspend without resetting edge-detect.
+        if (PresetManager.IsTransitionActive) return;
 
         bool inCombat;
         try { inCombat = DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]; }
@@ -1121,21 +1144,14 @@ public static unsafe class CameraDynamics
     // frame — only when the game itself invokes UpdateLookAtHeightOffset.
     private static void UpdatePitchTilt(GameCamera* cam, bool tps, float dt)
     {
-        // During preset transitions, decay our contribution toward
-        // zero smoothly via the same subtract-prev-add path so the
-        // lookAtHeightOffset field eases instead of snapping when the
-        // hook fired. Rate is fast enough to be near-zero by the end
-        // of the transition window for typical PresetTransitionSeconds.
-        if (PresetManager.IsTransitionActive)
-        {
-            if (cam == null) return;
-            _pitchTiltCurrent = ExpDecay(_pitchTiltCurrent, 0f, 8f, dt);
-            cam->lookAtHeightOffset -= _pitchTiltLastApplied;
-            cam->lookAtHeightOffset += _pitchTiltCurrent;
-            _pitchTiltLastApplied = _pitchTiltCurrent;
-            return;
-        }
-
+        // No special-casing during preset transitions. PitchTilt's
+        // contribution stays constant (or follows pitch input naturally)
+        // through the lerp window. Earlier "decay to zero over 500 ms"
+        // approach created two visible phases (fast pitch-bias collapse,
+        // then slow position lerp) read by the user as tx → ty
+        // sequencing. With normal operation, the contribution rides on
+        // top of the lerped EffectiveLookAtHeightOffset so the camera
+        // angle moves with the position in lockstep.
         if (noWickyXIV.Config.EnablePitchTilt && tps)
         {
             float pitch = cam->currentVRotation;
@@ -1173,18 +1189,11 @@ public static unsafe class CameraDynamics
     private static bool _positionFloatErrorLogged;
     private static void UpdatePositionFloat(GameCamera* cam, float dt)
     {
-        // During preset transitions, decay _floatOffset toward zero
-        // smoothly instead of zeroing it instantly — the instant-zero
-        // caused a visible height snap on joystick-release preset swaps
-        // (running → standing) because the velocity-based offset
-        // disappeared on the same frame the lerp began. Don't sample
-        // velocity during the transition (sampling old motion against
-        // the new preset's lerping camera produces phantom offsets).
-        if (PresetManager.IsTransitionActive)
-        {
-            _floatOffset = ExpDecayV(_floatOffset, Vector3.Zero, 8f, dt);
-            return;
-        }
+        // No special-casing during preset transitions. _floatOffset
+        // follows player velocity naturally through the lerp window.
+        // Earlier "decay to zero over 500 ms" created a fast-then-slow
+        // visible sequence (PositionFloat collapses, then position
+        // lerp continues) the user read as tx → ty sequencing.
 
         // Compute the offset only. Application is in Game.SetCameraLookAtDetour
         // which is the inline detour the game calls each frame to set up the

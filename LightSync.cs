@@ -1095,7 +1095,6 @@ public static class LightSync
     // at low. Low phase: both groups go low (the dwell between
     // impacts). Falls back to all-devices-same-brightness when
     // only one device is configured.
-    private static double _lastFootDiagLogT;
     private static async Task ApplyFootStepBrightness(bool high, int peak, int low, bool rightFoot)
     {
         try
@@ -1128,17 +1127,6 @@ public static class LightSync
                     int activeSegBright = high ? peak : low;
                     int otherSegBright  = low;
 
-                    var nowSDiag = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
-                    if (nowSDiag - _lastFootDiagLogT > 1.0)
-                    {
-                        _lastFootDiagLogT = nowSDiag;
-                        try { DalamudApi.PluginLog.Information(
-                            $"[noWickyXIV] FootStep: 1 device, {dev.SegmentCount} segments — "
-                            + $"high={high} rightFoot={rightFoot} "
-                            + $"active=[{string.Join(",", activeSegs)}]@{activeSegBright} "
-                            + $"other=[{string.Join(",", otherSegs)}]@{otherSegBright}"); } catch { }
-                    }
-
                     var ts1 = SendSegmentedBrightnessToDevice(dev, activeSegs, activeSegBright);
                     var ts2 = SendSegmentedBrightnessToDevice(dev, otherSegs,  otherSegBright);
                     await Task.WhenAll(ts1, ts2).ConfigureAwait(false);
@@ -1146,15 +1134,6 @@ public static class LightSync
                 }
 
                 int target = high ? peak : low;
-                var nowSDiag2 = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
-                if (nowSDiag2 - _lastFootDiagLogT > 1.0)
-                {
-                    _lastFootDiagLogT = nowSDiag2;
-                    try { DalamudApi.PluginLog.Information(
-                        $"[noWickyXIV] FootStep: 1 device, no segments configured — alternation disabled. "
-                        + $"name='{dev.Name}' sending bright={target}. "
-                        + $"Set SegmentCount on this device for per-segment alternation."); } catch { }
-                }
                 await SendBrightness(target).ConfigureAwait(false);
                 return;
             }
@@ -1174,19 +1153,6 @@ public static class LightSync
             {
                 activeBright = low;
                 otherBright  = low;
-            }
-
-            // Throttled diag: confirm group split + which device
-            // is receiving which brightness during the high phase.
-            var nowS = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
-            if (nowS - _lastFootDiagLogT > 1.0)
-            {
-                _lastFootDiagLogT = nowS;
-                string activeNames = string.Join(",", active.ConvertAll(d => d.Name));
-                string otherNames  = string.Join(",", other .ConvertAll(d => d.Name));
-                try { DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] FootStep: enabled={enabled.Count} high={high} rightFoot={rightFoot} "
-                    + $"active=[{activeNames}]@{activeBright} other=[{otherNames}]@{otherBright}"); } catch { }
             }
 
             var t1 = SetGroupBrightness(active, activeBright);

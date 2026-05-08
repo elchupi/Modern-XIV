@@ -123,8 +123,17 @@ public static unsafe class TargetUI
 
         if (cfg.EnableTargetName)
             DrawTargetName(fg, tgt, cfg, nameAnchor);
-        if (cfg.EnableCastBar && tgt != null)
-            DrawCastBar(fg, tgt, cfg, nameAnchor);
+        if (cfg.EnableCastBar)
+        {
+            // CastBarSource: 0 = follow target (legacy), 1 = standalone
+            // player cast bar (independent of any target).
+            Dalamud.Game.ClientState.Objects.Types.IGameObject castSrc =
+                cfg.CastBarSource == 1
+                    ? DalamudApi.ObjectTable?.LocalPlayer
+                    : tgt;
+            if (castSrc != null)
+                DrawCastBar(fg, castSrc, cfg, nameAnchor);
+        }
     }
 
     // Computes the target-name anchor in screen-space pixels, taking
@@ -304,21 +313,32 @@ public static unsafe class TargetUI
         var topLeft  = new Vector2(origin.X - length * 0.5f, origin.Y);
         var botRight = new Vector2(topLeft.X + length, topLeft.Y + height);
 
+        // Rounded-corner radius — clamped so a tall narrow bar doesn't
+        // round so heavily that the fill becomes a circle. Half the
+        // smaller dimension is the geometric maximum.
+        float rounding = MathF.Max(0f, cfg.CastBarRounding);
+        rounding = MathF.Min(rounding, MathF.Min(length, height) * 0.5f);
+
         // Background.
         var bg = new Vector4(cfg.CastBarBgR, cfg.CastBarBgG, cfg.CastBarBgB,
                              cfg.CastBarBgAlpha * _presenceAlpha);
-        fg.AddRectFilled(topLeft, botRight, ImGui.GetColorU32(bg));
+        fg.AddRectFilled(topLeft, botRight, ImGui.GetColorU32(bg), rounding);
 
-        // Fill (progress).
+        // Fill (progress). Round only the LEFT corners so the
+        // advancing right edge stays a clean vertical line — rounding
+        // the right edge would make it look like a pill that shrinks
+        // and grows oddly across cast progress.
         var fill = new Vector4(cfg.CastBarFillR, cfg.CastBarFillG, cfg.CastBarFillB,
                                cfg.CastBarFillAlpha * _presenceAlpha);
         var fillRight = new Vector2(topLeft.X + length * pct, botRight.Y);
-        fg.AddRectFilled(topLeft, fillRight, ImGui.GetColorU32(fill));
+        const ImDrawFlags ROUND_LEFT_ONLY =
+            ImDrawFlags.RoundCornersTopLeft | ImDrawFlags.RoundCornersBottomLeft;
+        fg.AddRectFilled(topLeft, fillRight, ImGui.GetColorU32(fill), rounding, ROUND_LEFT_ONLY);
 
         // Border (1px outline).
         var border = new Vector4(cfg.CastBarBorderR, cfg.CastBarBorderG, cfg.CastBarBorderB,
                                  cfg.CastBarBorderAlpha * _presenceAlpha);
-        fg.AddRect(topLeft, botRight, ImGui.GetColorU32(border));
+        fg.AddRect(topLeft, botRight, ImGui.GetColorU32(border), rounding);
 
         // Optional spell-name label.
         if (cfg.EnableCastBarSpellName)

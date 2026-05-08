@@ -1236,12 +1236,18 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
 
     // Cast bar.
     public bool   EnableCastBar               = false;
-    public int    CastBarAnchorMode           = 0;     // 0=Screen, 1=TargetBone
+    // 0 = follow current Target's cast (default Cammy/Wicked behaviour).
+    // 1 = standalone — show the LOCAL PLAYER's own cast at a fixed
+    //     screen position regardless of target. Useful as a personal
+    //     cast bar overlay that's always in the same place.
+    public int    CastBarSource               = 0;     // 0=Target, 1=Player
+    public int    CastBarAnchorMode           = 0;     // 0=Screen, 1=TargetBone, 2=TargetName
     public int    CastBarBoneIndex            = 1;
     public float  CastBarX                    = 960f;
     public float  CastBarY                    = 240f;
     public float  CastBarLength               = 220f;
     public float  CastBarHeight               = 10f;
+    public float  CastBarRounding             = 6f;    // px corner radius
     public float  CastBarFillR                = 0.85f;
     public float  CastBarFillG                = 0.55f;
     public float  CastBarFillB                = 0.15f;

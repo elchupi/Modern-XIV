@@ -78,10 +78,15 @@ public static unsafe class HpRing
         float pulse = 0.5f * (1f + MathF.Sin((float)_phase));
         float alpha = baseAlpha + (peakAlpha - baseAlpha) * pulse;
 
-        // Radius: base at full HP, scales toward LowHpRadiusFactor at zero HP.
+        // Outer ring: stays at base radius (the full slider value),
+        // pulsing alpha. Inner filled circle: radius scales with HP
+        // (full = baseRadius, empty = 0). LowHpRadiusFactor still
+        // applies to the OUTER ring so users who'd configured the
+        // ring to grow at low HP still get that visual cue.
         float baseRadius = noWickyXIV.Config.HpRingRadius;
         float lowFactor  = noWickyXIV.Config.HpRingLowHpRadiusFactor;
-        float radius = baseRadius * (1f + (lowFactor - 1f) * t);
+        float outerRadius = baseRadius * (1f + (lowFactor - 1f) * t);
+        float innerRadius = baseRadius * _hpPctSmooth;
 
         // ---- Position ----
         // Two modes:
@@ -137,15 +142,31 @@ public static unsafe class HpRing
             cy = io.DisplaySize.Y * MathF.Max(0f, MathF.Min(1f, noWickyXIV.Config.HpRingScreenY));
         }
 
-        uint col = ColorU32(
+        var center = new Vector2(cx, cy);
+
+        // Outer pulse ring — alpha modulates with the sine pulse.
+        uint outerCol = ColorU32(
             noWickyXIV.Config.HpRingColorR,
             noWickyXIV.Config.HpRingColorG,
             noWickyXIV.Config.HpRingColorB,
             alpha);
-
-        dl.AddCircle(new Vector2(cx, cy), radius, col,
+        dl.AddCircle(center, outerRadius, outerCol,
             noWickyXIV.Config.HpRingSegments,
             noWickyXIV.Config.HpRingThickness);
+
+        // Inner filled circle — radius shows current HP. Slightly
+        // higher alpha (peak of the pulse range) for a stable readout
+        // that doesn't blend into the background as HP drops.
+        if (innerRadius > 0.5f)
+        {
+            uint innerCol = ColorU32(
+                noWickyXIV.Config.HpRingColorR,
+                noWickyXIV.Config.HpRingColorG,
+                noWickyXIV.Config.HpRingColorB,
+                peakAlpha);
+            dl.AddCircleFilled(center, innerRadius, innerCol,
+                noWickyXIV.Config.HpRingSegments);
+        }
     }
 
     private static uint ColorU32(float r, float g, float b, float a)

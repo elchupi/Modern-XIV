@@ -43,20 +43,10 @@ public static class Crosshair
                 noWickyXIV.Config.CrosshairColorA * _alpha);
             uint c = ImGui.GetColorU32(col);
 
-            float gap = size * 0.3f;
-
-            // Horizontal arms (left + right)
-            dl.AddLine(new Vector2(center.X - size, center.Y),
-                       new Vector2(center.X - gap,  center.Y), c, thickness);
-            dl.AddLine(new Vector2(center.X + gap,  center.Y),
-                       new Vector2(center.X + size, center.Y), c, thickness);
-            // Vertical arms (top + bottom)
-            dl.AddLine(new Vector2(center.X, center.Y - size),
-                       new Vector2(center.X, center.Y - gap),  c, thickness);
-            dl.AddLine(new Vector2(center.X, center.Y + gap),
-                       new Vector2(center.X, center.Y + size), c, thickness);
-            // Center dot
-            dl.AddCircleFilled(center, 1.5f * ImGuiHelpers.GlobalScale, c);
+            // Ring crosshair — single circle outline at the configured
+            // size (size = radius). Replaces the 4-arm cross that the
+            // earlier port used; cleaner reticle for a TPS aim point.
+            dl.AddCircle(center, size, c, 0, thickness);
         }
         catch { /* defensive */ }
     }

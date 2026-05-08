@@ -127,6 +127,18 @@ public static class PresetManager
         }
         catch { /* defensive */ }
         try { CameraDynamics.SnapOffsets(); } catch { /* defensive */ }
+        // Apply any pending Dynamics now (cancellation collapses the
+        // transition to its target, including feature toggles).
+        if (_pendingDynamicsApply != null)
+        {
+            try
+            {
+                if (_pendingDynamicsApply.Dynamics != null)
+                    PresetDynamicsState.ApplyStateToConfig(_pendingDynamicsApply.Dynamics, noWickyXIV.Config);
+            }
+            catch { /* defensive */ }
+            _pendingDynamicsApply = null;
+        }
         _txActive = false;
         _txTarget = null;
     }
@@ -154,6 +166,15 @@ public static class PresetManager
     // it was active get persisted.
     private static CameraConfigPreset _liveDynamicsPreset;
 
+    // When a transitioned preset switch is in flight, the incoming
+    // preset's Dynamics is parked here until the transition completes.
+    // Applying it at frame 0 caused features like PitchTilt to
+    // instantly disable (else branch undoing accumulated contribution),
+    // dropping the camera by the cached offset — the "dip on
+    // transition start" the user reported. Applied in Update() the
+    // moment the position lerp finishes.
+    private static CameraConfigPreset _pendingDynamicsApply;
+
     public static unsafe void ApplyPreset(CameraConfigPreset preset, bool isLoggingIn, bool transition)
     {
         if (preset == null) return;
@@ -166,9 +187,13 @@ public static class PresetManager
         //    (captures any UI edits the user made while it was active).
         // 2. Lazy-migrate INCOMING preset's Dynamics from current Config
         //    if it's null (preset saved before this field existed).
-        // 3. Apply incoming preset's Dynamics back into Config.
-        // Skipped on login (RestoreLastActivePreset) so the saved
-        // global Config values aren't clobbered before they're snapshot.
+        // 3. Apply incoming preset's Dynamics — IMMEDIATELY for snap
+        //    swaps and login, but DEFERRED to transition end for
+        //    transitioned swaps (so feature toggles like PitchTilt
+        //    don't flip mid-transition and drop the camera by the
+        //    accumulated contribution).
+        bool willTransition = transition && !isLoggingIn
+            && noWickyXIV.Config.PresetTransitionSeconds > 0.06f;
         if (!isLoggingIn)
         {
             try
@@ -179,7 +204,21 @@ public static class PresetManager
                     PresetDynamicsState.ApplyConfigToState(noWickyXIV.Config, _liveDynamicsPreset.Dynamics);
                 }
                 preset.Dynamics ??= PresetDynamicsState.SnapshotFrom(noWickyXIV.Config);
-                PresetDynamicsState.ApplyStateToConfig(preset.Dynamics, noWickyXIV.Config);
+                if (willTransition)
+                {
+                    // Defer apply — Update() will write incoming
+                    // Dynamics to Config when the position lerp
+                    // completes. Until then, Config keeps the
+                    // outgoing preset's settings so PitchTilt /
+                    // PositionFloat / etc. keep their accumulated
+                    // contributions across the transition.
+                    _pendingDynamicsApply = preset;
+                }
+                else
+                {
+                    PresetDynamicsState.ApplyStateToConfig(preset.Dynamics, noWickyXIV.Config);
+                    _pendingDynamicsApply = null;
+                }
             }
             catch { /* defensive */ }
         }
@@ -331,8 +370,27 @@ public static class PresetManager
             // Smoothstep all transition axes toward the target.
             float dur = MathF.Max(0.05f, noWickyXIV.Config.PresetTransitionSeconds);
             float t = (float)((NowSec() - _txStartT) / dur);
-            if (t >= 1f) { t = 1f; _txActive = false; }
+            bool justEnded = false;
+            if (t >= 1f) { t = 1f; _txActive = false; justEnded = true; }
             float s = Smoothstep(t);
+
+            // Transition just completed — apply the pending Dynamics
+            // (deferred from ApplyPreset so feature toggles don't flip
+            // mid-transition and drop the camera). Position offsets
+            // have settled at the new preset's values, so any feature-
+            // toggle change here lands on the already-correct camera
+            // pose without a visible jump.
+            if (justEnded && _pendingDynamicsApply != null)
+            {
+                try
+                {
+                    var pending = _pendingDynamicsApply;
+                    _pendingDynamicsApply = null;
+                    if (pending.Dynamics != null)
+                        PresetDynamicsState.ApplyStateToConfig(pending.Dynamics, noWickyXIV.Config);
+                }
+                catch { /* defensive */ }
+            }
 
             // All four position axes (LookAt height, height, side,
             // live height) share the SAME smoothstep curve so they

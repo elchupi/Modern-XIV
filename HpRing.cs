@@ -92,42 +92,26 @@ public static unsafe class HpRing
             }
             ulong selfId = DalamudApi.ObjectTable?.LocalPlayer?.GameObjectId ?? 0UL;
 
-            // Hater list ∪ current target — entities currently aggroed
-            // onto the local player PLUS whatever's explicitly targeted.
-            // Anything outside that union (random passive mobs, NPCs,
-            // etc.) gets nothing.
-            var seen = new System.Collections.Generic.HashSet<ulong>();
-            var diagNames = new System.Collections.Generic.List<string>();
+            // Build the qualifying-enemy set first (no drawing yet) so
+            // we can compare against last frame's set for fade-in /
+            // fade-out tracking. An entry is in the set when it's the
+            // current target (hard/soft/mouseover) OR a hater with
+            // positive enmity.
+            var qualified = new System.Collections.Generic.HashSet<ulong>();
 
-            // Current targets (hard + soft + mouseover). D-pad cycle
-            // uses SoftTarget while highlighting the next enemy
-            // before the user locks it in; mouse-hover uses
-            // MouseOverTarget. Including all three so the ring
-            // follows whichever target slot the user is actively
-            // driving.
-            void TryAddTarget(Dalamud.Game.ClientState.Objects.Types.IGameObject t, string label)
+            void TryQualify(Dalamud.Game.ClientState.Objects.Types.IGameObject t)
             {
                 if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return;
                 if (!bn.IsTargetable) return;
                 if (bn.CurrentHp <= 0 || bn.MaxHp <= 0) return;
                 if (bn.GameObjectId == selfId) return;
                 if (bn.GameObjectId == skipId) return;
-                if (!seen.Add(bn.GameObjectId)) return;
-                float pct = MathF.Min(1f, MathF.Max(0f, bn.CurrentHp / (float)bn.MaxHp));
-                DrawRingsAtActorHead(dl, bn, pct);
-                try { diagNames.Add($"{label}:{bn.Name?.TextValue}"); } catch { }
+                qualified.Add(bn.GameObjectId);
             }
-            try { TryAddTarget(DalamudApi.TargetManager?.Target,         "target"); } catch { }
-            try { TryAddTarget(DalamudApi.TargetManager?.SoftTarget,     "soft"); } catch { }
-            try { TryAddTarget(DalamudApi.TargetManager?.MouseOverTarget,"mouse"); } catch { }
+            try { TryQualify(DalamudApi.TargetManager?.Target); }         catch { }
+            try { TryQualify(DalamudApi.TargetManager?.SoftTarget); }     catch { }
+            try { TryQualify(DalamudApi.TargetManager?.MouseOverTarget); }catch { }
 
-            // Hater list (engine's enmity table for the local player).
-            // Filter on Enmity > 0 — the raw Haters list includes any
-            // aggressive NPC that's flagged the player as a hater (i.e.
-            // would attack them on detection), even passive prowling
-            // mobs the player hasn't engaged. Requiring positive enmity
-            // means the player must have actually generated threat
-            // (took or dealt damage) against the entity.
             try
             {
                 var ui = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
@@ -146,22 +130,55 @@ public static unsafe class HpRing
                         if (bn.CurrentHp <= 0 || bn.MaxHp <= 0) continue;
                         if (bn.GameObjectId == selfId) continue;
                         if (bn.GameObjectId == skipId) continue;
-                        if (!seen.Add(bn.GameObjectId)) continue;
-                        float pct = MathF.Min(1f, MathF.Max(0f, bn.CurrentHp / (float)bn.MaxHp));
-                        DrawRingsAtActorHead(dl, bn, pct);
-                        try { diagNames.Add($"hater:{bn.Name?.TextValue}"); } catch { }
+                        qualified.Add(bn.GameObjectId);
                     }
                 }
             }
             catch { }
 
-            var nowDiag = (double)DateTime.UtcNow.Ticks / TimeSpan.TicksPerSecond;
-            if (nowDiag - _lastEnemyHb > 2.0)
+            // ---- Fade tracking ----
+            // Each tracked enemy gets a 0..1 fade value that ramps up
+            // toward 1 while qualified and back down toward 0 when not.
+            // Once it reaches 0, drop the entry. Keeps the ring on
+            // screen briefly after un-hovering / breaking aggro.
+            float dt = 0.016f;
+            try { dt = (float)DalamudApi.Framework.UpdateDelta.TotalSeconds; } catch { }
+            if (dt <= 0f) dt = 0.016f;
+            float kIn  = 1f - MathF.Exp(-noWickyXIV.Config.HpRingFadeInRate  * dt);
+            float kOut = 1f - MathF.Exp(-noWickyXIV.Config.HpRingFadeOutRate * dt);
+
+            // Touch all qualified actors (ramp up) — ensure entries
+            // exist even on first sight so we can fade IN as well.
+            foreach (var id in qualified)
             {
-                _lastEnemyHb = nowDiag;
-                try { DalamudApi.PluginLog.Information(
-                    $"[noWickyXIV] HpRing enemies drawn ({diagNames.Count}): "
-                    + string.Join(", ", diagNames)); } catch { }
+                _enemyFade.TryGetValue(id, out var prev);
+                _enemyFade[id] = prev + (1f - prev) * kIn;
+            }
+            // Ramp down anything tracked that's no longer qualified.
+            if (_pendingFadeRemove == null)
+                _pendingFadeRemove = new System.Collections.Generic.List<ulong>();
+            else _pendingFadeRemove.Clear();
+            foreach (var kv in _enemyFade)
+            {
+                if (qualified.Contains(kv.Key)) continue;
+                float decayed = kv.Value + (0f - kv.Value) * kOut;
+                if (decayed < 0.005f) _pendingFadeRemove.Add(kv.Key);
+                else _enemyFade[kv.Key] = decayed;
+            }
+            foreach (var id in _pendingFadeRemove) _enemyFade.Remove(id);
+
+            // ---- Draw all tracked entries (qualified or fading out) ----
+            foreach (var kv in _enemyFade)
+            {
+                ulong id = kv.Key;
+                float fade = kv.Value;
+                if (fade < 0.005f) continue;
+                var obj = DalamudApi.ObjectTable.SearchById((uint)(ulong)id);
+                if (obj == null || !obj.IsValid()) continue;
+                if (obj is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) continue;
+                if (bn.MaxHp <= 0) continue;
+                float pct = MathF.Min(1f, MathF.Max(0f, bn.CurrentHp / (float)bn.MaxHp));
+                DrawRingsAtActorHead(dl, bn, pct, alphaMul: fade);
             }
         }
 
@@ -216,6 +233,12 @@ public static unsafe class HpRing
 
     private static float _lastSeenLowestPct = 1f;
     private static double _lastEnemyHb;
+    // Per-enemy fade tracking: 0..1, ramps in while the actor
+    // qualifies (target/soft/mouseover/hater) and fades out when not.
+    // Lets the ring fade away when the user un-hovers a target rather
+    // than disappearing instantly.
+    private static readonly System.Collections.Generic.Dictionary<ulong, float> _enemyFade = new();
+    private static System.Collections.Generic.List<ulong> _pendingFadeRemove;
 
     // Shared ring-drawing helper. Pull the per-actor alpha + radius math
     // out so we can reuse it for the player, current target, and each
@@ -298,7 +321,8 @@ public static unsafe class HpRing
     private static void DrawRingsAtActorHead(
         ImDrawListPtr dl,
         Dalamud.Game.ClientState.Objects.Types.IGameObject actor,
-        float hpPct)
+        float hpPct,
+        float alphaMul = 1f)
     {
         if (actor == null) return;
         var headWorld = new Vector3(
@@ -307,7 +331,7 @@ public static unsafe class HpRing
             actor.Position.Z);
         if (!DalamudApi.GameGui.WorldToScreen(headWorld, out var screen))
             return;
-        DrawRingsAtScreen(dl, screen, hpPct, applyHpAlphaGate: false);
+        DrawRingsAtScreen(dl, screen, hpPct, applyHpAlphaGate: false, alphaMul: alphaMul);
     }
 
     // Renders the layered HP-ring visual at a fixed screen position.
@@ -321,7 +345,8 @@ public static unsafe class HpRing
     // LowHp=1 setting, full-HP actors are invisible and the ring
     // ramps in as HP drops.
     private static void DrawRingsAtScreen(ImDrawListPtr dl, Vector2 center, float hpPct,
-        bool applyHpAlphaGate = true)
+        bool applyHpAlphaGate = true,
+        float alphaMul = 1f)
     {
         var cfg = noWickyXIV.Config;
         float pct = MathF.Min(1f, MathF.Max(0f, hpPct));
@@ -333,17 +358,17 @@ public static unsafe class HpRing
         // based on aggro/target presence (the foreach in Draw filters
         // by hater list), not by HP — they should be fully visible
         // whenever drawn.
-        float baseAlphaMul = 1f;
-        float peakAlphaMul = 1f;
+        float baseAlphaMul = alphaMul;
+        float peakAlphaMul = alphaMul;
         if (applyHpAlphaGate)
         {
             float t = 1f - pct; // 0 at full HP, 1 at empty
-            baseAlphaMul = cfg.HpRingFullHpBaseAlpha
+            baseAlphaMul *= cfg.HpRingFullHpBaseAlpha
                          + (cfg.HpRingLowHpBaseAlpha - cfg.HpRingFullHpBaseAlpha) * t;
-            peakAlphaMul = cfg.HpRingFullHpPeakAlpha
+            peakAlphaMul *= cfg.HpRingFullHpPeakAlpha
                          + (cfg.HpRingLowHpPeakAlpha - cfg.HpRingFullHpPeakAlpha) * t;
-            if (baseAlphaMul < 0.005f && peakAlphaMul < 0.005f) return;
         }
+        if (baseAlphaMul < 0.005f && peakAlphaMul < 0.005f) return;
 
         float baseR = cfg.HpRingRadius;
 

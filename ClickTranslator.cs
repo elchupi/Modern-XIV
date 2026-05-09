@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace noWickyXIV;
 
@@ -264,12 +265,17 @@ public static class ClickTranslator
         {
             _lmbPrev = false;
             SetBothClickOverride(false);
+            CancelAutoCycle();
             UninstallHook();
             return;
         }
 
         // Lazy-install the keyboard hook on first frame the feature is on
         EnsureHookInstalled();
+
+        // Drive any in-flight auto-cycle. Runs on the main game thread
+        // so the GCD probe can safely read game memory.
+        TickAutoCycle();
 
         // Drive the MouseBothClick override off the same gates that would
         // allow translation to fire — only force-off when the user is
@@ -299,16 +305,243 @@ public static class ClickTranslator
         // RMB is a virtual Ctrl modifier (per user spec).
         bool ctrlLike = kbCtrl || rmb;
 
+        // Auto-cycle: a single LMB click runs the FULL combo cycle for the
+        // current positional, GCD-paced. Same suppression rules as the
+        // per-click injector — any manual modifier or True North / Meikyo
+        // falls back through to the single-click path below.
+        if (noWickyXIV.Config.EnablePositionalAutoCycle
+            && !kbShift && !ctrlLike
+            && !HasPositionalBypassBuff()
+            && HasHostileTarget())
+        {
+            StartAutoCycle(GetTargetPositional());
+            return;
+        }
+
+        // Positional auto-injection: when no manual modifier is held and the
+        // current target is a hostile BattleNpc, swap the default rear path
+        // for a Shift/Ctrl-like virtual modifier based on which arc the
+        // player is standing in. Manual modifiers always win. True North
+        // (1250) OR Meikyo Shisui (1233) suppresses the swap entirely —
+        // both buffs make positional/combo reqs irrelevant, so let the
+        // user drive the slot manually.
+        bool autoShift = false;
+        bool autoCtrlLike = false;
+        if (noWickyXIV.Config.EnablePositionalAutoLmb && !kbShift && !ctrlLike && !HasPositionalBypassBuff())
+        {
+            switch (GetTargetPositional())
+            {
+                case PositionalZone.Front: autoCtrlLike = true; break;
+                case PositionalZone.Flank: autoShift    = true; break;
+            }
+        }
+
         // All LMB outputs are Shift+<digit>:
         //   plain LMB    → Shift+2
         //   Shift+LMB    → Shift+3 (user already holds Shift; just send 3)
         //   Ctrl/RMB+LMB → Shift+1
         int digitVk;
-        if      (kbShift)  digitVk = VK_3;
-        else if (ctrlLike) digitVk = VK_1;
-        else               digitVk = VK_2;
+        bool effectiveShift = kbShift || autoShift;
+        bool effectiveCtrlLike = ctrlLike || autoCtrlLike;
+        if      (effectiveShift)    digitVk = VK_3;
+        else if (effectiveCtrlLike) digitVk = VK_1;
+        else                        digitVk = VK_2;
 
+        // physicalShift only true when user is actually holding Shift —
+        // for the auto-flank path we still need to synthesize the Shift
+        // modifier ourselves.
         SendShiftDigit(digitVk, kbShift);
+    }
+
+    private const uint STATUS_TRUE_NORTH    = 1250;
+    private const uint STATUS_MEIKYO_SHISUI = 1233;
+
+    // Auto-cycle state machine, driven from Update() which runs on
+    // the Framework thread (main game thread). Game-memory reads such
+    // as ActionManager.GetRecastTime are only safe on this thread —
+    // running them from a Task.Run worker returned bogus data and
+    // tripped the "registered" check, which is why mid-sequence chords
+    // were dropping.
+    private enum CyclePhase { Idle, WaitingToRegister, WaitingForTail }
+    private static CyclePhase _cyclePhase = CyclePhase.Idle;
+    private static int[]?     _cycleSeq;
+    private static int        _cycleIdx;
+    private static double     _cyclePhaseStartS;
+    // Previous-frame GCD remaining, used to detect the rising edge
+    // (old GCD ending → new GCD starting) that means our chord
+    // actually landed. Sentinel -1 = "first frame of phase".
+    private static float      _cyclePrevRemaining;
+
+    // SAM weaponskill IDs — all share the global GCD recast group, so
+    // probing any of them reads the GCD timer. We probe multiple
+    // because individual replaced actions (e.g. Hakaze → Gyofu at
+    // lv92) can report 0 from GetRecastTime even when the GCD is
+    // running. Taking the max across the set is robust to any one of
+    // them being inert.
+    private static readonly uint[] SAM_GCD_PROBE_IDS = new uint[]
+    {
+        7477,   // Hakaze   (lv1, upgraded to Gyofu at 92)
+        36963,  // Gyofu    (lv92)
+        7478,   // Jinpu
+        7479,   // Shifu
+        7480,   // Yukikaze
+        7481,   // Gekko
+        7482,   // Kasha
+    };
+
+    private static unsafe float GetGcdRemainingSeconds()
+    {
+        try
+        {
+            var am = ActionManager.Instance();
+            if (am == null) return 0f;
+            float maxRemaining = 0f;
+            foreach (var id in SAM_GCD_PROBE_IDS)
+            {
+                float total   = am->GetRecastTime(ActionType.Action, id);
+                float elapsed = am->GetRecastTimeElapsed(ActionType.Action, id);
+                float remaining = total - elapsed;
+                if (remaining > maxRemaining) maxRemaining = remaining;
+            }
+            return maxRemaining;
+        }
+        catch { return 0f; }
+    }
+
+    private const float CYCLE_REGISTER_THRESHOLD_S = 0.3f;
+    private const double CYCLE_REGISTER_TIMEOUT_S  = 1.5;
+    private const double CYCLE_MAX_WAIT_S          = 5.0;
+
+    private static double NowSeconds() => Environment.TickCount64 / 1000.0;
+
+    private static void StartAutoCycle(PositionalZone zone)
+    {
+        // Each positional has its own dedicated hotbar slot that
+        // auto-upgrades through the combo branch. So all chords for a
+        // given cycle target the SAME slot — pressing it N times runs
+        // hakaze → next combo step → next combo step.
+        _cycleSeq = zone switch
+        {
+            PositionalZone.Front => new[] { VK_1, VK_1 },              // hakaze → yukikaze
+            PositionalZone.Flank => new[] { VK_3, VK_3, VK_3 },        // hakaze → shifu → kasha
+            _                    => new[] { VK_2, VK_2, VK_2 },        // hakaze → jinpu → gekko
+        };
+        _cycleIdx = 0;
+        SendShiftDigit(_cycleSeq[0], false);
+        if (_cycleSeq.Length <= 1) { _cyclePhase = CyclePhase.Idle; _cycleSeq = null; return; }
+        _cyclePhase = CyclePhase.WaitingToRegister;
+        _cyclePhaseStartS = NowSeconds();
+        _cyclePrevRemaining = -1f;
+    }
+
+    private static void CancelAutoCycle()
+    {
+        _cyclePhase = CyclePhase.Idle;
+        _cycleSeq = null;
+    }
+
+    // Drive the cycle one frame. Called from Update() so all game-
+    // memory reads (ActionManager.GetRecastTime) are on the main
+    // thread. Returns true if the cycle is active (caller should not
+    // re-enter single-click logic).
+    private static void TickAutoCycle()
+    {
+        if (_cyclePhase == CyclePhase.Idle || _cycleSeq == null) return;
+
+        // FFXIV's action queue accepts only in the last ~0.5s of the
+        // GCD; firing earlier silently drops the input. 0.4 sits just
+        // inside that window with headroom for input latency.
+        const float windowSec = 0.4f;
+
+        double phaseElapsed = NowSeconds() - _cyclePhaseStartS;
+        if (phaseElapsed > CYCLE_MAX_WAIT_S) { CancelAutoCycle(); return; }
+
+        float remaining = GetGcdRemainingSeconds();
+
+        if (_cyclePhase == CyclePhase.WaitingToRegister)
+        {
+            // Detect a rising edge in GCD remaining — old GCD wound
+            // down past 0 and a fresh GCD just kicked off. A simple
+            // "remaining > threshold" check would falsely register on
+            // the OLD GCD's tail (e.g. 0.39s remaining after firing
+            // at 0.4) and immediately fire the next chord, which
+            // would collide with the queue.
+            if (_cyclePrevRemaining >= 0f &&
+                remaining > _cyclePrevRemaining + 0.5f)
+            {
+                _cyclePhase = CyclePhase.WaitingForTail;
+                _cyclePhaseStartS = NowSeconds();
+                _cyclePrevRemaining = remaining;
+                return;
+            }
+            _cyclePrevRemaining = remaining;
+            // Chord didn't register within the timeout — bail out
+            // rather than spam the rest of the sequence into the void.
+            if (phaseElapsed > CYCLE_REGISTER_TIMEOUT_S) CancelAutoCycle();
+            return;
+        }
+
+        if (_cyclePhase == CyclePhase.WaitingForTail)
+        {
+            if (remaining > windowSec) return;
+            // Fire next chord
+            _cycleIdx++;
+            if (_cycleIdx >= _cycleSeq.Length) { CancelAutoCycle(); return; }
+            SendShiftDigit(_cycleSeq[_cycleIdx], false);
+            if (_cycleIdx >= _cycleSeq.Length - 1) { CancelAutoCycle(); return; }
+            _cyclePhase = CyclePhase.WaitingToRegister;
+            _cyclePhaseStartS = NowSeconds();
+            _cyclePrevRemaining = -1f;
+        }
+    }
+
+    private static bool HasPositionalBypassBuff()
+    {
+        try
+        {
+            var p = DalamudApi.ObjectTable.LocalPlayer;
+            if (p == null) return false;
+            var statuses = p.StatusList;
+            if (statuses == null) return false;
+            for (int i = 0; i < statuses.Length; i++)
+            {
+                var s = statuses[i];
+                if (s == null) continue;
+                if (s.StatusId == STATUS_TRUE_NORTH || s.StatusId == STATUS_MEIKYO_SHISUI)
+                    return true;
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    private enum PositionalZone { Rear, Front, Flank }
+
+    private static PositionalZone GetTargetPositional()
+    {
+        try
+        {
+            var self = DalamudApi.ObjectTable.LocalPlayer;
+            if (self == null) return PositionalZone.Rear;
+            var t = DalamudApi.TargetManager?.Target;
+            if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return PositionalZone.Rear;
+            if ((byte)bn.BattleNpcKind == 2) return PositionalZone.Rear;
+
+            // FFXIV rotation 0 = facing -Z. Forward = (-sin θ, 0, -cos θ).
+            float ex = -MathF.Sin(bn.Rotation);
+            float ez = -MathF.Cos(bn.Rotation);
+            float dx = self.Position.X - bn.Position.X;
+            float dz = self.Position.Z - bn.Position.Z;
+
+            float fwd   = dx * ex + dz * ez;          // +front, -rear
+            float right = dx * ez - dz * ex;          // ± flank
+
+            // Symmetric 90° quadrants by |right| vs fwd.
+            if (fwd >  MathF.Abs(right)) return PositionalZone.Front;
+            if (fwd < -MathF.Abs(right)) return PositionalZone.Rear;
+            return PositionalZone.Flank;
+        }
+        catch { return PositionalZone.Rear; }
     }
 
     // ---- Low-level keyboard hook: physical "2" + forward/back → transform ----

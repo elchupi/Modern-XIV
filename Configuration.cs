@@ -364,6 +364,9 @@ public class PresetDynamicsState
 
     public bool  HideTargetArrow                   = false;
     public bool  EnableThirdPersonClickTranslation = false;
+    public bool  EnablePositionalAutoLmb           = true;
+    public bool  EnablePositionalAutoCycle         = false;
+    public float PositionalAutoCycleDelaySeconds   = 2.0f;
     public bool  EnableFovZoomContinuation         = true;
     public float FovZoomMinFov                     = 0.25f;
     public bool  LockCameraDuringNpcDialogue       = true;
@@ -468,6 +471,9 @@ public class PresetDynamicsState
 
         s.HideTargetArrow                   = cfg.HideTargetArrow;
         s.EnableThirdPersonClickTranslation = cfg.EnableThirdPersonClickTranslation;
+        s.EnablePositionalAutoLmb           = cfg.EnablePositionalAutoLmb;
+        s.EnablePositionalAutoCycle         = cfg.EnablePositionalAutoCycle;
+        s.PositionalAutoCycleDelaySeconds   = cfg.PositionalAutoCycleDelaySeconds;
         s.EnableFovZoomContinuation         = cfg.EnableFovZoomContinuation;
         s.FovZoomMinFov                     = cfg.FovZoomMinFov;
         s.LockCameraDuringNpcDialogue       = cfg.LockCameraDuringNpcDialogue;
@@ -561,6 +567,9 @@ public class PresetDynamicsState
 
         cfg.HideTargetArrow                   = s.HideTargetArrow;
         cfg.EnableThirdPersonClickTranslation = s.EnableThirdPersonClickTranslation;
+        cfg.EnablePositionalAutoLmb           = s.EnablePositionalAutoLmb;
+        cfg.EnablePositionalAutoCycle         = s.EnablePositionalAutoCycle;
+        cfg.PositionalAutoCycleDelaySeconds   = s.PositionalAutoCycleDelaySeconds;
         cfg.EnableFovZoomContinuation         = s.EnableFovZoomContinuation;
         cfg.FovZoomMinFov                     = s.FovZoomMinFov;
         cfg.LockCameraDuringNpcDialogue       = s.LockCameraDuringNpcDialogue;
@@ -1009,6 +1018,25 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     //   W (fwd)  + LMB     → Shift+3   (W wins if user holds W+Shift+LMB)
     public bool EnableThirdPersonClickTranslation = false;
 
+    // When enabled, the LMB rising-edge handler in ClickTranslator
+    // injects a virtual modifier based on the player's positional
+    // zone vs the current target:
+    //   Rear  → no injection (default Shift+2 / combo opener slot)
+    //   Flank → virtual Shift  (Shift+3 / flank slot)
+    //   Front → virtual RMB    (Shift+1 / front slot)
+    // Holding Shift/Ctrl/RMB physically still wins — manual override.
+    public bool EnablePositionalAutoLmb = true;
+
+    // When enabled, a single LMB click runs the FULL combo cycle for
+    // the current positional, GCD-paced. Sequences:
+    //   Rear   → Shift+2, Shift+2, Shift+2
+    //   Flank  → Shift+2, Shift+3, Shift+3
+    //   Front  → Shift+2, Shift+1
+    // Same suppression rules as the per-click injector: any manual
+    // modifier or True North / Meikyo Shisui falls back to single-click.
+    public bool  EnablePositionalAutoCycle = false;
+    public float PositionalAutoCycleDelaySeconds = 2.0f;
+
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the
     // ConditionFlag.InCombat is set, then back to the captured baseline
@@ -1059,6 +1087,11 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float HpRingFullHpPeakAlpha    = 1.0f;
     public float HpRingLowHpBaseAlpha     = 0.8f;
     public float HpRingLowHpPeakAlpha     = 1.0f;
+    // Per-enemy fade in / out rates (1/s). Higher = snappier.
+    // Default 12 in / 5 out = ~80 ms fade-in (responsive on hover)
+    // and ~200 ms fade-out (lingers briefly after un-hover).
+    public float HpRingFadeInRate         = 12f;
+    public float HpRingFadeOutRate        = 5f;
     // Ring color (RGB 0..1).
     public float HpRingColorR             = 1.0f;
     public float HpRingColorG             = 0.25f;

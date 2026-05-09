@@ -439,6 +439,7 @@ public static class PluginUI
         ImGui.Spacing();
 
         ResetSliderFloat("Camera Height Offset", ref preset.HeightOffset, -2, 4, 0, "%.2f");
+        ImGuiEx.SetItemTooltip("Ctrl+scroll in-game adjusts this same value.");
         ResetSliderFloat("Camera Side Offset", ref preset.SideOffset, -1, 1, 0, "%.2f");
         ResetSliderFloat("Tilt", ref preset.Tilt, -MathF.PI, MathF.PI, 0, "%f");
         ImGuiEx.SetItemTooltip("Not meant for general gameplay use! Will be moved to a separate feature in a later update.");
@@ -1669,6 +1670,25 @@ public static class PluginUI
                 "  Shift   + LMB  → 1\n" +
                 "  Ctrl    + LMB  → 3\n" +
                 "  LMB            → 2");
+            ImGui.Separator();
+            ConfigCheckbox("Positional auto-modifier##ClickTranslate", ref noWickyXIV.Config.EnablePositionalAutoLmb);
+            ImGui.TextDisabled(
+                "Plain LMB picks slot based on player's positional vs target:\n" +
+                "  Rear   → Shift+2 (default)\n" +
+                "  Flank  → Shift+3 (as if Shift+LMB)\n" +
+                "  Front  → Shift+1 (as if RMB+LMB)\n" +
+                "Holding Shift / Ctrl / RMB still wins manually.\n" +
+                "Suppressed while True North or Meikyo Shisui is active.");
+            ImGui.Separator();
+            ConfigCheckbox("Positional auto-cycle (one click → full combo)##ClickTranslate", ref noWickyXIV.Config.EnablePositionalAutoCycle);
+            ImGui.TextDisabled(
+                "One LMB click fires the whole combo for the current positional:\n" +
+                "  Rear   → Shift+2 ×3 (hakaze→jinpu→gekko)\n" +
+                "  Flank  → Shift+3 ×3 (hakaze→shifu→kasha)\n" +
+                "  Front  → Shift+1 ×2 (hakaze→yukikaze)\n" +
+                "Re-clicking mid-sequence cancels and starts fresh.\n" +
+                "Pacing reads live GCD; auto-fires inside FFXIV's action queue.\n" +
+                "Suppressed by manual modifier or True North / Meikyo.");
             ImGuiEx.EndGroupBox();
         }
 

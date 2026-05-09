@@ -30,7 +30,14 @@ public static class PresetManager
             if (string.IsNullOrEmpty(name)) return;
             var preset = noWickyXIV.Config.Presets.FirstOrDefault(p => p.Name == name);
             if (preset == null) return;
-            ApplyPreset(PresetOverride = preset, isLoggingIn: true);
+            // Set ActivePreset (green = auto-active) rather than
+            // PresetOverride (blue = manual override). The override
+            // semantics suppress condition-driven swaps; on plugin
+            // start the user wants conditions to keep working AND
+            // the last preset to be the seed in the active slot.
+            ApplyPreset(preset, isLoggingIn: true);
+            ActivePreset = preset;
+            PresetOverride = null;
         }
         catch { /* defensive */ }
     }
@@ -361,6 +368,23 @@ public static class PresetManager
         // gliding in over 5 seconds).
         ApplyPreset(preset, isLoggingIn, transition: !isLoggingIn);
         ActivePreset = preset;
+
+        // Persist the picked preset's name so RestoreLastActivePreset
+        // can re-apply it next session even when the user never
+        // manually clicks a preset (auto-condition picks were never
+        // saved before, leaving LastActivePresetName empty and the
+        // restore path falling back to a default that didn't match
+        // the user's last-seen height).
+        try
+        {
+            if (!string.IsNullOrEmpty(preset.Name)
+                && noWickyXIV.Config.LastActivePresetName != preset.Name)
+            {
+                noWickyXIV.Config.LastActivePresetName = preset.Name;
+                noWickyXIV.Config.Save();
+            }
+        }
+        catch { /* defensive */ }
     }
 
     public static unsafe void Update()

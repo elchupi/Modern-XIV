@@ -154,37 +154,33 @@ public static class InputHandler
 
             if (ctrl)
             {
-                // HEIGHT — write to the active preset's LiveHeightOffset
-                // so the tuning persists with that specific preset
-                // rather than stacking globally on every preset
-                // (which made conditions-driven swaps drop the camera
-                // underground when the destination preset's own
-                // HeightOffset was negative). Falls back to
-                // Config.GlobalHeightOffset when the active preset is
-                // the DefaultPreset — keeps backward compat with
-                // setups that hadn't saved per-preset values yet.
-                // Cancel any in-flight transition so the lerp
-                // doesn't fight the user's manual nudge.
+                // HEIGHT — write to the active preset's HeightOffset
+                // (the same field the editor's "Camera Height Offset"
+                // slider shows). User-visible: scroll up/down adjusts
+                // the saved baseline directly so the editor reflects
+                // the change immediately and the value persists.
+                // Cancel any in-flight transition so the lerp doesn't
+                // fight the user's manual nudge.
                 PresetManager.CancelTransitionToTarget();
                 float step = noWickyXIV.Config.HeightOffsetStep;
                 var active = PresetManager.CurrentPreset;
 
                 if (active != null && active != PresetManager.DefaultPreset)
                 {
-                    float next = active.LiveHeightOffset + wheel * step;
-                    if (next < -2f) next = -2f;
-                    if (next >  4f) next =  4f;
-                    if (Math.Abs(next - active.LiveHeightOffset) > 0.0001f)
+                    float next = active.HeightOffset + wheel * step;
+                    if (next < -10f) next = -10f;
+                    if (next >  10f) next =  10f;
+                    if (Math.Abs(next - active.HeightOffset) > 0.0001f)
                     {
-                        active.LiveHeightOffset = next;
+                        active.HeightOffset = next;
                         noWickyXIV.Config.Save();
                     }
                 }
                 else
                 {
                     float next = noWickyXIV.Config.GlobalHeightOffset + wheel * step;
-                    if (next < -2f) next = -2f;
-                    if (next >  4f) next =  4f;
+                    if (next < -10f) next = -10f;
+                    if (next >  10f) next =  10f;
                     if (Math.Abs(next - noWickyXIV.Config.GlobalHeightOffset) > 0.0001f)
                     {
                         noWickyXIV.Config.GlobalHeightOffset = next;

@@ -758,7 +758,7 @@ public static class ChatBubbles
             {
                 var tagC = ChannelTextColor(e.Channel, false);
                 tagC.W *= 0.7f * a;  // a touch dimmer than body text
-                uint tagCol = ImGui.GetColorU32(tagC);
+                uint tagCol = PackRgba(tagC);
                 float tagX = e.FromSelf
                     ? (bubbleLeft + bubbleW - channelTagSize.X)
                     : bubbleLeft;
@@ -778,13 +778,31 @@ public static class ChatBubbles
                 }
             }
 
-            // Draw the bubble background. Self and other share the
-            // same fill color — the visual differentiation is the
-            // L/R alignment, not a channel-conflicting blue tint.
-            // Channel color is conveyed by the body text and the
-            // tag above, so the bubble itself stays neutral.
-            var fillC = new Vector4(cfg.ChatBubblesOtherR, cfg.ChatBubblesOtherG, cfg.ChatBubblesOtherB, cfg.ChatBubblesOtherAlpha * a);
-            uint fillCol = ImGui.GetColorU32(fillC);
+            // Draw the bubble background. Self / other use their own
+            // color + alpha sliders so the user can style them
+            // independently. Earlier all bubbles used Other*, which
+            // ignored the Self alpha slider entirely (looked stuck at
+            // a fixed value regardless of where the user dragged it).
+            float fillR, fillG, fillB, fillA;
+            if (e.FromSelf)
+            {
+                fillR = cfg.ChatBubblesSelfR;
+                fillG = cfg.ChatBubblesSelfG;
+                fillB = cfg.ChatBubblesSelfB;
+                fillA = cfg.ChatBubblesSelfAlpha * a;
+            }
+            else
+            {
+                fillR = cfg.ChatBubblesOtherR;
+                fillG = cfg.ChatBubblesOtherG;
+                fillB = cfg.ChatBubblesOtherB;
+                fillA = cfg.ChatBubblesOtherAlpha * a;
+            }
+            var fillC = new Vector4(fillR, fillG, fillB, fillA);
+            // Raw RGBA pack — bypasses ImGui.Style.Alpha which Dalamud
+            // applies via GetColorU32 and which capped the visible
+            // alpha around the user's reported "stuck at 85" value.
+            uint fillCol = PackRgba(fillC);
             var rectMin = new Vector2(bubbleLeft, bubbleTop);
             var rectMax = new Vector2(bubbleLeft + bubbleW, bubbleTop + bubbleH);
             dl.AddRectFilled(rectMin, rectMax, fillCol, 8f);
@@ -792,7 +810,7 @@ public static class ChatBubbles
             // Body text — channel-aware color, body font, line by line.
             var textC = ChannelTextColor(e.Channel, e.FromSelf);
             textC.W *= a;
-            uint textCol = ImGui.GetColorU32(textC);
+            uint textCol = PackRgba(textC);
             bool bodyPushedDraw = false;
             try
             {
@@ -815,7 +833,23 @@ public static class ChatBubbles
 
             // Sender / channel label — sender font, faded, sits
             // underneath the bubble on the same alignment side.
-            var labelC = new Vector4(0.85f, 0.85f, 0.85f, 0.85f * a);
+            // Alpha follows the user's bubble alpha slider (was
+            // hard-coded to 0.85 which made the label appear stuck
+            // around 50% regardless of slider position).
+            float labelAlpha = (e.FromSelf
+                ? cfg.ChatBubblesSelfAlpha
+                : cfg.ChatBubblesOtherAlpha) * a;
+            var labelC = new Vector4(0.85f, 0.85f, 0.85f, labelAlpha);
+
+            // Suppress the sender label when the previous (older) entry
+            // in the list is from the same sender — those messages are
+            // part of a continuous run and the name would just duplicate
+            // immediately above. Always show on entry[0] (no older
+            // entry exists) and on the first message of any new sender.
+            bool isFirstOfSenderRun = i == 0
+                || _entries[i - 1].Sender != e.Sender
+                || _entries[i - 1].FromSelf != e.FromSelf;
+            if (!isFirstOfSenderRun) labelC.W = 0f;
             float labelX = e.FromSelf
                 ? (rectMax.X - labelSize.X)
                 : rectMin.X;
@@ -827,7 +861,8 @@ public static class ChatBubbles
                     _senderFont.Push();
                     senderPushedDraw = true;
                 }
-                dl.AddText(new Vector2(labelX, bubbleTop + bubbleH + 2f), ImGui.GetColorU32(labelC), label);
+                if (labelC.W > 0.01f)
+                    dl.AddText(new Vector2(labelX, bubbleTop + bubbleH + 2f), PackRgba(labelC), label);
             }
             finally
             {
@@ -842,6 +877,42 @@ public static class ChatBubbles
         // track is drawn. The user gets feedback via the bubbles
         // themselves moving as they scroll.
         _ = maxScroll; // keep variable referenced for future use
+    }
+
+    // True when `candidate` looks like the shorthand display form of
+    // `fullName` that FFXIV's chat sender SeString emits as a TextPayload
+    // immediately after the PlayerPayload. Examples:
+    //   "Zykov R."  ↔  "Zykov Romanov"      → true
+    //   "First L."  ↔  "First Last"         → true
+    //   anything else                       → false
+    private static bool IsShorthandOf(string candidate, string fullName)
+    {
+        if (string.IsNullOrEmpty(candidate) || string.IsNullOrEmpty(fullName)) return false;
+        // Whole-name match (some encodings repeat the full name).
+        if (string.Equals(candidate.Trim(), fullName.Trim(),
+            StringComparison.OrdinalIgnoreCase))
+            return true;
+        var fullParts = fullName.Trim().Split(' ');
+        if (fullParts.Length < 2) return false;
+        // Build the expected shorthand: "First L." (first part + space
+        // + first letter of last part + period).
+        string expected = fullParts[0] + " " + fullParts[fullParts.Length - 1][0] + ".";
+        return string.Equals(candidate.Trim(), expected,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Pack a Vector4 (0..1 RGBA) into a 0xAABBGGRR uint without going
+    // through ImGui.GetColorU32 — that path multiplies by ImGui.Style
+    // .Alpha, which Dalamud's theme sets at ~0.85 by default and which
+    // capped the visible bubble alpha at the user's reported "stuck
+    // at 85" value regardless of the slider position.
+    private static uint PackRgba(Vector4 c)
+    {
+        byte r = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, c.X)) * 255f);
+        byte g = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, c.Y)) * 255f);
+        byte b = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, c.Z)) * 255f);
+        byte a = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, c.W)) * 255f);
+        return ((uint)a << 24) | ((uint)b << 16) | ((uint)g << 8) | r;
     }
 
     // Maps channel → the chat color shown in stock chat. Same color
@@ -967,6 +1038,13 @@ public static class ChatBubbles
         bool hasMapLink = false;
         bool hasItemLink = false;
         var sb = new System.Text.StringBuilder();
+        // Sender SeString from chat events typically encodes the
+        // player as a PlayerPayload (full name "First Last") followed
+        // by a TextPayload with the shortened display form
+        // (e.g. "First L."). Both got appended → "First LastFirst L.".
+        // Track when we just emitted a PlayerPayload's name and skip
+        // the next text payload if it's a prefix-match of that name.
+        string lastPlayerName = null;
         try
         {
             foreach (var p in seString.Payloads)
@@ -1015,10 +1093,33 @@ public static class ChatBubbles
                         try { sb.Append(atp.Text ?? ""); } catch { }
                         break;
                     case Dalamud.Game.Text.SeStringHandling.Payloads.PlayerPayload pp:
-                        try { sb.Append(pp.PlayerName ?? ""); } catch { }
+                        try
+                        {
+                            var nm = pp.PlayerName ?? "";
+                            sb.Append(nm);
+                            lastPlayerName = nm;
+                        }
+                        catch { lastPlayerName = null; }
                         break;
                     case Dalamud.Game.Text.SeStringHandling.ITextProvider tp:
-                        try { sb.Append(tp.Text ?? ""); } catch { }
+                        try
+                        {
+                            var t = tp.Text ?? "";
+                            // Skip the duplicate shorthand display name
+                            // FFXIV emits right after a PlayerPayload
+                            // (e.g. "Zykov R." after "Zykov Romanov").
+                            // Heuristic: starts with the same first
+                            // word as the PlayerPayload AND is short.
+                            if (lastPlayerName != null
+                                && IsShorthandOf(t, lastPlayerName))
+                            {
+                                lastPlayerName = null;
+                                break;
+                            }
+                            sb.Append(t);
+                            lastPlayerName = null;
+                        }
+                        catch { }
                         break;
                 }
             }

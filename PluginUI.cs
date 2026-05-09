@@ -1682,10 +1682,13 @@ public static class PluginUI
             ImGui.Separator();
             ConfigCheckbox("Positional auto-cycle (one click → full combo)##ClickTranslate", ref noWickyXIV.Config.EnablePositionalAutoCycle);
             ImGui.TextDisabled(
-                "One LMB click fires the whole combo for the current positional:\n" +
-                "  Rear   → Shift+2 ×3 (hakaze→jinpu→gekko)\n" +
-                "  Flank  → Shift+3 ×3 (hakaze→shifu→kasha)\n" +
-                "  Front  → Shift+1 ×2 (hakaze→yukikaze)\n" +
+                "One LMB click fires the whole combo. Chord 0 is always\n" +
+                "Hakaze; positional re-samples AFTER it lands so you can\n" +
+                "open from the back, then move to flank/front, and the\n" +
+                "rest of the cycle adapts:\n" +
+                "  Rear   → +Shift+2 ×2 (jinpu→gekko)\n" +
+                "  Flank  → +Shift+3 ×2 (shifu→kasha)\n" +
+                "  Front  → +Shift+1     (yukikaze)\n" +
                 "Re-clicking mid-sequence cancels and starts fresh.\n" +
                 "Pacing reads live GCD; auto-fires inside FFXIV's action queue.\n" +
                 "Suppressed by manual modifier or True North / Meikyo.");

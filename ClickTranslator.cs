@@ -314,7 +314,7 @@ public static class ClickTranslator
             && !HasPositionalBypassBuff()
             && HasHostileTarget())
         {
-            StartAutoCycle(GetTargetPositional());
+            StartAutoCycle();
             return;
         }
 
@@ -414,24 +414,42 @@ public static class ClickTranslator
 
     private static double NowSeconds() => Environment.TickCount64 / 1000.0;
 
-    private static void StartAutoCycle(PositionalZone zone)
+    private static void StartAutoCycle()
     {
-        // Each positional has its own dedicated hotbar slot that
-        // auto-upgrades through the combo branch. So all chords for a
-        // given cycle target the SAME slot — pressing it N times runs
-        // hakaze → next combo step → next combo step.
-        _cycleSeq = zone switch
-        {
-            PositionalZone.Front => new[] { VK_1, VK_1 },              // hakaze → yukikaze
-            PositionalZone.Flank => new[] { VK_3, VK_3, VK_3 },        // hakaze → shifu → kasha
-            _                    => new[] { VK_2, VK_2, VK_2 },        // hakaze → jinpu → gekko
-        };
+        // Chord 0 is always the opener (Hakaze). It doesn't matter
+        // which slot we hit — every "Hakaze" slot fires action-id
+        // Hakaze, which advances the shared combo state. The tail of
+        // the sequence (chord 1 onwards) is filled in once chord 0
+        // lands so the player's positional is sampled FRESH after the
+        // opener resolves — letting them dance into a new arc during
+        // chord 0's GCD and have the cycle adapt.
+        _cycleSeq = new[] { VK_2 };
         _cycleIdx = 0;
         SendShiftDigit(_cycleSeq[0], false);
-        if (_cycleSeq.Length <= 1) { _cyclePhase = CyclePhase.Idle; _cycleSeq = null; return; }
         _cyclePhase = CyclePhase.WaitingToRegister;
         _cyclePhaseStartS = NowSeconds();
         _cyclePrevRemaining = -1f;
+    }
+
+    // Append the positional-dependent tail to the cycle sequence,
+    // sampled at call time. Called once chord 0 has registered. Combo
+    // state in FFXIV locks after chord 1 (Shifu commits to Kasha,
+    // Jinpu commits to Gekko, Yukikaze terminates) so we don't need
+    // to re-sample again later.
+    private static void ResolveCycleTail()
+    {
+        if (_cycleSeq == null) return;
+        var zone = GetTargetPositional();
+        int[] tail = zone switch
+        {
+            PositionalZone.Front => new[] { VK_1 },          // → yukikaze
+            PositionalZone.Flank => new[] { VK_3, VK_3 },    // → shifu → kasha
+            _                    => new[] { VK_2, VK_2 },    // → jinpu → gekko
+        };
+        var combined = new int[_cycleSeq.Length + tail.Length];
+        _cycleSeq.CopyTo(combined, 0);
+        tail.CopyTo(combined, _cycleSeq.Length);
+        _cycleSeq = combined;
     }
 
     private static void CancelAutoCycle()
@@ -484,7 +502,18 @@ public static class ClickTranslator
         if (_cyclePhase == CyclePhase.WaitingForTail)
         {
             if (remaining > windowSec) return;
-            // Fire next chord
+
+            // First time we're about to fire a follow-up (sequence
+            // still only holds the opener) — sample positional NOW so
+            // the chord-1 slot reflects where the player actually is
+            // at the moment of firing, not where they were when chord
+            // 0 landed seconds ago. After chord 1, FFXIV's combo state
+            // locks the branch so chord 2 is determined.
+            if (_cycleSeq.Length == 1)
+                ResolveCycleTail();
+
+            if (_cycleSeq == null) { CancelAutoCycle(); return; }
+
             _cycleIdx++;
             if (_cycleIdx >= _cycleSeq.Length) { CancelAutoCycle(); return; }
             SendShiftDigit(_cycleSeq[_cycleIdx], false);

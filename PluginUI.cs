@@ -306,7 +306,8 @@ public static class PluginUI
         save |= ImGui.SliderFloat(id, ref val, min, max, format);
 
         if (!save) return;
-        noWickyXIV.Config.Save();
+        PresetManager.SyncConfigToActivePresetDynamics();
+        noWickyXIV.Config.SaveDebounced();
         if (CurrentPreset == PresetManager.CurrentPreset)
             CurrentPreset.Apply();
     }
@@ -334,7 +335,8 @@ public static class PluginUI
         ImGui.EndGroup();
 
         if (!save) return;
-        noWickyXIV.Config.Save();
+        PresetManager.SyncConfigToActivePresetDynamics();
+        noWickyXIV.Config.SaveDebounced();
         if (CurrentPreset == PresetManager.CurrentPreset)
             CurrentPreset.Apply();
     }
@@ -355,7 +357,8 @@ public static class PluginUI
         save |= ImGui.SliderFloat(id, ref val, min, max, format);
 
         if (!save) return;
-        noWickyXIV.Config.Save();
+        PresetManager.SyncConfigToActivePresetDynamics();
+        noWickyXIV.Config.SaveDebounced();
         if (CurrentPreset == PresetManager.CurrentPreset)
             CurrentPreset.Apply();
     }
@@ -559,13 +562,16 @@ public static class PluginUI
         ImGui.SameLine();
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 150 * ImGuiHelpers.GlobalScale);
         save |= ImGui.SliderFloat(id, ref val, min, max, format);
-        if (save) noWickyXIV.Config.Save();
+        if (save) { PresetManager.SyncConfigToActivePresetDynamics(); noWickyXIV.Config.SaveDebounced(); }
     }
 
     private static void ConfigCheckbox(string id, ref bool val)
     {
         if (ImGui.Checkbox(id, ref val))
-            noWickyXIV.Config.Save();
+        {
+            PresetManager.SyncConfigToActivePresetDynamics();
+            noWickyXIV.Config.SaveDebounced();
+        }
     }
 
     private static void ConfigSliderInt(string id, ref int val, int min, int max, int reset)
@@ -581,7 +587,7 @@ public static class PluginUI
         ImGui.SameLine();
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 150 * ImGuiHelpers.GlobalScale);
         save |= ImGui.SliderInt(id, ref val, min, max);
-        if (save) noWickyXIV.Config.Save();
+        if (save) { PresetManager.SyncConfigToActivePresetDynamics(); noWickyXIV.Config.SaveDebounced(); }
     }
 
     // Sticky filter for the JobAura layer editor. 0 = "All triggers",
@@ -1091,31 +1097,8 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Section: Crosshair overlay (Phase D)
-        if (DynamicsSectionMatches("Crosshair") && ImGuiEx.BeginGroupBox("Crosshair overlay"))
-        {
-            ConfigCheckbox("Enable##Crosshair", ref noWickyXIV.Config.EnableCrosshair);
-            ImGui.TextDisabled("Toggle hotkey is in the Hotkeys section (default V).");
-            ConfigSliderFloat("Size (px)##Crosshair",      ref noWickyXIV.Config.CrosshairSize,      2f,  40f,  8f);
-            ConfigSliderFloat("Thickness##Crosshair",      ref noWickyXIV.Config.CrosshairThickness, 1f,  6f,   2f);
-            ConfigSliderFloat("Fade speed##Crosshair",     ref noWickyXIV.Config.CrosshairFadeSpeed, 1f,  20f,  6f);
-            ConfigSliderFloat("Offset X (px)##Crosshair",  ref noWickyXIV.Config.CrosshairOffsetX,  -800f, 800f, 0f, "%.0f");
-            ConfigSliderFloat("Offset Y (px)##Crosshair",  ref noWickyXIV.Config.CrosshairOffsetY,  -600f, 600f, 0f, "%.0f");
-            ImGui.Separator();
-            ConfigCheckbox("Auto-target enemy under crosshair##XAutoT", ref noWickyXIV.Config.EnableCrosshairAutoTarget);
-            ImGui.TextDisabled(
-                "When you have NO target and the crosshair is over an enemy,\n" +
-                "auto-pick that enemy. Lets queued abilities / right-click\n" +
-                "attacks land without manually clicking the target first.\n" +
-                "Stops the moment a target is set (manual or otherwise).");
-            ConfigSliderFloat("Pick radius (px)##XAutoT",   ref noWickyXIV.Config.CrosshairAutoTargetRadius, 16f, 240f, 80f, "%.0f");
-            // Color sliders (R/G/B/A as separate floats so they fit ConfigSliderFloat)
-            ConfigSliderFloat("Color R##Crosshair", ref noWickyXIV.Config.CrosshairColorR, 0f, 1f, 1f);
-            ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
-            ConfigSliderFloat("Color B##Crosshair", ref noWickyXIV.Config.CrosshairColorB, 0f, 1f, 1f);
-            ConfigSliderFloat("Alpha##Crosshair",   ref noWickyXIV.Config.CrosshairColorA, 0f, 1f, 0.85f);
-            ImGuiEx.EndGroupBox();
-        }
+        // (Crosshair overlay moved to Misc tab — settings are global,
+        // not per-preset.)
 
         // [Third-Person LMB → hotbar translator moved to the Misc tab.]
         // [Job Aura section moved to the Effects tab — see DrawEffectsTab().]
@@ -1485,6 +1468,23 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
+        // ----- HP Vignette (red screen-edge overlay on low HP) -----
+        if (ImGuiEx.BeginGroupBox("HP Vignette (red screen-edge overlay on low HP)"))
+        {
+            ConfigCheckbox("Enable##HpVignette", ref noWickyXIV.Config.EnableHpVignette);
+            ImGui.TextDisabled(
+                "Bleeds a red gradient in from the screen edges when your HP\n" +
+                "drops below the threshold. Independent of the HP rings —\n" +
+                "useful when the rings are too subtle to read at a glance.");
+            ConfigSliderFloat("Threshold (HP frac)##HpVignette",  ref noWickyXIV.Config.HpVignetteThreshold, 0.05f, 1.0f, 0.55f, "%.2f");
+            ConfigSliderFloat("Max alpha##HpVignette",            ref noWickyXIV.Config.HpVignetteMaxAlpha,  0.05f, 1.0f, 0.55f, "%.2f");
+            ConfigSliderFloat("Edge thickness (frac)##HpVignette", ref noWickyXIV.Config.HpVignetteThickness, 0.05f, 0.5f, 0.20f, "%.2f");
+            ConfigSliderFloat("Color R##HpVignette", ref noWickyXIV.Config.HpVignetteR, 0f, 1f, 1.0f);
+            ConfigSliderFloat("Color G##HpVignette", ref noWickyXIV.Config.HpVignetteG, 0f, 1f, 0.05f);
+            ConfigSliderFloat("Color B##HpVignette", ref noWickyXIV.Config.HpVignetteB, 0f, 1f, 0.05f);
+            ImGuiEx.EndGroupBox();
+        }
+
         // ----- Target name -----
         if (ImGuiEx.BeginGroupBox("Target name"))
         {
@@ -1659,6 +1659,17 @@ public static class PluginUI
 
     private static unsafe void DrawMiscTab()
     {
+        // MSQ teleport overlay (floating pill at top-center of screen).
+        if (ImGuiEx.BeginGroupBox("MSQ Teleport overlay"))
+        {
+            ConfigCheckbox("Enable##MsqTeleport", ref noWickyXIV.Config.EnableMsqTeleport);
+            ImGui.TextDisabled(
+                "Floating pill at the top-center of the screen. Hover the\n" +
+                "area to slide it down; click to teleport to the nearest\n" +
+                "Aetheryte for your current Main Scenario Quest objective.");
+            ImGuiEx.EndGroupBox();
+        }
+
         // Third-Person LMB → hotbar translator (moved from Camera Dynamics).
         if (ImGuiEx.BeginGroupBox("Third-person LMB → hotbar translator"))
         {
@@ -1682,13 +1693,13 @@ public static class PluginUI
             ImGui.Separator();
             ConfigCheckbox("Positional auto-cycle (one click → full combo)##ClickTranslate", ref noWickyXIV.Config.EnablePositionalAutoCycle);
             ImGui.TextDisabled(
-                "One LMB click fires the whole combo. Chord 0 is always\n" +
-                "Hakaze; positional re-samples AFTER it lands so you can\n" +
-                "open from the back, then move to flank/front, and the\n" +
-                "rest of the cycle adapts:\n" +
-                "  Rear   → +Shift+2 ×2 (jinpu→gekko)\n" +
-                "  Flank  → +Shift+3 ×2 (shifu→kasha)\n" +
-                "  Front  → +Shift+1     (yukikaze)\n" +
+                "One LMB click fires the whole combo. Chord 0 (Hakaze)\n" +
+                "fires on the click-time slot; chord 1 re-samples\n" +
+                "positional so movement during chord 0's GCD steers the\n" +
+                "branch. Chord 2 stays on chord 1's slot (combo locks):\n" +
+                "  Front  → Shift+1 ×2 (hakaze → yukikaze)\n" +
+                "  Rear   → Shift+2 ×3 (hakaze → jinpu → gekko)\n" +
+                "  Flank  → Shift+3 ×3 (hakaze → shifu → kasha)\n" +
                 "Re-clicking mid-sequence cancels and starts fresh.\n" +
                 "Pacing reads live GCD; auto-fires inside FFXIV's action queue.\n" +
                 "Suppressed by manual modifier or True North / Meikyo.");
@@ -1723,6 +1734,47 @@ public static class PluginUI
         {
             ConfigCheckbox("Hide arrow above target##TargetArrow", ref noWickyXIV.Config.HideTargetArrow);
             ImGui.TextDisabled("Pins the _TargetCursor / _TargetCursorParent addon alpha to 0 each frame. Restored on toggle-off.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // SAM-specific: Ikishoten ↔ Ogi Namikiri slot swap.
+        if (ImGuiEx.BeginGroupBox("SAM: Ikishoten / Ogi Namikiri swap"))
+        {
+            ConfigCheckbox("Enable swap on Hotbar 7 Slot 3##IkiOgi", ref noWickyXIV.Config.EnableIkishotenOgiSwap);
+            ImGui.TextDisabled(
+                "Setup:\n" +
+                "  Hotbar 7 Slot 3 → Ikishoten (the active slot)\n" +
+                "  Hotbar 7 Slot 9 → Ogi Namikiri (the swap target)\n" +
+                "Toggle on AFTER both slots are set. While Ogi Namikiri Ready\n" +
+                "(2959) or Kaeshi: Namikiri Ready (2960) is up, slot 3 mirrors\n" +
+                "slot 9. Otherwise it restores whatever you had in slot 3 when\n" +
+                "you flipped the toggle. No action ids are hardcoded — both\n" +
+                "ends are read live from your hotbar.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Crosshair overlay — global (does NOT swap with preset).
+        if (ImGuiEx.BeginGroupBox("Crosshair overlay"))
+        {
+            ConfigCheckbox("Enable##Crosshair", ref noWickyXIV.Config.EnableCrosshair);
+            ImGui.TextDisabled("Toggle hotkey is in Camera Dynamics → Hotkeys (default V).");
+            ConfigSliderFloat("Size (px)##Crosshair",      ref noWickyXIV.Config.CrosshairSize,      2f,  40f,  8f);
+            ConfigSliderFloat("Thickness##Crosshair",      ref noWickyXIV.Config.CrosshairThickness, 1f,  6f,   2f);
+            ConfigSliderFloat("Fade speed##Crosshair",     ref noWickyXIV.Config.CrosshairFadeSpeed, 1f,  20f,  6f);
+            ConfigSliderFloat("Offset X (px)##Crosshair",  ref noWickyXIV.Config.CrosshairOffsetX,  -800f, 800f, 0f, "%.0f");
+            ConfigSliderFloat("Offset Y (px)##Crosshair",  ref noWickyXIV.Config.CrosshairOffsetY,  -600f, 600f, 0f, "%.0f");
+            ImGui.Separator();
+            ConfigCheckbox("Auto-target enemy under crosshair##XAutoT", ref noWickyXIV.Config.EnableCrosshairAutoTarget);
+            ImGui.TextDisabled(
+                "When you have NO target and the crosshair is over an enemy,\n" +
+                "auto-pick that enemy. Lets queued abilities / right-click\n" +
+                "attacks land without manually clicking the target first.\n" +
+                "Stops the moment a target is set (manual or otherwise).");
+            ConfigSliderFloat("Pick radius (px)##XAutoT",   ref noWickyXIV.Config.CrosshairAutoTargetRadius, 16f, 240f, 80f, "%.0f");
+            ConfigSliderFloat("Color R##Crosshair", ref noWickyXIV.Config.CrosshairColorR, 0f, 1f, 1f);
+            ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
+            ConfigSliderFloat("Color B##Crosshair", ref noWickyXIV.Config.CrosshairColorB, 0f, 1f, 1f);
+            ConfigSliderFloat("Alpha##Crosshair",   ref noWickyXIV.Config.CrosshairColorA, 0f, 1f, 0.85f);
             ImGuiEx.EndGroupBox();
         }
 

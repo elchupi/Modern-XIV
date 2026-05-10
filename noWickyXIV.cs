@@ -183,9 +183,16 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
                 didLogin = false;
         }
 
+        // Flush any pending debounced config writes once the user has
+        // gone idle (no edits for SAVE_DEBOUNCE_SECONDS). Persists all
+        // profiles in one shot since the serializer writes the whole
+        // Configuration.
+        Config.TickSaveDebounce();
+
         FreeCam.Update();
         PresetManager.Update();
         InputHandler.Update();
+        HotbarSwap.Update();
         CameraDynamics.Update();
         Crosshair.Update();
         JobAura.Update();
@@ -200,6 +207,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // MountMomentum DISABLED — see Initialize() above.
         // MountMomentum.Update();
         MountAudio.Update();
+        MsqTeleport.Update();
         CharacterRollHook.Tick();
     }
 
@@ -210,6 +218,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         Crosshair.Draw();
         JobAura.Draw();
         HpRing.Draw();
+        HpVignette.Draw();
+        MsqTeleport.Draw();
         TargetUI.Draw();
         ChatBubbles.Draw();
     }
@@ -238,6 +248,11 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
     protected override void Dispose(bool disposing)
     {
         if (!disposing) return;
+        // Flush any pending debounced config writes before tearing down
+        // the plugin so a fast unload right after a slider drag still
+        // persists the user's edits.
+        try { Config.FlushSaveDebounce(); } catch { }
+        try { HotbarSwap.RestoreOnUnload(); } catch { }
         IPC.Dispose();
         // Restore hotbars to fully opaque so toggling the plugin off
         // doesn't leave the user with faded/invisible bars.

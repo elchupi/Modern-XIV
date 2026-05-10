@@ -233,9 +233,12 @@ public static class LightSync
                     }
                     else if (!_lowHpArmed && pct > threshold + 0.05f)
                     {
-                        // Recovery edge: stop the pulse. In idle-dim
-                        // mode brightness goes to 0 (no event = lights
-                        // off via dim); otherwise restore to 100%.
+                        // Recovery edge: stop the pulse and walk the
+                        // color back from low-HP red to whatever the
+                        // current state actually is. Without resetting
+                        // color the bulb keeps its last RGB and shows
+                        // red even after a rez — the user observed
+                        // this (lights stay red after revive).
                         if (_lowHpPulseActive)
                         {
                             int restoreBright = cfg.LightSyncIdleDim ? 0 : 100;
@@ -243,6 +246,24 @@ public static class LightSync
                             _eventBrightLastSent = restoreBright;
                             _eventBrightUntilT = 0; // no pending event
                             _lowHpPulseActive = false;
+
+                            // Force the layered state machines to
+                            // re-fire their color on the next tick so
+                            // a still-in-combat / still-riding /
+                            // still-running player has the correct
+                            // color repainted instead of the stale red.
+                            _combatActive = false;
+                            _ridingActive = false;
+                            _runningActive = false;
+
+                            // If nothing else is going to repaint the
+                            // bulb, reset to a neutral white so the
+                            // red doesn't linger when idle-dim is off.
+                            // Idle-dim ON sends brightness 0 anyway,
+                            // so the color is moot — but we still send
+                            // it so the next non-dim event lights up
+                            // white instead of red.
+                            _ = SendColorRgb(0xFFFFFF);
                         }
                         _lowHpArmed = true;
                     }
@@ -457,6 +478,21 @@ public static class LightSync
         // Best-effort restore so we don't leave the user stuck on a
         // death-red override after a /xldev disable.
         try { _restoreCts?.Cancel(); } catch { }
+        // Fire a "neutral white + brightness 0" reset before tearing
+        // down the LAN socket. RestoreToVideoMode is a Govee-cloud
+        // path and may no-op on LAN-only setups, so we belt-and-
+        // suspenders with a direct neutral write that clears
+        // whatever the last event left on the bulb (e.g. the low-HP
+        // red). Wait briefly so the UDP packets actually leave the
+        // socket before LightSyncLan.Dispose closes it.
+        try
+        {
+            var t1 = SendColorRgb(0xFFFFFF);
+            var t2 = SendBrightness(0);
+            try { Task.WhenAll(t1, t2).Wait(TimeSpan.FromMilliseconds(300)); }
+            catch { /* swallow — best-effort */ }
+        }
+        catch { }
         try { _ = RestoreToVideoMode(); } catch { }
         try { LightSyncChroma.Dispose(); } catch { }
         try { LightSyncLan.Dispose(); } catch { }
@@ -1215,9 +1251,15 @@ public static class LightSync
         }
     }
 
+    // Brightness 0 alone leaves the bulb's stored color at whatever
+    // the last event set (combat yellow / low-HP red). Bulbs that
+    // interpret brightness 0 as "lowest dim, not off" still show the
+    // stale color. Send a neutral white alongside the dim so the
+    // color cleanly resets too.
     private static void ExitCombat()
     {
         _combatActive = false;
+        _ = SendColorRgb(0xFFFFFF);
         _ = SendBrightness(0);
         _eventBrightLastSent = 0;
     }
@@ -1226,6 +1268,7 @@ public static class LightSync
     {
         _ridingActive = false;
         _ridingLastBright = -1;
+        _ = SendColorRgb(0xFFFFFF);
         _ = SendBrightness(0);
         _eventBrightLastSent = 0;
     }
@@ -1234,6 +1277,7 @@ public static class LightSync
     {
         _runningActive = false;
         _runningLastBright = -1;
+        _ = SendColorRgb(0xFFFFFF);
         _ = SendBrightness(0);
         _eventBrightLastSent = 0;
     }

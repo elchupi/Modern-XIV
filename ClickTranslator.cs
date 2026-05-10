@@ -305,10 +305,20 @@ public static class ClickTranslator
         // RMB is a virtual Ctrl modifier (per user spec).
         bool ctrlLike = kbCtrl || rmb;
 
-        // Auto-cycle: a single LMB click runs the FULL combo cycle for the
-        // current positional, GCD-paced. Same suppression rules as the
-        // per-click injector — any manual modifier or True North / Meikyo
-        // falls back through to the single-click path below.
+        // Modifier-held LMB click while a cycle is running = explicit
+        // user override. Cancel the in-flight cycle so its remaining
+        // chords don't fire on top of the user's manual input.
+        if ((kbShift || ctrlLike) && _cyclePhase != CyclePhase.Idle)
+            CancelAutoCycle();
+
+        // Auto-cycle: a single LMB click runs the FULL combo cycle for
+        // the current positional, GCD-paced. Chord 0 is always the
+        // opener (Hakaze on Shift+2 — every slot's "Hakaze" fires
+        // the same action id, slot doesn't matter for chord 0).
+        // Chord 1 samples positional fresh at fire time and picks the
+        // branch slot. Chord 2 sticks with chord 1's slot because
+        // FFXIV's combo state locks the branch after Jinpu / Shifu /
+        // Yukikaze.
         if (noWickyXIV.Config.EnablePositionalAutoCycle
             && !kbShift && !ctrlLike
             && !HasPositionalBypassBuff()
@@ -416,13 +426,12 @@ public static class ClickTranslator
 
     private static void StartAutoCycle()
     {
-        // Chord 0 is always the opener (Hakaze). It doesn't matter
-        // which slot we hit — every "Hakaze" slot fires action-id
-        // Hakaze, which advances the shared combo state. The tail of
-        // the sequence (chord 1 onwards) is filled in once chord 0
-        // lands so the player's positional is sampled FRESH after the
-        // opener resolves — letting them dance into a new arc during
-        // chord 0's GCD and have the cycle adapt.
+        // Chord 0 = fixed-slot Hakaze. Every slot's "Hakaze" upgrade
+        // fires the same action id, so the choice of slot here only
+        // matters for the visual icon press, not the combo state we
+        // hand to chord 1. Shift+2 (rear-branch slot) is the
+        // arbitrary default. The cycle's tail is built later in
+        // ResolveCycleTail with the LIVE positional reading.
         _cycleSeq = new[] { VK_2 };
         _cycleIdx = 0;
         SendShiftDigit(_cycleSeq[0], false);
@@ -432,17 +441,17 @@ public static class ClickTranslator
     }
 
     // Append the positional-dependent tail to the cycle sequence,
-    // sampled at call time. Called once chord 0 has registered. Combo
-    // state in FFXIV locks after chord 1 (Shifu commits to Kasha,
-    // Jinpu commits to Gekko, Yukikaze terminates) so we don't need
-    // to re-sample again later.
+    // sampled at call time. Called right before chord 1 fires so the
+    // player's CURRENT positional steers the combo branch — even if
+    // they moved during chord 0's GCD. Chord 2 (if any) stays on
+    // chord 1's slot since FFXIV's combo state commits after chord 1.
     private static void ResolveCycleTail()
     {
         if (_cycleSeq == null) return;
         var zone = GetTargetPositional();
         int[] tail = zone switch
         {
-            PositionalZone.Front => new[] { VK_1 },          // → yukikaze
+            PositionalZone.Front => new[] { VK_1 },          // → yukikaze (terminates)
             PositionalZone.Flank => new[] { VK_3, VK_3 },    // → shifu → kasha
             _                    => new[] { VK_2, VK_2 },    // → jinpu → gekko
         };
@@ -460,8 +469,12 @@ public static class ClickTranslator
 
     // Drive the cycle one frame. Called from Update() so all game-
     // memory reads (ActionManager.GetRecastTime) are on the main
-    // thread. Returns true if the cycle is active (caller should not
-    // re-enter single-click logic).
+    // thread. Cancellation on user override is handled separately by
+    // the LMB rising-edge path in Update — if the user clicks LMB
+    // with a modifier held, that's the explicit "manual takeover"
+    // signal and we cancel there. Holding RMB for camera control
+    // alone is NOT an override (otherwise TPS players would never
+    // get a full cycle).
     private static void TickAutoCycle()
     {
         if (_cyclePhase == CyclePhase.Idle || _cycleSeq == null) return;
@@ -503,12 +516,11 @@ public static class ClickTranslator
         {
             if (remaining > windowSec) return;
 
-            // First time we're about to fire a follow-up (sequence
-            // still only holds the opener) — sample positional NOW so
-            // the chord-1 slot reflects where the player actually is
-            // at the moment of firing, not where they were when chord
-            // 0 landed seconds ago. After chord 1, FFXIV's combo state
-            // locks the branch so chord 2 is determined.
+            // Right before firing chord 1 — the moment the queue window
+            // opens — re-sample positional and append the tail. Player
+            // movement during chord 0's GCD therefore steers the
+            // branch. Chord 2 (if any) stays on chord 1's slot because
+            // FFXIV's combo state commits after Jinpu / Shifu / Yukikaze.
             if (_cycleSeq.Length == 1)
                 ResolveCycleTail();
 

@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System;
 using System.ComponentModel.DataAnnotations;
 using Dalamud.Configuration;
 
@@ -100,6 +101,11 @@ public enum BuiltinPresetCondition
     // preset that only kicks in during active combat movement, not
     // overworld traversal.
     [Display(Name = "Running in Combat")] RunningInCombat,
+    // Current target is an enemy actively casting a spell — useful
+    // for cinematic pull-back or wider-FoV presets that telegraph
+    // raid mechanics. Falls back to false when the target isn't a
+    // hostile BattleChara or isn't currently casting.
+    [Display(Name = "Enemy Casting")] EnemyCasting,
 }
 
 public class CameraConfigPreset
@@ -181,6 +187,23 @@ public class CameraConfigPreset
     }
 
     // Sprint detection — checks the local player's status list for
+    // True when the player's current target is a hostile BattleChara
+    // that is in the middle of casting a spell. BattleNpcKind 2 is
+    // friendly NPC — exclude it so a quest mob's IsCasting doesn't
+    // count. SoftTarget / MouseOverTarget are not consulted; this
+    // mirrors how the rest of the plugin treats "the engaged enemy."
+    public static bool IsTargetEnemyCasting()
+    {
+        try
+        {
+            var t = DalamudApi.TargetManager?.Target;
+            if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return false;
+            if ((byte)bn.BattleNpcKind == 2) return false;
+            return bn.IsCasting;
+        }
+        catch { return false; }
+    }
+
     // Sprint (status ID 50). Used by both the BuiltinPresetCondition
     // dispatch and LightSync's foot-movement state machine.
     public static bool HasSprintStatus()
@@ -230,6 +253,7 @@ public class CameraConfigPreset
                 BuiltinPresetCondition.RunningInCombat
                     => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
                        && JobAura.IsMoving,
+                BuiltinPresetCondition.EnemyCasting => IsTargetEnemyCasting(),
                 _ => false,
             };
         }
@@ -294,29 +318,8 @@ public class PresetDynamicsState
     public float ShoulderSwapCheckHz      = 5f;
     public float ShoulderSwapSafetyMargin = 0.4f;
 
-    // ---- Crosshair ----
-    public bool  EnableCrosshair    = false;
-    public float CrosshairSize      = 8f;
-    public float CrosshairThickness = 2f;
-    public float CrosshairFadeSpeed = 6f;
-    // Pixel offsets from the screen center. (0, 0) = dead center,
-    // negative X = left, negative Y = up. Lets the user move the
-    // reticle off-center for shoulder-cam aiming.
-    public float CrosshairOffsetX   = 0f;
-    public float CrosshairOffsetY   = 0f;
-    public float CrosshairColorR    = 1f;
-    public float CrosshairColorG    = 1f;
-    public float CrosshairColorB    = 1f;
-    public float CrosshairColorA    = 0.85f;
-    // Pixel radius around the crosshair center used for auto-target
-    // hit-testing. When the user has no target and the crosshair is
-    // over an enemy within this many screen pixels, the plugin
-    // auto-picks that enemy as the current target.
-    public float CrosshairAutoTargetRadius = 80f;
-    // Master toggle for the auto-target behaviour. Off = reticle is
-    // a passive aim aid only; the user's existing manual target picks
-    // are the only thing that drives Target.
-    public bool  EnableCrosshairAutoTarget = true;
+    // (Crosshair fields moved out of per-preset state — they live on
+    // the global Configuration only and don't swap with preset.)
 
     // ---- Combat Zoom ----
     public bool  EnableCombatZoom         = false;
@@ -419,18 +422,9 @@ public class PresetDynamicsState
         s.ShoulderSwapCheckHz      = cfg.ShoulderSwapCheckHz;
         s.ShoulderSwapSafetyMargin = cfg.ShoulderSwapSafetyMargin;
 
-        s.EnableCrosshair    = cfg.EnableCrosshair;
-        s.CrosshairSize      = cfg.CrosshairSize;
-        s.CrosshairThickness = cfg.CrosshairThickness;
-        s.CrosshairFadeSpeed = cfg.CrosshairFadeSpeed;
-        s.CrosshairOffsetX   = cfg.CrosshairOffsetX;
-        s.CrosshairOffsetY   = cfg.CrosshairOffsetY;
-        s.CrosshairColorR    = cfg.CrosshairColorR;
-        s.CrosshairColorG    = cfg.CrosshairColorG;
-        s.CrosshairColorB    = cfg.CrosshairColorB;
-        s.CrosshairColorA    = cfg.CrosshairColorA;
-        s.EnableCrosshairAutoTarget = cfg.EnableCrosshairAutoTarget;
-        s.CrosshairAutoTargetRadius = cfg.CrosshairAutoTargetRadius;
+        // Crosshair settings are intentionally NOT copied — they live
+        // on the global Configuration so changing presets doesn't move
+        // the reticle or rewire its behavior.
 
         s.EnableCombatZoom         = cfg.EnableCombatZoom;
         s.CombatZoomDistance       = cfg.CombatZoomDistance;
@@ -515,18 +509,8 @@ public class PresetDynamicsState
         cfg.ShoulderSwapCheckHz      = s.ShoulderSwapCheckHz;
         cfg.ShoulderSwapSafetyMargin = s.ShoulderSwapSafetyMargin;
 
-        cfg.EnableCrosshair    = s.EnableCrosshair;
-        cfg.CrosshairSize      = s.CrosshairSize;
-        cfg.CrosshairThickness = s.CrosshairThickness;
-        cfg.CrosshairFadeSpeed = s.CrosshairFadeSpeed;
-        cfg.CrosshairOffsetX   = s.CrosshairOffsetX;
-        cfg.CrosshairOffsetY   = s.CrosshairOffsetY;
-        cfg.CrosshairColorR    = s.CrosshairColorR;
-        cfg.CrosshairColorG    = s.CrosshairColorG;
-        cfg.CrosshairColorB    = s.CrosshairColorB;
-        cfg.CrosshairColorA    = s.CrosshairColorA;
-        cfg.EnableCrosshairAutoTarget = s.EnableCrosshairAutoTarget;
-        cfg.CrosshairAutoTargetRadius = s.CrosshairAutoTargetRadius;
+        // Crosshair settings are global, not per-preset — see comment
+        // in ApplyConfigToState above.
 
         cfg.EnableCombatZoom         = s.EnableCombatZoom;
         cfg.CombatZoomDistance       = s.CombatZoomDistance;
@@ -583,6 +567,41 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
         Disabled,
         Spectate,
         [Display(Name = "Free Cam")] FreeCam
+    }
+
+    // ---- Debounced save -------------------------------------------------
+    // Slider drags and Ctrl/Alt+scroll bursts otherwise call Save() every
+    // frame, hammering the config file. SaveDebounced() marks dirty +
+    // bumps a timestamp; TickSaveDebounce() (driven from the main update
+    // loop) flushes the actual Save once the user has been idle for
+    // SAVE_DEBOUNCE_SECONDS. FlushSaveDebounce() forces an immediate
+    // write (call on plugin disable / logout). The serializer writes the
+    // entire Configuration including every preset, so any pending edits
+    // across multiple presets all land in the same flush.
+    private const double SAVE_DEBOUNCE_SECONDS = 0.6;
+    private static bool   _saveDebouncePending;
+    private static double _saveDebounceLastDirtyAt;
+    private static double SaveDebounceNow() => Environment.TickCount64 / 1000.0;
+
+    public void SaveDebounced()
+    {
+        _saveDebouncePending = true;
+        _saveDebounceLastDirtyAt = SaveDebounceNow();
+    }
+
+    public void TickSaveDebounce()
+    {
+        if (!_saveDebouncePending) return;
+        if (SaveDebounceNow() - _saveDebounceLastDirtyAt < SAVE_DEBOUNCE_SECONDS) return;
+        _saveDebouncePending = false;
+        try { Save(); } catch { }
+    }
+
+    public void FlushSaveDebounce()
+    {
+        if (!_saveDebouncePending) return;
+        _saveDebouncePending = false;
+        try { Save(); } catch { }
     }
 
     public int Version { get; set; }
@@ -1027,6 +1046,12 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // Holding Shift/Ctrl/RMB physically still wins — manual override.
     public bool EnablePositionalAutoLmb = true;
 
+    // ---- Ikishoten ↔ Ogi Namikiri hotbar swap (Hotbar 7 Slot 3) ----
+    // While status 2959 (Ogi Ready) or 2960 (Kaeshi Ready) is on the
+    // player, the slot holds Ogi Namikiri (25804); otherwise it holds
+    // Ikishoten (16493). Off by default until the user validates.
+    public bool EnableIkishotenOgiSwap = false;
+
     // When enabled, a single LMB click runs the FULL combo cycle for
     // the current positional, GCD-paced. Sequences:
     //   Rear   → Shift+2, Shift+2, Shift+2
@@ -1036,6 +1061,11 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // modifier or True North / Meikyo Shisui falls back to single-click.
     public bool  EnablePositionalAutoCycle = false;
     public float PositionalAutoCycleDelaySeconds = 2.0f;
+
+    // ---- MSQ Teleport overlay ----
+    // Floating pill at top-center that slides down on hover and
+    // teleports to the nearest Aetheryte for the current MSQ quest.
+    public bool EnableMsqTeleport = false;
 
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the
@@ -1092,6 +1122,19 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // and ~200 ms fade-out (lingers briefly after un-hover).
     public float HpRingFadeInRate         = 12f;
     public float HpRingFadeOutRate        = 5f;
+
+    // ---- HP Vignette (red screen-edge overlay on low HP) ----
+    // Threshold: HP fraction at which vignette starts showing (0.6 =
+    //   60% HP). Below threshold the alpha ramps up quadratically.
+    // MaxAlpha: alpha at HP = 0.
+    // Thickness: depth of the gradient as a fraction of min(W,H).
+    public bool  EnableHpVignette     = false;
+    public float HpVignetteThreshold  = 0.55f;
+    public float HpVignetteMaxAlpha   = 0.55f;
+    public float HpVignetteThickness  = 0.20f;
+    public float HpVignetteR          = 1.0f;
+    public float HpVignetteG          = 0.05f;
+    public float HpVignetteB          = 0.05f;
     // Ring color (RGB 0..1).
     public float HpRingColorR             = 1.0f;
     public float HpRingColorG             = 0.25f;

@@ -136,7 +136,11 @@ public static class Crosshair
 
     private static bool ShouldHide()
     {
-        if (PluginUI.IsVisible) return true;
+        // Intentionally NOT hidden while the plugin's settings window
+        // is open — the user needs to see the reticle to dial in
+        // Offset X / Offset Y sliders against the actual crosshair
+        // position. Cutscene gates are kept since the engine fades
+        // gameplay UI during those.
         try
         {
             var cond = DalamudApi.Condition;

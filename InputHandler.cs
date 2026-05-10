@@ -173,7 +173,7 @@ public static class InputHandler
                     if (Math.Abs(next - active.HeightOffset) > 0.0001f)
                     {
                         active.HeightOffset = next;
-                        noWickyXIV.Config.Save();
+                        noWickyXIV.Config.SaveDebounced();
                     }
                 }
                 else
@@ -184,7 +184,7 @@ public static class InputHandler
                     if (Math.Abs(next - noWickyXIV.Config.GlobalHeightOffset) > 0.0001f)
                     {
                         noWickyXIV.Config.GlobalHeightOffset = next;
-                        noWickyXIV.Config.Save();
+                        noWickyXIV.Config.SaveDebounced();
                     }
                 }
                 SuppressNextZoom = true;
@@ -208,8 +208,16 @@ public static class InputHandler
                 if (Math.Abs(next - preset.SideOffset) > 0.0001f)
                 {
                     preset.SideOffset = next;
-                    noWickyXIV.Config.Save();
-                    try { preset.Apply(); } catch { }
+                    noWickyXIV.Config.SaveDebounced();
+                    // Don't call preset.Apply() — that re-snaps the
+                    // entire camera state, including writing
+                    // cam->lookAtHeightOffset = preset.LookAtHeightOffset
+                    // which wipes PitchTilt's accumulated offset and
+                    // shows up as a vertical jump on every Alt+scroll
+                    // tick. PresetManager.Update's outside-transition
+                    // pass mirrors preset.SideOffset → EffectiveSideOffset
+                    // each frame anyway, so the new value flows through
+                    // without snapping the look-at field.
                 }
                 SuppressNextZoom = true;
             }

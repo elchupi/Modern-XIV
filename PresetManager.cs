@@ -173,6 +173,25 @@ public static class PresetManager
     // it was active get persisted.
     private static CameraConfigPreset _liveDynamicsPreset;
 
+    // Push the current global Config's per-preset fields into the
+    // active preset's Dynamics state. Called from the UI helpers on
+    // every slider / checkbox edit so the active preset captures
+    // the change immediately — without this, edits live only in
+    // Config until the next preset switch and get stomped if Config
+    // is overwritten (e.g. clicking the active preset again, plugin
+    // reload, etc.).
+    public static void SyncConfigToActivePresetDynamics()
+    {
+        try
+        {
+            var preset = _liveDynamicsPreset;
+            if (preset == null) return;
+            preset.Dynamics ??= new PresetDynamicsState();
+            PresetDynamicsState.ApplyConfigToState(noWickyXIV.Config, preset.Dynamics);
+        }
+        catch { /* defensive */ }
+    }
+
     // When a transitioned preset switch is in flight, the incoming
     // preset's Dynamics is parked here until the transition completes.
     // Applying it at frame 0 caused features like PitchTilt to
@@ -504,12 +523,6 @@ public static class PresetManager
         CheckCameraConditionSets(false);
     }
 
-    // Throttled save state for auto-snapshot. We coalesce wheel-tick
-    // changes that arrive across many frames into a single Save()
-    // every ~0.5 s so we don't disk-thrash on a fast scroll burst.
-    private static double _lastAutoSaveAt;
-    private static bool   _autoSaveDirty;
-
     private static unsafe void AutoSnapshotCameraIntoActivePreset()
     {
         // Pick the preset the user is actually using. PresetOverride
@@ -547,20 +560,10 @@ public static class PresetManager
             dirty = true;
         }
 
-        if (dirty) _autoSaveDirty = true;
-
-        // Throttled save — at most twice a second. Avoids thrash
-        // during a continuous wheel-zoom burst.
-        if (_autoSaveDirty)
-        {
-            double now = NowSec();
-            if (now - _lastAutoSaveAt > 0.5)
-            {
-                _lastAutoSaveAt = now;
-                _autoSaveDirty = false;
-                try { noWickyXIV.Config.Save(); } catch { }
-            }
-        }
+        // Mark dirty for the global debounced-save tick. The shared
+        // debouncer batches all profile edits across the session into
+        // a single write once the user is idle.
+        if (dirty) noWickyXIV.Config.SaveDebounced();
     }
 
     public static void DisableCameraPresets()

@@ -23,7 +23,7 @@ public static unsafe class MsqTeleport
     private const float SLIDE_SPEED      = 8f;    // exp-lerp rate (1/s)
     private const float ROUNDING         = 10f;
 
-    // ── cached MSQ data (refreshed every ~2 s) ────────────────────
+    // ── cached MSQ data ──────────────────────────────────────────
     private static string _questName       = "";
     private static string _destZoneName    = "";
     private static uint   _bestAetheryteId;
@@ -33,6 +33,11 @@ public static unsafe class MsqTeleport
     private static string _dutyName = "";
     private static double _lastRefreshS;
     private const  double REFRESH_INTERVAL = 2.0;
+
+    // Skip redundant heavy work: only re-resolve aetherytes when the
+    // quest id or sequence actually changes.
+    private static ushort _lastMsqId;
+    private static byte   _lastSeq;
 
     // ── animation state ───────────────────────────────────────────
     private static float _revealT;        // 0 = hidden, 1 = fully slid down
@@ -44,7 +49,10 @@ public static unsafe class MsqTeleport
 
     public static void Update()
     {
+        // Only resolve quest data while the pill is actually visible
+        // (hovered). No polling when idle — zero cost, zero leaks.
         if (!noWickyXIV.Config.EnableMsqTeleport) return;
+        if (!_hovered) return;
 
         double now = Environment.TickCount64 / 1000.0;
         if (now - _lastRefreshS >= REFRESH_INTERVAL)
@@ -165,22 +173,18 @@ public static unsafe class MsqTeleport
 
     private static void RefreshMsqData()
     {
-        _questName = "";
-        _destZoneName = "";
-        _bestAetheryteId = 0;
-        _bestSubIndex = 0;
-        _bestAetheryteName = "";
-        _dutyContentId = 0;
-        _dutyName = "";
-
         try
         {
             // 1. Get current MSQ quest id from AgentScenarioTree.
+            //    This is cheap — two pointer reads.
             var agent = AgentScenarioTree.Instance();
-            if (agent == null || agent->Data == null) return;
+            if (agent == null || agent->Data == null)
+            {
+                ClearCachedData();
+                return;
+            }
 
             ushort msqId = 0;
-            // Try each path index — [0] is the main MSQ path.
             for (int i = 0; i < 3; i++)
             {
                 ushort id = agent->Data->MainScenarioQuestIds[i];
@@ -190,7 +194,20 @@ public static unsafe class MsqTeleport
                     break;
                 }
             }
-            if (msqId == 0) return;
+            if (msqId == 0) { ClearCachedData(); return; }
+
+            byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
+
+            // Fast path: quest id + sequence unchanged → no work needed.
+            // The heavy part (sheet lookups, aetheryte iteration) only
+            // runs when the player actually advances or changes quests.
+            if (msqId == _lastMsqId && seq == _lastSeq)
+                return;
+            _lastMsqId = msqId;
+            _lastSeq   = seq;
+
+            // Full resolve — quest or step changed.
+            ClearCachedData();
 
             // 2. Look up the quest in the Lumina Quest sheet.
             //    Quest sheet uses row id = questId + 0x10000 in some versions,
@@ -214,8 +231,6 @@ public static unsafe class MsqTeleport
             //    step (where the game is telling you to go right now).
             //    Then:  IssuerLocation as a last-resort fallback.
             var candidates = new List<(float x, float z, uint terr)>();
-
-            byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
 
             // TodoParams objective locations (step-based).
             // If we have a current sequence, try that step's group first,
@@ -404,6 +419,17 @@ public static unsafe class MsqTeleport
         {
             DalamudApi.LogDebug($"[MsqTeleport] Refresh failed: {ex.Message}");
         }
+    }
+
+    private static void ClearCachedData()
+    {
+        _questName = "";
+        _destZoneName = "";
+        _bestAetheryteId = 0;
+        _bestSubIndex = 0;
+        _bestAetheryteName = "";
+        _dutyContentId = 0;
+        _dutyName = "";
     }
 
     private static void OpenDutyFinder()

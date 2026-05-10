@@ -419,24 +419,118 @@ public static class ClickTranslator
     }
 
     private const float CYCLE_REGISTER_THRESHOLD_S = 0.3f;
-    private const double CYCLE_REGISTER_TIMEOUT_S  = 1.5;
-    private const double CYCLE_MAX_WAIT_S          = 5.0;
+    // Generous timeouts so a chord that didn't land (player out of
+    // range, target moved) keeps retrying until the player chases
+    // back into melee. ~14s sits just inside FFXIV's combo window.
+    private const double CYCLE_REGISTER_TIMEOUT_S  = 14.0;
+    private const double CYCLE_MAX_WAIT_S          = 14.0;
+    // How often to re-send the awaited chord while it hasn't
+    // registered. Chosen to be longer than the SendInput chord
+    // duration so we don't pile up overlapping presses, but short
+    // enough that the resume feels responsive.
+    private const double CYCLE_RETRY_INTERVAL_S    = 0.6;
+
+    // True once the positional tail has been appended to _cycleSeq.
+    // Replaces the older "if length == 1, resolve tail" proxy, which
+    // didn't work for the combo-aware mid-chain entry paths where
+    // _cycleSeq starts at length 1 but is already fully resolved.
+    private static bool _tailResolved;
+    // Wall-clock timestamp of the last SendShiftDigit during the
+    // current cycle phase. Used to throttle retry resends.
+    private static double _cycleLastSendS;
+    // True when the awaited chord is positional-sensitive (chord 1).
+    // On retry we resample the player's position and rebuild the tail
+    // before resending so they keep chasing the right slot if they
+    // moved during the wait. Cleared once we've fired chord 2 (the
+    // chain is FFXIV-side combo-locked at that point).
+    private static bool _retryResamplePositional;
+
+    // SAM combo action ids — used to read FFXIV's combo state and
+    // decide where in the chain to enter when the user clicks.
+    private const uint SAM_HAKAZE   = 7477;
+    private const uint SAM_JINPU    = 7478; // rear chord 1 → chord 2 = Gekko (Shift+2)
+    private const uint SAM_SHIFU    = 7479; // flank chord 1 → chord 2 = Kasha (Shift+3)
+    private const uint SAM_YUKIKAZE = 7480; // front chord 1 (terminator)
 
     private static double NowSeconds() => Environment.TickCount64 / 1000.0;
 
+    // Read FFXIV's live combo state. Returns (lastAction, secondsRemaining).
+    // secondsRemaining > 0 means we're inside the combo continuation
+    // window. Outside it the chain has broken and we must restart from
+    // Hakaze.
+    private static unsafe (uint action, float timer) GetSamComboState()
+    {
+        try
+        {
+            var am = ActionManager.Instance();
+            if (am == null) return (0u, 0f);
+            return ((uint)am->Combo.Action, am->Combo.Timer);
+        }
+        catch { return (0u, 0f); }
+    }
+
     private static void StartAutoCycle()
     {
-        // Chord 0 = fixed-slot Hakaze. Every slot's "Hakaze" upgrade
-        // fires the same action id, so the choice of slot here only
-        // matters for the visual icon press, not the combo state we
-        // hand to chord 1. Shift+2 (rear-branch slot) is the
-        // arbitrary default. The cycle's tail is built later in
-        // ResolveCycleTail with the LIVE positional reading.
+        // Read live combo state so a click made mid-chain CONTINUES
+        // from the next chord instead of re-firing Hakaze. The user
+        // explicitly wants the cycle to "check where it's at in the
+        // chain and continue" — without this, every click resets the
+        // combo and breaks any chain currently in progress.
+        var (comboAction, comboTimer) = GetSamComboState();
+        bool comboActive = comboTimer > 0.1f;
+
+        if (comboActive && comboAction == SAM_HAKAZE)
+        {
+            // Hakaze already landed and the combo window is open. Skip
+            // chord 0 entirely — sample positional NOW and send chord
+            // 1 immediately. Chord 2 (if applicable) is pre-resolved
+            // into _cycleSeq by ResolveCycleTail; subsequent chords
+            // step through it via the WaitingForTail path.
+            _cycleSeq = System.Array.Empty<int>();
+            ResolveCycleTail();
+            if (_cycleSeq == null || _cycleSeq.Length == 0) { CancelAutoCycle(); return; }
+            SendShiftDigit(_cycleSeq[0], false);
+            _cycleIdx = 0;                  // points at the chord we just sent
+            _tailResolved = true;
+            _retryResamplePositional = true; // chord 1 is positional
+            _cyclePhase = CyclePhase.WaitingToRegister;
+            _cyclePhaseStartS = NowSeconds();
+            _cycleLastSendS = NowSeconds();
+            _cyclePrevRemaining = -1f;
+            return;
+        }
+
+        if (comboActive && (comboAction == SAM_JINPU || comboAction == SAM_SHIFU))
+        {
+            // Chord 1 already landed. The chain is committed — chord 2
+            // must match the active branch (Jinpu→Gekko on Shift+2,
+            // Shifu→Kasha on Shift+3). Positional is irrelevant here:
+            // FFXIV's combo state has already locked in the slot.
+            int chord2 = comboAction == SAM_JINPU ? VK_2 : VK_3;
+            _cycleSeq = new[] { chord2 };
+            SendShiftDigit(chord2, false);
+            _cycleIdx = 0;
+            _tailResolved = true;
+            _retryResamplePositional = false; // chord 2: chain locked
+            _cyclePhase = CyclePhase.WaitingToRegister;
+            _cyclePhaseStartS = NowSeconds();
+            _cycleLastSendS = NowSeconds();
+            _cyclePrevRemaining = -1f;
+            return;
+        }
+
+        // No active combo (or post-Yukikaze terminator) — fresh start
+        // from Hakaze. Shift+2 is the arbitrary opener slot since every
+        // slot's "Hakaze" upgrade fires the same action id; chord 1's
+        // slot is the one that actually decides the branch.
         _cycleSeq = new[] { VK_2 };
         _cycleIdx = 0;
         SendShiftDigit(_cycleSeq[0], false);
+        _tailResolved = false;
+        _retryResamplePositional = false;     // chord 0 (Hakaze): non-positional
         _cyclePhase = CyclePhase.WaitingToRegister;
         _cyclePhaseStartS = NowSeconds();
+        _cycleLastSendS = NowSeconds();
         _cyclePrevRemaining = -1f;
     }
 
@@ -479,6 +573,20 @@ public static class ClickTranslator
     {
         if (_cyclePhase == CyclePhase.Idle || _cycleSeq == null) return;
 
+        // Cancel the cycle if the situation that justified it has gone
+        // away. Without this, a chord that fails to register (out of
+        // range / target died / target dropped from hate list) would
+        // keep retrying every CYCLE_RETRY_INTERVAL_S for the full
+        // CYCLE_REGISTER_TIMEOUT_S window — visible to the user as
+        // the auto-cycler firing non-stop with nothing to attack.
+        if (!HasHostileTarget()
+            || !IsGameForeground()
+            || !DalamudApi.ClientState.IsLoggedIn)
+        {
+            CancelAutoCycle();
+            return;
+        }
+
         // FFXIV's action queue accepts only in the last ~0.5s of the
         // GCD; firing earlier silently drops the input. 0.4 sits just
         // inside that window with headroom for input latency.
@@ -506,9 +614,41 @@ public static class ClickTranslator
                 return;
             }
             _cyclePrevRemaining = remaining;
-            // Chord didn't register within the timeout — bail out
-            // rather than spam the rest of the sequence into the void.
-            if (phaseElapsed > CYCLE_REGISTER_TIMEOUT_S) CancelAutoCycle();
+
+            // Hard timeout — chord still hasn't landed. Bail.
+            if (phaseElapsed > CYCLE_REGISTER_TIMEOUT_S) { CancelAutoCycle(); return; }
+
+            // Resend cadence — when the chord didn't register (player
+            // out of melee range, target moved), keep retrying so
+            // the cycle picks up automatically the moment the player
+            // chases back into range. For the positional chord we
+            // re-sample on each retry so the chosen slot reflects
+            // where the player is standing NOW, not where they were
+            // when the click happened.
+            if (NowSeconds() - _cycleLastSendS >= CYCLE_RETRY_INTERVAL_S)
+            {
+                if (_retryResamplePositional)
+                {
+                    // Truncate to the chords already committed (i.e.
+                    // strictly before _cycleIdx — which points at the
+                    // chord we're awaiting) and re-resolve the tail.
+                    int keep = System.Math.Max(0, _cycleIdx);
+                    if (keep == 0)
+                        _cycleSeq = System.Array.Empty<int>();
+                    else
+                    {
+                        var head = new int[keep];
+                        System.Array.Copy(_cycleSeq, 0, head, 0, keep);
+                        _cycleSeq = head;
+                    }
+                    ResolveCycleTail();
+                }
+                if (_cycleSeq != null && _cycleIdx < _cycleSeq.Length)
+                {
+                    SendShiftDigit(_cycleSeq[_cycleIdx], false);
+                    _cycleLastSendS = NowSeconds();
+                }
+            }
             return;
         }
 
@@ -521,14 +661,25 @@ public static class ClickTranslator
             // movement during chord 0's GCD therefore steers the
             // branch. Chord 2 (if any) stays on chord 1's slot because
             // FFXIV's combo state commits after Jinpu / Shifu / Yukikaze.
-            if (_cycleSeq.Length == 1)
+            if (!_tailResolved)
+            {
                 ResolveCycleTail();
+                _tailResolved = true;
+            }
 
             if (_cycleSeq == null) { CancelAutoCycle(); return; }
 
             _cycleIdx++;
             if (_cycleIdx >= _cycleSeq.Length) { CancelAutoCycle(); return; }
             SendShiftDigit(_cycleSeq[_cycleIdx], false);
+            _cycleLastSendS = NowSeconds();
+
+            // Chord 1 (idx 1 from cold start) is the positional one.
+            // Subsequent chords are FFXIV-side combo-locked, so don't
+            // resample them on retry — that would risk re-sending the
+            // wrong slot if the player rotated mid-chain.
+            _retryResamplePositional = (_cycleIdx == 1);
+
             if (_cycleIdx >= _cycleSeq.Length - 1) { CancelAutoCycle(); return; }
             _cyclePhase = CyclePhase.WaitingToRegister;
             _cyclePhaseStartS = NowSeconds();
@@ -568,9 +719,12 @@ public static class ClickTranslator
             if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return PositionalZone.Rear;
             if ((byte)bn.BattleNpcKind == 2) return PositionalZone.Rear;
 
-            // FFXIV rotation 0 = facing -Z. Forward = (-sin θ, 0, -cos θ).
-            float ex = -MathF.Sin(bn.Rotation);
-            float ez = -MathF.Cos(bn.Rotation);
+            // FFXIV rotation 0 = facing +Z. Forward = (sin θ, 0, cos θ).
+            // (Earlier code used the negated form which produced inverted
+            // positionals — yukikaze fired from rear, gekko from front.
+            // User-confirmed inversion; do not flip the signs back.)
+            float ex = MathF.Sin(bn.Rotation);
+            float ez = MathF.Cos(bn.Rotation);
             float dx = self.Position.X - bn.Position.X;
             float dz = self.Position.Z - bn.Position.Z;
 

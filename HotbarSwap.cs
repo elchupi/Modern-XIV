@@ -41,7 +41,14 @@ public static unsafe class HotbarSwap
     {
         bool enabled = noWickyXIV.Config.EnableIkishotenOgiSwap;
 
-        if (enabled && !_wasEnabled) CaptureSnapshot();
+        // Keep retrying CaptureSnapshot until it succeeds. The first
+        // few Update ticks after plugin load can run before the hotbar
+        // is populated (login/zone load not finished), and capturing
+        // a zero slot would mean the eventual swap-back writes
+        // emptiness over Ikishoten — wiping the action from the bar.
+        // Polling on _hasSnapshot instead of the _wasEnabled rising
+        // edge gives us as many tries as needed.
+        if (enabled && !_hasSnapshot) CaptureSnapshot();
         if (!enabled && _wasEnabled)
         {
             RestoreFromSnapshot();
@@ -85,12 +92,16 @@ public static unsafe class HotbarSwap
 
     private static void CaptureSnapshot()
     {
-        if (TryReadSlot(ACTIVE_SLOT_INDEX, out var t, out var id))
-        {
-            _snapType = t;
-            _snapId   = id;
-            _hasSnapshot = true;
-        }
+        if (!TryReadSlot(ACTIVE_SLOT_INDEX, out var t, out var id)) return;
+        // Reject zero/empty reads — those happen during the brief
+        // window where the hotbar struct exists but slots haven't
+        // been filled in yet (eg. very early in login). Capturing
+        // here would persist Empty/0 and the eventual swap-back
+        // would erase Ikishoten from the bar.
+        if (id == 0) return;
+        _snapType = t;
+        _snapId   = id;
+        _hasSnapshot = true;
     }
 
     private static void RestoreFromSnapshot()
@@ -142,6 +153,11 @@ public static unsafe class HotbarSwap
 
     private static void WriteActiveSlot(RaptureHotbarModule.HotbarSlotType type, uint id)
     {
+        // Defense-in-depth — never write a zero/empty action over the
+        // active slot. The capture path already filters this out, but
+        // if anything ever leaves _snapId at 0 (eg. an unexpected
+        // restore path) we'd silently erase the user's Ikishoten.
+        if (id == 0) return;
         if (_hasWritten && type == _lastWrittenType && id == _lastWrittenId) return;
         try
         {

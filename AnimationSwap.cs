@@ -146,6 +146,30 @@ public static unsafe class AnimationSwap
     private static readonly byte[] PathMarker =
         Encoding.ASCII.GetBytes("chara/human/c");
 
+    // ── Territory helpers ───────────────────────────────────────
+    public static ushort GetCurrentTerritory()
+    {
+        try { return (ushort)DalamudApi.ClientState.TerritoryType; }
+        catch { return 0; }
+    }
+
+    public static string LookupTerritoryName(ushort territoryId)
+    {
+        if (territoryId == 0) return "Any";
+        try
+        {
+            var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>();
+            var row = sheet?.GetRowOrDefault(territoryId);
+            if (row.HasValue && row.Value.PlaceName.IsValid)
+            {
+                string name = row.Value.PlaceName.Value.Name.ExtractText();
+                if (!string.IsNullOrEmpty(name)) return name;
+            }
+        }
+        catch { }
+        return $"Territory #{territoryId}";
+    }
+
     // ── Public API ──────────────────────────────────────────────
 
     // Compatibility properties used by PluginUI diagnostic section.
@@ -465,9 +489,13 @@ public static unsafe class AnimationSwap
         string holdTgtFolder = null, moveTgtFolder = null, attackTgtFolder = null;
         bool active = false;
 
+        ushort jobTerritory = 0;
+        try { jobTerritory = (ushort)DalamudApi.ClientState.TerritoryType; } catch { }
+
         foreach (var rule in noWickyXIV.Config.JobAnimSwapRules)
         {
             if (!rule.Enabled) continue;
+            if (rule.TerritoryId != 0 && rule.TerritoryId != jobTerritory) continue;
             if (rule.SourceJob != 0 && rule.SourceJob != currentJob) continue;
             if (rule.HoldTargetJob == 0 && rule.MoveTargetJob == 0 && rule.AttackTargetJob == 0) continue;
             if (!JobWeaponFolder.TryGetValue(currentJob, out srcFolder)) continue;
@@ -841,9 +869,13 @@ public static unsafe class AnimationSwap
         string srcCode = null;
         string tgtCode = null;
 
+        ushort currentTerritory = 0;
+        try { currentTerritory = (ushort)DalamudApi.ClientState.TerritoryType; } catch { }
+
         foreach (var rule in noWickyXIV.Config.AnimationSwapRules)
         {
             if (!rule.Enabled) continue;
+            if (rule.TerritoryId != 0 && rule.TerritoryId != currentTerritory) continue;
             if (rule.SourceRace != 0 && rule.SourceRace != matchRace) continue;
             if (rule.TargetRace == 0 || rule.TargetRace == matchRace) continue;
 

@@ -283,6 +283,18 @@ public class AnimationSwapRule
     public bool SwapRun  = true;
     public bool SwapWalk = true;
     public bool SwapIdle = false;
+    public ushort TerritoryId;      // 0 = any territory
+    public string TerritoryName = "";  // cached display name
+}
+
+// A single Glamourer territory override: when the player is in the
+// specified territory, apply the named Glamourer design instead of
+// the default. Multiple overrides live under one automation toggle.
+public class GlamourerTerritoryOverride
+{
+    public ushort TerritoryId;
+    public string TerritoryName = "";
+    public string DesignName = "";  // Glamourer design display name
 }
 
 // A single job animation swap rule: weapon hold, movement, and
@@ -295,6 +307,8 @@ public class JobAnimSwapRule
     public uint HoldTargetJob;      // ClassJob whose weapon hold/stance to use (0 = no swap)
     public uint MoveTargetJob;      // ClassJob whose weapon-held movement to use (0 = no swap)
     public uint AttackTargetJob;    // ClassJob whose auto-attacks to use (0 = no swap)
+    public ushort TerritoryId;      // 0 = any territory
+    public string TerritoryName = "";  // cached display name
 }
 
 // Configuration. Migration on load: if a preset has Dynamics == null
@@ -1108,6 +1122,13 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // auto-attacks) from one job's weapon type to another's via Penumbra.
     public bool EnableJobAnimationSwaps = false;
     public List<JobAnimSwapRule> JobAnimSwapRules = new();
+
+    // ---- Glamourer territory automation ----
+    // Applies a specific Glamourer design when the player enters a
+    // listed territory. Reverts to Glamourer's own automation when
+    // the player is not in any listed territory.
+    public bool EnableGlamourerTerritoryAuto = false;
+    public List<GlamourerTerritoryOverride> GlamourerTerritoryOverrides = new();
 
     // ---- Enemy size clamp (duty-only) ----
     // Proportionally scales down oversized enemy models so they don't

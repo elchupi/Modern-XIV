@@ -27,6 +27,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // MountSoundFilter.Initialize();
         CharacterRollHook.Initialize();
         CutsceneLetterbox.Initialize();
+        GlamourerBridge.Initialize();
         // MountMomentum DISABLED — ViGEm-emitted analog stick was
         // observed pushing the character / camera continuously even
         // with the feature flag off. Re-enable once the stuck-input
@@ -223,6 +224,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         MsqTeleport.Update();
         CutsceneLetterbox.Update();
         AnimationSwap.Update();
+        GlamourerBridge.Update();
         EnemySizeClamp.Update();
         CharacterRollHook.Tick();
     }
@@ -282,6 +284,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { MountSoundFilter.Dispose(); } catch { }
         try { CutsceneLetterbox.Dispose(); } catch { }
         try { AnimationSwap.Dispose(); } catch { }
+        try { GlamourerBridge.Dispose(); } catch { }
         try { EnemySizeClamp.Dispose(); } catch { }
         try { CharacterRollHook.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();

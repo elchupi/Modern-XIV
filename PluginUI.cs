@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -2968,7 +2969,8 @@ public static class PluginUI
 
             string srcName = GetRaceName(rule.SourceRace);
             string tgtName = GetRaceName(rule.TargetRace);
-            string header = $"{srcName}  →  {tgtName}##rule";
+            string terrTag = rule.TerritoryId != 0 ? $"  [{rule.TerritoryName}]" : "";
+            string header = $"{srcName}  →  {tgtName}{terrTag}##rule";
             bool open = ImGui.CollapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowItemOverlap);
 
             // Delete button.
@@ -3028,6 +3030,32 @@ public static class PluginUI
                 if (ImGui.Checkbox("Idle", ref rule.SwapIdle))
                     noWickyXIV.Config.Save();
 
+                ImGui.Spacing();
+
+                // Territory filter.
+                string terrDisplay = rule.TerritoryId == 0
+                    ? "Any"
+                    : $"{rule.TerritoryName} ({rule.TerritoryId})";
+                ImGui.TextDisabled($"Territory: {terrDisplay}");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Set to Current##raceTerr"))
+                {
+                    ushort tid = AnimationSwap.GetCurrentTerritory();
+                    rule.TerritoryId = tid;
+                    rule.TerritoryName = AnimationSwap.LookupTerritoryName(tid);
+                    noWickyXIV.Config.Save();
+                }
+                if (rule.TerritoryId != 0)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Clear##raceTerr"))
+                    {
+                        rule.TerritoryId = 0;
+                        rule.TerritoryName = "";
+                        noWickyXIV.Config.Save();
+                    }
+                }
+
                 ImGui.Unindent(10f);
             }
 
@@ -3071,7 +3099,8 @@ public static class PluginUI
             string holdJobName = jr.HoldTargetJob == 0 ? "None" : GetJobName(jr.HoldTargetJob);
             string moveJobName = jr.MoveTargetJob == 0 ? "None" : GetJobName(jr.MoveTargetJob);
             string atkJobName = jr.AttackTargetJob == 0 ? "None" : GetJobName(jr.AttackTargetJob);
-            string jobHeader = $"{srcJobName}  →  Hold: {holdJobName} / Move: {moveJobName} / Atk: {atkJobName}##jobrule";
+            string jobTerrTag = jr.TerritoryId != 0 ? $"  [{jr.TerritoryName}]" : "";
+            string jobHeader = $"{srcJobName}  →  Hold: {holdJobName} / Move: {moveJobName} / Atk: {atkJobName}{jobTerrTag}##jobrule";
             bool jobOpen = ImGui.CollapsingHeader(jobHeader,
                 ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowItemOverlap);
 
@@ -3174,6 +3203,32 @@ public static class PluginUI
                     ImGui.EndCombo();
                 }
 
+                ImGui.Spacing();
+
+                // Territory filter.
+                string jobTerrDisplay = jr.TerritoryId == 0
+                    ? "Any"
+                    : $"{jr.TerritoryName} ({jr.TerritoryId})";
+                ImGui.TextDisabled($"Territory: {jobTerrDisplay}");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Set to Current##jobTerr"))
+                {
+                    ushort tid = AnimationSwap.GetCurrentTerritory();
+                    jr.TerritoryId = tid;
+                    jr.TerritoryName = AnimationSwap.LookupTerritoryName(tid);
+                    noWickyXIV.Config.Save();
+                }
+                if (jr.TerritoryId != 0)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Clear##jobTerr"))
+                    {
+                        jr.TerritoryId = 0;
+                        jr.TerritoryName = "";
+                        noWickyXIV.Config.Save();
+                    }
+                }
+
                 ImGui.Unindent(10f);
             }
 
@@ -3185,6 +3240,137 @@ public static class PluginUI
         {
             jobRules.RemoveAt(removeJobIdx);
             noWickyXIV.Config.Save();
+        }
+
+        // ── Glamourer territory automation ──
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ConfigCheckbox("Enable Glamourer territory automation", ref noWickyXIV.Config.EnableGlamourerTerritoryAuto);
+        ImGui.TextDisabled("Apply a Glamourer design when entering a territory.\nReverts to your base Glamourer automation elsewhere.");
+
+        ImGui.Spacing();
+
+        var glamOverrides = noWickyXIV.Config.GlamourerTerritoryOverrides;
+
+        if (ImGui.Button("+ Add Territory Override"))
+        {
+            glamOverrides.Add(new GlamourerTerritoryOverride());
+            noWickyXIV.Config.Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Refresh Designs"))
+            GlamourerBridge.RefreshDesignCache();
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Revert Now"))
+            GlamourerBridge.ManualRevert();
+
+        string activeLabel = GlamourerBridge.ActiveDesignName != null
+            ? $"Active: {GlamourerBridge.ActiveDesignName}"
+            : "Active: (base automation)";
+        ImGui.TextDisabled($"{activeLabel}  |  {GlamourerBridge.Status}");
+
+        ImGui.Spacing();
+
+        // Fetch design list for dropdown.
+        var glamDesigns = GlamourerBridge.GetDesignList();
+        string[] designNames = null;
+        if (glamDesigns != null && glamDesigns.Count > 0)
+        {
+            designNames = glamDesigns.Values.OrderBy(n => n).ToArray();
+        }
+
+        int removeGlamIdx = -1;
+        for (int i = 0; i < glamOverrides.Count; i++)
+        {
+            var ov = glamOverrides[i];
+            ImGui.PushID(2000 + i);
+
+            string terrLabel = ov.TerritoryId != 0
+                ? $"{ov.TerritoryName} ({ov.TerritoryId})"
+                : "(no territory set)";
+            string designLabel = !string.IsNullOrEmpty(ov.DesignName) ? ov.DesignName : "(no design)";
+            string glamHeader = $"{terrLabel}  →  {designLabel}##glamoverride";
+            bool glamOpen = ImGui.CollapsingHeader(glamHeader,
+                ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowItemOverlap);
+
+            // Delete button.
+            ImGui.SameLine(ImGui.GetContentRegionAvail().X - 20f * ImGuiHelpers.GlobalScale);
+            ImGui.PushStyleColor(ImGuiCol.Text, 0xFF4444FFu);
+            if (ImGui.SmallButton("X"))
+                removeGlamIdx = i;
+            ImGui.PopStyleColor();
+
+            if (glamOpen)
+            {
+                ImGui.Indent(10f);
+
+                // Territory.
+                string terrDisplay = ov.TerritoryId != 0
+                    ? $"{ov.TerritoryName} ({ov.TerritoryId})"
+                    : "None";
+                ImGui.TextDisabled($"Territory: {terrDisplay}");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Set to Current##glamTerr"))
+                {
+                    ushort tid = AnimationSwap.GetCurrentTerritory();
+                    ov.TerritoryId = tid;
+                    ov.TerritoryName = AnimationSwap.LookupTerritoryName(tid);
+                    noWickyXIV.Config.Save();
+                    GlamourerBridge.ForceReevaluate();
+                }
+
+                // Design dropdown.
+                ImGui.SetNextItemWidth(250f * ImGuiHelpers.GlobalScale);
+                if (designNames != null && designNames.Length > 0)
+                {
+                    if (ImGui.BeginCombo("Design", string.IsNullOrEmpty(ov.DesignName) ? "(select)" : ov.DesignName))
+                    {
+                        foreach (var dn in designNames)
+                        {
+                            if (ImGui.Selectable(dn, ov.DesignName == dn))
+                            {
+                                ov.DesignName = dn;
+                                noWickyXIV.Config.Save();
+                                GlamourerBridge.ForceReevaluate();
+                            }
+                        }
+                        ImGui.EndCombo();
+                    }
+                }
+                else
+                {
+                    // Fallback: text input if Glamourer IPC unavailable.
+                    string designInput = ov.DesignName ?? "";
+                    ImGui.SetNextItemWidth(250f * ImGuiHelpers.GlobalScale);
+                    if (ImGui.InputText("Design##glamText", ref designInput, 256))
+                    {
+                        ov.DesignName = designInput;
+                        noWickyXIV.Config.Save();
+                        GlamourerBridge.ForceReevaluate();
+                    }
+                }
+
+                // Test button — try applying this design right now.
+                if (!string.IsNullOrEmpty(ov.DesignName))
+                {
+                    if (ImGui.SmallButton("Test Apply##glamTest"))
+                        GlamourerBridge.TestApply(ov.DesignName);
+                }
+
+                ImGui.Unindent(10f);
+            }
+
+            ImGui.PopID();
+            ImGui.Spacing();
+        }
+
+        if (removeGlamIdx >= 0)
+        {
+            glamOverrides.RemoveAt(removeGlamIdx);
+            noWickyXIV.Config.Save();
+            GlamourerBridge.ForceReevaluate();
         }
 
         // ── Diagnostic section ──

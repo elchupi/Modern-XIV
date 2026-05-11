@@ -44,6 +44,7 @@ public static class InputHandler
         UpdateShoulderSwapHotkey();
         UpdatePresetSlotHotkeys();
         UpdateCursorReleaseHotkey();
+        UpdateTeleportMenuHotkey();
         ClickTranslator.Update();
     }
 
@@ -54,6 +55,29 @@ public static class InputHandler
         if (vk == 0) return;
         if (EdgePressed(vk))
             CameraDynamics.ToggleCursorRelease();
+    }
+
+    // ---- Shift+M (configurable): toggle custom teleport menu ----
+    private static void UpdateTeleportMenuHotkey()
+    {
+        if (!noWickyXIV.Config.EnableCustomTeleportMenu) return;
+        int vk = noWickyXIV.Config.TeleportMenuHotkey;
+        if (vk == 0) return;
+        if (!ShiftHeld) return;
+        if (EdgePressed(vk))
+        {
+            // Consume the key so the game doesn't also open the map (M default).
+            try { DalamudApi.KeyState[vk] = false; } catch { }
+
+            if (TeleportMenu.IsWindowOpen)
+                TeleportMenu.OnWindowClosed();
+            else
+            {
+                TeleportMenu.IsWindowOpen = true;
+                TeleportMenu.SearchFilter = "";
+                TeleportMenu.RefreshCache();
+            }
+        }
     }
 
     // ---- Wheel + modifier readers (game-side, ImGui-independent) ----

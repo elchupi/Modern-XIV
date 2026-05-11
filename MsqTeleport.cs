@@ -186,7 +186,7 @@ public static unsafe class MsqTeleport
                      | ImGuiWindowFlags.NoSavedSettings
                      | ImGuiWindowFlags.NoBringToFrontOnFocus;
 
-        // — Pill hit-test —
+        // — Pill hit-test (pill only) —
         ImGui.SetNextWindowPos(new Vector2(posX, 0f));
         ImGui.SetNextWindowSize(new Vector2(pw, hitH));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
@@ -201,26 +201,22 @@ public static unsafe class MsqTeleport
         ImGui.PopStyleColor();
         ImGui.PopStyleVar(3);
 
-        // — Home button hit-test —
-        bool clickedHome = false;
-        bool homeHovered = false;
-        if (_revealT > 0.1f)
-        {
-            ImGui.SetNextWindowPos(new Vector2(homeBtnX, homeBtnY));
-            ImGui.SetNextWindowSize(new Vector2(homeS, homeS));
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(1f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, 0u);
+        // — Home button hit-test (independent, same height as pill strip) —
+        ImGui.SetNextWindowPos(new Vector2(homeBtnX, 0f));
+        ImGui.SetNextWindowSize(new Vector2(homeS, hitH));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(1f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, 0u);
 
-            ImGui.Begin("##MsqHomeHit", hitFlags);
-            homeHovered = ImGui.IsWindowHovered();
-            clickedHome = homeHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
-            ImGui.End();
-            ImGui.PopStyleColor();
-            ImGui.PopStyleVar(3);
-        }
+        ImGui.Begin("##MsqHomeHit", hitFlags);
+        bool homeHovered = ImGui.IsWindowHovered();
+        bool clickedHome = homeHovered && _revealT > 0.1f && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
+        ImGui.End();
+        ImGui.PopStyleColor();
+        ImGui.PopStyleVar(3);
 
+        // Either zone triggers the reveal.
         _hovered = pillHovered || homeHovered;
 
         // ── Dismiss notification on hover or click ──
@@ -375,15 +371,19 @@ public static unsafe class MsqTeleport
         }
 
         // ── Click actions ──
-        if (clickedPill)
+        // Home button sits inside the pill's hit-test area, so both
+        // clickedPill and clickedHome are true when clicking the icon.
+        // Prioritise the home button — only fall through to MSQ if it
+        // wasn't a home click.
+        if (clickedHome)
+            TeleportMenu.TeleportToFcHouse();
+        else if (clickedPill)
         {
             if (_bestAetheryteId != 0)
                 ExecuteTeleport();
             else if (_dutyContentId != 0)
                 OpenDutyFinder();
         }
-        if (clickedHome)
-            TeleportToFcEstate();
     }
 
     // ── MSQ data resolution ───────────────────────────────────────
@@ -820,75 +820,24 @@ public static unsafe class MsqTeleport
 
     private static void TeleportToFcEstate()
     {
+        // Use the same saved config values as TeleportMenu.TeleportToFcHouse()
+        // so the home icon and the FC entry in the teleport popup share one
+        // global destination.
+        var cfg = noWickyXIV.Config;
+        if (cfg.FcHouseAetheryteId == 0)
+        {
+            ShowStatus("FC house not set — use Set in teleport menu", 3.0);
+            return;
+        }
+
         try
         {
             var telepo = FFXIVClientStructs.FFXIV.Client.Game.UI.Telepo.Instance();
             if (telepo == null) { ShowStatus("Teleport unavailable", 2.0); return; }
-
-            // Refresh the internal list so housing entries are populated.
             try { telepo->UpdateAetheryteList(); } catch { }
 
-            var list = telepo->TeleportList;
-            int count = (int)list.Count;
-
-            // Diagnostic: dump ALL entries to file so we can identify
-            // the FC estate. Remove once confirmed.
-            try
-            {
-                var aethSheet = DalamudApi.DataManager.GetExcelSheet<Aetheryte>();
-                var sb = new StringBuilder();
-                sb.AppendLine($"=== Home Teleport Diagnostic — {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-                sb.AppendLine($"Total entries: {count}");
-                sb.AppendLine();
-                for (int i = 0; i < count; i++)
-                {
-                    var info = list[i];
-                    string name = "";
-                    try
-                    {
-                        var row = aethSheet?.GetRowOrDefault(info.AetheryteId);
-                        if (row.HasValue && row.Value.PlaceName.IsValid)
-                            name = row.Value.PlaceName.Value.Name.ExtractText();
-                    }
-                    catch { }
-                    sb.AppendLine(
-                        $"  #{i} id={info.AetheryteId} sub={info.SubIndex} " +
-                        $"ward={info.Ward} plot={info.Plot} " +
-                        $"shared={info.IsSharedHouse} apt={info.IsApartment} " +
-                        $"name=\"{name}\"");
-                }
-                var dir = PluginConfiguration.ConfigFolder.FullName;
-                var path = System.IO.Path.Combine(dir, "home_diag.txt");
-                File.WriteAllText(path, sb.ToString());
-                DalamudApi.LogInfo($"[Home] Diagnostic written to: {path}");
-            }
-            catch { }
-
-            // Primary: look for IsSharedHouse (FC estate flag).
-            for (int i = 0; i < count; i++)
-            {
-                var info = list[i];
-                if (!info.IsSharedHouse) continue;
-                if (info.IsApartment) continue;
-
-                bool ok = telepo->Teleport(info.AetheryteId, info.SubIndex);
-                ShowStatus(ok ? "Teleporting to FC Estate..." : "Cannot teleport right now", ok ? 3.0 : 2.0);
-                return;
-            }
-
-            // Fallback: any entry with Ward > 0 that isn't apartment.
-            for (int i = 0; i < count; i++)
-            {
-                var info = list[i];
-                if (info.Ward == 0 && info.Plot == 0) continue;
-                if (info.IsApartment) continue;
-
-                bool ok = telepo->Teleport(info.AetheryteId, info.SubIndex);
-                ShowStatus(ok ? "Teleporting to estate..." : "Cannot teleport right now", ok ? 3.0 : 2.0);
-                return;
-            }
-
-            ShowStatus("No FC estate found", 2.0);
+            bool ok = telepo->Teleport(cfg.FcHouseAetheryteId, cfg.FcHouseSubIndex);
+            ShowStatus(ok ? "Teleporting to FC Estate..." : "Cannot teleport right now", ok ? 3.0 : 2.0);
         }
         catch (Exception ex)
         {

@@ -95,16 +95,21 @@ public static class GlamourerBridge
                 }
 
                 // Character is loaded — execute the queued action.
+                // After either apply or revert, Glamourer redraws the
+                // character which can wipe animation state. Tell
+                // AnimationSwap to re-register its Penumbra swaps.
                 if (_pendingDesignName != null)
                 {
                     ApplyDesignByName(_pendingDesignName);
                     _hadOverride = true;
                     _pendingDesignName = null;
+                    AnimationSwap.ForceReapply();
                 }
                 else if (_pendingRevert)
                 {
                     DoRevert();
                     _hadOverride = false;
+                    AnimationSwap.ForceReapply();
                     _pendingRevert = false;
                 }
             }

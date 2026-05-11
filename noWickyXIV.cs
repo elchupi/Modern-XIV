@@ -28,6 +28,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         CharacterRollHook.Initialize();
         CutsceneLetterbox.Initialize();
         GlamourerBridge.Initialize();
+        TeleportMenu.Initialize();
         // MountMomentum DISABLED — ViGEm-emitted analog stick was
         // observed pushing the character / camera continuously even
         // with the feature flag off. Re-enable once the stuck-input
@@ -222,6 +223,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // MountMomentum.Update();
         MountAudio.Update();
         MsqTeleport.Update();
+        TeleportMenu.Update();
         CutsceneLetterbox.Update();
         AnimationSwap.Update();
         GlamourerBridge.Update();
@@ -233,6 +235,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
     {
         FreeCam.Draw();
         PluginUI.Draw();
+        PluginUI.DrawTeleportMenu();
         Crosshair.Draw();
         JobAura.Draw();
         HpRing.Draw();
@@ -285,6 +288,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { CutsceneLetterbox.Dispose(); } catch { }
         try { AnimationSwap.Dispose(); } catch { }
         try { GlamourerBridge.Dispose(); } catch { }
+        try { TeleportMenu.Dispose(); } catch { }
         try { EnemySizeClamp.Dispose(); } catch { }
         try { CharacterRollHook.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();

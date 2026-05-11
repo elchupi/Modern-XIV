@@ -1689,6 +1689,17 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
+        // Custom teleport menu — replaces the native Teleport window.
+        if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
+        {
+            ConfigCheckbox("Enable##CustomTeleportMenu", ref noWickyXIV.Config.EnableCustomTeleportMenu);
+            ImGui.TextDisabled(
+                "Replaces the game's native Teleport window with a custom\n" +
+                "searchable list. Includes FC house shortcut, recently\n" +
+                "visited tracking, and region-grouped aetherytes.");
+            ImGuiEx.EndGroupBox();
+        }
+
         // Cutscene letterbox removal.
         if (ImGuiEx.BeginGroupBox("Cutscene letterbox"))
         {
@@ -3480,5 +3491,460 @@ public static class PluginUI
         foreach (var (id, name) in _jobCache)
             if (id == jobId) return name;
         return $"Job #{jobId}";
+    }
+
+    // ── Custom Teleport Menu ──────────────────────────────────────
+    // Slick floating panel with rounded corners, border, and fade-in
+    // animation matching the MSQ pill style. Uses raw draw-list for the
+    // frame and styled ImGui widgets for interactive content inside.
+
+    private static string _teleportSearch = "";
+    private static float  _tpFadeT;               // 0→1 fade-in
+    private static bool   _tpWasOpen;              // edge-detect open→close
+    private static bool   _tpFocusSearch;          // auto-focus search on open
+
+    // Keyboard navigation state.
+    private static int  _tpNavIdx = -1;            // -1 = no selection (search focused)
+    private static bool _tpNavActive;              // true once user presses ↓ (search defocused)
+    private static int  _tpNavCount;               // total navigable items last frame
+    private static int  _tpDrawNavI;               // per-frame counter incremented during draw
+    private static bool _tpNavScrollTo;            // scroll the selected item into view
+    private static TeleportMenu.TeleportEntry _tpNavSelectedEntry; // captured during draw for confirm
+    private static bool _tpKeyDownPrev, _tpKeyUpPrev, _tpKeyFPrev; // edge-detect for raw keys
+    private static string _tpLastSearch = "";       // detect typing → cancel nav
+
+    // Layout constants.
+    private const float TP_WIDTH     = 420f;
+    private const float TP_HEIGHT    = 580f;
+    private const float TP_ROUNDING  = 12f;
+    private const float TP_PAD       = 14f;
+    private const float TP_BORDER    = 1.5f;
+    private const float TP_FADE_RATE = 8f;         // exp-lerp 1/s
+
+    public static void DrawTeleportMenu()
+    {
+        if (!noWickyXIV.Config.EnableCustomTeleportMenu) return;
+
+        bool wantOpen = TeleportMenu.IsWindowOpen;
+
+        // ── Fade animation ────────────────────────────────────
+        var io = ImGui.GetIO();
+        float dt = io.DeltaTime;
+        float target = wantOpen ? 1f : 0f;
+        float k = 1f - MathF.Exp(-TP_FADE_RATE * dt);
+        _tpFadeT += (target - _tpFadeT) * k;
+
+        // Snap thresholds.
+        if (_tpFadeT < 0.01f && !wantOpen) _tpFadeT = 0f;
+        if (_tpFadeT > 0.99f && wantOpen)  _tpFadeT = 1f;
+
+        // Edge: just opened → reset search, request focus, reset nav.
+        if (wantOpen && !_tpWasOpen)
+        {
+            _teleportSearch = "";
+            _tpFocusSearch = true;
+            _tpNavIdx = -1;
+            _tpNavActive = false;
+        }
+        _tpWasOpen = wantOpen;
+
+        // Nothing to draw while fully hidden.
+        if (_tpFadeT <= 0f) return;
+
+        float alpha = _tpFadeT;
+        float scale = ImGuiHelpers.GlobalScale;
+        float pw = TP_WIDTH * scale;
+        float ph = TP_HEIGHT * scale;
+        float pad = TP_PAD * scale;
+        float rounding = TP_ROUNDING * scale;
+
+        // Use saved position if available, otherwise center on screen.
+        var disp = io.DisplaySize;
+        var cfg = noWickyXIV.Config;
+        float posX = cfg.TeleportMenuX >= 0 ? cfg.TeleportMenuX : (disp.X - pw) * 0.5f;
+        float posY = cfg.TeleportMenuY >= 0 ? cfg.TeleportMenuY : (disp.Y - ph) * 0.5f;
+
+        // Slight slide-up on open (pill-style reveal).
+        float slideOffset = (1f - alpha) * 18f * scale;
+
+        // During fade-in, force position (slide animation from saved pos).
+        // Once fully open, let the user drag freely.
+        bool fadingIn = wantOpen && _tpFadeT < 1f;
+        if (fadingIn)
+            ImGui.SetNextWindowPos(new Vector2(posX, posY + slideOffset));
+
+        // ── ImGui window (transparent, no decoration) ─────────
+        ImGui.SetNextWindowSize(new Vector2(pw, ph), ImGuiCond.Appearing);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(pad, pad));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, rounding);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(1f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, 0u); // transparent — we draw our own bg
+
+        var flags = ImGuiWindowFlags.NoDecoration
+                  | ImGuiWindowFlags.NoNav
+                  | ImGuiWindowFlags.NoResize
+                  | ImGuiWindowFlags.NoSavedSettings
+                  | ImGuiWindowFlags.NoFocusOnAppearing;
+
+        ImGui.SetNextWindowBgAlpha(0f);
+        ImGui.Begin("##noWickyTeleport", flags);
+
+        // Get actual window position (respects user dragging).
+        var wp = ImGui.GetWindowPos();
+        posX = wp.X;
+        posY = wp.Y;
+
+        // Persist position when user drags (only when fully open, not during fade).
+        if (!fadingIn && (cfg.TeleportMenuX != posX || cfg.TeleportMenuY != posY))
+        {
+            cfg.TeleportMenuX = posX;
+            cfg.TeleportMenuY = posY;
+            cfg.SaveDebounced();
+        }
+
+        // ── Draw background + border via draw list ────────────
+        var dl = ImGui.GetWindowDrawList();
+        var min = new Vector2(posX, posY);
+        var max = new Vector2(posX + pw, posY + ph);
+
+        // Background.
+        uint bgCol = TpPackRgba(0.06f, 0.06f, 0.10f, 0.94f * alpha);
+        dl.AddRectFilled(min, max, bgCol, rounding);
+
+        // Border.
+        uint borderCol = TpPackRgba(0.75f, 0.60f, 0.20f, 0.65f * alpha);
+        dl.AddRect(min, max, borderCol, rounding, ImDrawFlags.None, TP_BORDER * scale);
+
+        // ── Title bar (centered) ──────────────────────────────
+        {
+            var titleText = "Teleport";
+            var titleW = ImGui.CalcTextSize(titleText).X;
+            ImGui.SetCursorPosX((pw - titleW) * 0.5f);
+            ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(1f, 0.85f, 0.35f, alpha));
+            ImGui.TextUnformatted(titleText);
+            ImGui.PopStyleColor();
+        }
+
+        ImGui.Spacing();
+
+        // Thin separator line under title.
+        {
+            float sepY = ImGui.GetCursorScreenPos().Y;
+            uint sepCol = TpPackRgba(1f, 1f, 1f, 0.08f * alpha);
+            dl.AddLine(
+                new Vector2(posX + pad, sepY),
+                new Vector2(posX + pw - pad, sepY),
+                sepCol, 1f * scale);
+            ImGui.Dummy(new Vector2(0, 4f * scale));
+        }
+
+        // ── Search box ────────────────────────────────────────
+        ImGui.PushStyleColor(ImGuiCol.FrameBg, TpPackRgba(0.12f, 0.12f, 0.18f, 0.9f * alpha));
+        ImGui.PushStyleColor(ImGuiCol.Border, TpPackRgba(0.5f, 0.4f, 0.15f, 0.4f * alpha));
+        ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(1f, 1f, 1f, alpha));
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 8f * scale);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(10f * scale, 6f * scale));
+        ImGui.SetNextItemWidth(pw - pad * 2f);
+
+        if (_tpFocusSearch && !_tpNavActive)
+        {
+            ImGui.SetKeyboardFocusHere();
+            _tpFocusSearch = false;
+        }
+        ImGui.InputTextWithHint("##TpSearch", "Search aetherytes...", ref _teleportSearch, 128);
+        ImGui.PopStyleVar(3);
+        ImGui.PopStyleColor(3);
+
+        var filter = _teleportSearch.Trim();
+
+        // ── Keyboard navigation (↑↓ = move, Shift+F = confirm) ──
+        // Uses raw Win32 GetAsyncKeyState with edge-detect because
+        // ImGui.IsKeyPressed is eaten by the active InputText widget.
+        _tpDrawNavI = 0;
+        _tpNavSelectedEntry = null;
+
+        bool downNow = VkDown(0x28); // VK_DOWN
+        bool upNow   = VkDown(0x26); // VK_UP
+        bool fNow    = VkDown(0x46); // VK_F
+        bool downEdge = downNow && !_tpKeyDownPrev;
+        bool upEdge   = upNow   && !_tpKeyUpPrev;
+        bool fEdge    = fNow    && !_tpKeyFPrev;
+        _tpKeyDownPrev = downNow;
+        _tpKeyUpPrev   = upNow;
+        _tpKeyFPrev    = fNow;
+
+        if (wantOpen)
+        {
+            if (downEdge)
+            {
+                _tpNavIdx = Math.Min(_tpNavIdx + 1, Math.Max(_tpNavCount - 1, 0));
+                _tpNavActive = true;
+                _tpNavScrollTo = true;
+            }
+            if (upEdge)
+            {
+                if (_tpNavIdx > 0)
+                {
+                    _tpNavIdx--;
+                    _tpNavScrollTo = true;
+                }
+                else if (_tpNavIdx == 0)
+                {
+                    // Up from first item → back to search box.
+                    _tpNavIdx = -1;
+                    _tpNavActive = false;
+                    _tpFocusSearch = true;
+                }
+            }
+
+            // Typing in search cancels nav mode (user went back to filtering).
+            if (_tpNavActive && _teleportSearch != _tpLastSearch)
+            {
+                _tpNavActive = false;
+                _tpNavIdx = -1;
+                _tpFocusSearch = true;
+            }
+            _tpLastSearch = _teleportSearch;
+        }
+
+        ImGui.Dummy(new Vector2(0, 6f * scale));
+
+        // ── Scrollable body ───────────────────────────────────
+        float remainH = (posY + ph - pad) - ImGui.GetCursorScreenPos().Y;
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, 0u);
+        ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, TpPackRgba(0.06f, 0.06f, 0.10f, 0.4f * alpha));
+        ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, TpPackRgba(0.6f, 0.5f, 0.2f, 0.4f * alpha));
+        ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, TpPackRgba(0.8f, 0.65f, 0.25f, 0.6f * alpha));
+        ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, TpPackRgba(0.95f, 0.75f, 0.3f, 0.8f * alpha));
+
+        if (ImGui.BeginChild("##TpBody", new Vector2(pw - pad * 2f, remainH), false))
+        {
+            // Style for rows.
+            ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(1f, 1f, 1f, alpha));
+            ImGui.PushStyleColor(ImGuiCol.Header, TpPackRgba(0.75f, 0.6f, 0.2f, 0.15f * alpha));
+            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, TpPackRgba(0.75f, 0.6f, 0.2f, 0.30f * alpha));
+            ImGui.PushStyleColor(ImGuiCol.HeaderActive, TpPackRgba(0.75f, 0.6f, 0.2f, 0.45f * alpha));
+
+            // ── FC House shortcut ─────────────────────────────
+            if (string.IsNullOrEmpty(filter) || MatchesFilter("Free Company Estate Hall", filter))
+            {
+                bool hasSaved = noWickyXIV.Config.FcHouseAetheryteId != 0;
+                bool capturing = TeleportMenu.CapturingFcHouse;
+                string fcLabel = capturing
+                    ? "Waiting for teleport...##fchouse"
+                    : hasSaved
+                        ? "FC House##fchouse"
+                        : "FC House (not set)##fchouse";
+
+                // FC button takes most of the width; "Set" button on the right.
+                float setW = ImGui.CalcTextSize("Set").X + 16f * scale;
+                float fcW = ImGui.GetContentRegionAvail().X - setW - 6f * scale;
+
+                bool fcNav = _tpDrawNavI == _tpNavIdx;
+                var fcBtnCol = fcNav
+                    ? TpPackRgba(0.75f, 0.55f, 0.22f, 0.95f * alpha)
+                    : TpPackRgba(0.55f, 0.35f, 0.12f, 0.85f * alpha);
+                ImGui.PushStyleColor(ImGuiCol.Button, fcBtnCol);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpPackRgba(0.70f, 0.45f, 0.18f, 0.90f * alpha));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, TpPackRgba(0.85f, 0.55f, 0.22f, 0.95f * alpha));
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f * scale);
+                if (ImGui.Button(fcLabel, new Vector2(fcW, 30 * scale)))
+                    TeleportMenu.TeleportToFcHouse();
+                if (fcNav && _tpNavScrollTo) { ImGui.SetScrollHereY(); _tpNavScrollTo = false; }
+                _tpDrawNavI++;
+                ImGui.PopStyleVar();
+                ImGui.PopStyleColor(3);
+
+                ImGui.SameLine();
+
+                // "Set" button — starts capture mode.
+                ImGui.PushStyleColor(ImGuiCol.Button, TpPackRgba(0.25f, 0.25f, 0.35f, 0.8f * alpha));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpPackRgba(0.35f, 0.35f, 0.50f, 0.9f * alpha));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, TpPackRgba(0.45f, 0.45f, 0.60f, 0.95f * alpha));
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f * scale);
+                if (ImGui.Button(capturing ? "...##fcSet" : "Set##fcSet", new Vector2(setW, 30 * scale)))
+                {
+                    if (!capturing)
+                        TeleportMenu.StartFcCapture();
+                }
+                ImGui.PopStyleVar();
+                ImGui.PopStyleColor(3);
+
+                ImGui.Dummy(new Vector2(0, 2f * scale));
+            }
+
+            // ── Housing entries (personal, apartment, FC) ─────
+            var housing = TeleportMenu.GetHousingEntries();
+            if (housing.Count > 0)
+            {
+                foreach (var h in housing)
+                {
+                    if (!string.IsNullOrEmpty(filter) && !MatchesFilter(h.AetheryteName, filter) && !MatchesFilter(h.AreaName, filter))
+                        continue;
+                    DrawTeleportRow(h, alpha, scale);
+                }
+            }
+
+            // ── Recently visited ──────────────────────────────
+            if (string.IsNullOrEmpty(filter))
+            {
+                var recents = TeleportMenu.GetRecentTeleports();
+                if (recents.Count > 0)
+                {
+                    ImGui.Dummy(new Vector2(0, 2f * scale));
+                    DrawTpSectionSep(dl, alpha, scale, "Recently Visited");
+                    foreach (var r in recents)
+                        DrawTeleportRow(r, alpha, scale);
+                }
+            }
+
+            // ── Favorites ─────────────────────────────────────
+            if (string.IsNullOrEmpty(filter))
+            {
+                var all = TeleportMenu.GetList();
+                var favs = all?.Where(e => e.IsFavorite && !e.IsFcHouse && !e.IsPersonalHouse && !e.IsApartment).ToList();
+                if (favs != null && favs.Count > 0)
+                {
+                    ImGui.Dummy(new Vector2(0, 2f * scale));
+                    DrawTpSectionSep(dl, alpha, scale, "Favorites");
+                    foreach (var f in favs)
+                        DrawTeleportRow(f, alpha, scale);
+                }
+            }
+
+            // ── Full list grouped by region ───────────────────
+            var grouped = TeleportMenu.GetGroupedList();
+            if (grouped != null)
+            {
+                ImGui.Dummy(new Vector2(0, 2f * scale));
+                DrawTpSectionSep(dl, alpha, scale, "All Aetherytes");
+
+                foreach (var (region, entries) in grouped)
+                {
+                    var visible = string.IsNullOrEmpty(filter)
+                        ? entries
+                        : entries.Where(e => MatchesFilter(e.AetheryteName, filter) || MatchesFilter(e.AreaName, filter)).ToList();
+
+                    if (visible.Count == 0) continue;
+
+                    // Default open on first appearance; user can collapse.
+                    // Search forces all open so matches are visible.
+                    // Keyboard nav forces open when the selection is inside this group.
+                    bool searching = !string.IsNullOrEmpty(filter);
+                    bool navInGroup = _tpNavActive && _tpNavIdx >= _tpDrawNavI && _tpNavIdx < _tpDrawNavI + visible.Count;
+                    if (searching || navInGroup)
+                        ImGui.SetNextItemOpen(true);
+                    else
+                        ImGui.SetNextItemOpen(true, (ImGuiCond)8); // Appearing
+
+                    ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(0.95f, 0.78f, 0.30f, alpha));
+                    bool open = ImGui.CollapsingHeader(region);
+                    ImGui.PopStyleColor();
+
+                    if (open)
+                    {
+                        foreach (var entry in visible)
+                            DrawTeleportRow(entry, alpha, scale);
+                    }
+                    else
+                    {
+                        // Keep nav indices stable even when collapsed.
+                        _tpDrawNavI += visible.Count;
+                    }
+                }
+            }
+
+            ImGui.PopStyleColor(4); // row styles
+        }
+        ImGui.EndChild();
+        ImGui.PopStyleColor(5); // scrollbar + child bg
+
+        // Finalize nav count for next frame's clamping.
+        _tpNavCount = _tpDrawNavI;
+
+        // Shift+F confirms the keyboard-selected entry.
+        if (_tpNavActive && _tpNavIdx >= 0 && VkDown(0x10) && fEdge) // VK_SHIFT + F edge
+        {
+            if (_tpNavSelectedEntry != null)
+                TeleportMenu.DoTeleport(_tpNavSelectedEntry);
+            else if (_tpNavIdx == 0 && noWickyXIV.Config.FcHouseAetheryteId != 0)
+                TeleportMenu.TeleportToFcHouse(); // FC house is index 0 when visible
+        }
+
+        ImGui.End();
+        ImGui.PopStyleColor(); // WindowBg
+        ImGui.PopStyleVar(4);  // WindowPadding, BorderSize, Rounding, MinSize
+
+        // ── Close on Escape ───────────────────────────────────
+        if (wantOpen && ImGui.IsKeyPressed(ImGuiKey.Escape))
+            TeleportMenu.OnWindowClosed();
+    }
+
+    private static void DrawTeleportRow(TeleportMenu.TeleportEntry entry, float alpha, float scale)
+    {
+        bool navSel = _tpDrawNavI == _tpNavIdx;
+
+        ImGui.PushID((int)(entry.AetheryteId * 256 + entry.SubIndex));
+
+        float availW = ImGui.GetContentRegionAvail().X;
+        string costText = $"{entry.GilCost} gil";
+        float costW = ImGui.CalcTextSize(costText).X;
+
+        // Bright highlight for keyboard-selected row.
+        if (navSel)
+            ImGui.PushStyleColor(ImGuiCol.Header, TpPackRgba(0.85f, 0.70f, 0.25f, 0.55f * alpha));
+
+        if (ImGui.Selectable($"  {entry.AetheryteName}##tp", navSel))
+            TeleportMenu.DoTeleport(entry);
+
+        if (navSel)
+            ImGui.PopStyleColor();
+
+        if (navSel)
+        {
+            _tpNavSelectedEntry = entry;
+            if (_tpNavScrollTo) { ImGui.SetScrollHereY(); _tpNavScrollTo = false; }
+        }
+
+        // Right-aligned cost on the same line.
+        ImGui.SameLine(availW - costW);
+        ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(0.7f, 0.7f, 0.6f, 0.7f * alpha));
+        ImGui.TextUnformatted(costText);
+        ImGui.PopStyleColor();
+
+        ImGui.PopID();
+        _tpDrawNavI++;
+    }
+
+    /// <summary>Draws a labeled thin line separator for a section.</summary>
+    private static void DrawTpSectionSep(ImDrawListPtr dl, float alpha, float scale, string label)
+    {
+        float y = ImGui.GetCursorScreenPos().Y + 2f * scale;
+        float x0 = ImGui.GetCursorScreenPos().X;
+        float x1 = x0 + ImGui.GetContentRegionAvail().X;
+        uint lineCol = TpPackRgba(1f, 1f, 1f, 0.06f * alpha);
+        dl.AddLine(new Vector2(x0, y), new Vector2(x1, y), lineCol, 1f * scale);
+        ImGui.Dummy(new Vector2(0, 6f * scale));
+        ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(0.8f, 0.7f, 0.35f, 0.6f * alpha));
+        ImGui.TextUnformatted(label);
+        ImGui.PopStyleColor();
+        ImGui.Dummy(new Vector2(0, 2f * scale));
+    }
+
+    private static bool MatchesFilter(string text, string filter)
+    {
+        if (string.IsNullOrEmpty(filter)) return true;
+        return text != null && text.Contains(filter, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static uint TpPackRgba(float r, float g, float b, float a)
+    {
+        byte br = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, r)) * 255f);
+        byte bg = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, g)) * 255f);
+        byte bb = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, b)) * 255f);
+        byte ba = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, a)) * 255f);
+        return ((uint)ba << 24) | ((uint)bb << 16) | ((uint)bg << 8) | br;
     }
 }

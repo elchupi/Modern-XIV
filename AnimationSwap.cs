@@ -77,6 +77,9 @@ public static unsafe class AnimationSwap
     private static int _redrawCooldown;
     private static bool _lastSwapActive;
 
+    // Deferred re-apply — wait for external redraws (Glamourer) to settle.
+    private static int _pendingReapplyDelay;
+
     // ── Job animation swap state ───────────────────────────────
     private const string JobPenumbraTag = "noWickyXIV_JobAnimSwap";
     private const int JobPenumbraPriority = 51;
@@ -177,6 +180,33 @@ public static unsafe class AnimationSwap
     public static int TotalResourceCalls => _registeredSwapCount;
     public static int TotalPapCalls => 0;
 
+    /// <summary>
+    /// Schedule AnimationSwap to re-register all Penumbra swaps after a
+    /// delay. Call this after anything that redraws the character externally
+    /// (e.g. Glamourer design application) — the delay lets the external
+    /// redraw fully settle before we re-apply + redraw.
+    /// </summary>
+    public static void ForceReapply(int delayFrames = 60)
+    {
+        _pendingReapplyDelay = delayFrames;
+    }
+
+    private static void ExecuteReapply()
+    {
+        _lastSrcCode = null;
+        _lastTgtCode = null;
+        _lastSwapRun = false;
+        _lastSwapWalk = false;
+        _lastSwapIdle = false;
+        _lastJobSrcFolder = null;
+        _lastJobHoldTgtFolder = null;
+        _lastJobMoveTgtFolder = null;
+        _lastJobAttackTgtFolder = null;
+        _lastJobModelCode = null;
+        _lastJobVisualModel = null;
+        DalamudApi.LogInfo("[AnimSwap] Deferred ForceReapply executing — resetting cached state");
+    }
+
     public static void Update()
     {
         bool raceEnabled = noWickyXIV.Config.EnableAnimationSwaps;
@@ -202,7 +232,16 @@ public static unsafe class AnimationSwap
         if (!raceEnabled && !jobEnabled)
         {
             DisableVtableHook();
+            _pendingReapplyDelay = 0;
             return;
+        }
+
+        // Process deferred re-apply (after Glamourer redraw settles).
+        if (_pendingReapplyDelay > 0)
+        {
+            _pendingReapplyDelay--;
+            if (_pendingReapplyDelay == 0)
+                ExecuteReapply();
         }
 
         try

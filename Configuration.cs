@@ -287,6 +287,16 @@ public class AnimationSwapRule
     public string TerritoryName = "";  // cached display name
 }
 
+// Recently visited teleport entry for the custom teleport menu.
+public class RecentTeleportEntry
+{
+    public uint AetheryteId;
+    public byte SubIndex;
+    public string Name = "";
+    public string AreaName = "";
+    public long Timestamp;
+}
+
 // A single Glamourer territory override: when the player is in the
 // specified territory, apply the named Glamourer design instead of
 // the default. Multiple overrides live under one automation toggle.
@@ -1129,6 +1139,17 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // the player is not in any listed territory.
     public bool EnableGlamourerTerritoryAuto = false;
     public List<GlamourerTerritoryOverride> GlamourerTerritoryOverrides = new();
+
+    // ---- Custom teleport menu ----
+    // Replaces the game's native Teleport window with a searchable,
+    // region-grouped list including FC house shortcut and recents.
+    public bool EnableCustomTeleportMenu = false;
+    public int  TeleportMenuHotkey = 0x4D;  // VirtualKey.M  (Shift+M to open)
+    public float TeleportMenuX = -1f;       // Saved window position (-1 = center)
+    public float TeleportMenuY = -1f;
+    public uint FcHouseAetheryteId = 0;     // Captured via "Set" — 0 = not set
+    public byte FcHouseSubIndex    = 0;
+    public List<RecentTeleportEntry> RecentTeleports = new();
 
     // ---- Enemy size clamp (duty-only) ----
     // Proportionally scales down oversized enemy models so they don't

@@ -79,6 +79,14 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Anim Swaps"))
+            {
+                if (ImGui.BeginChild("##animswap_scroll"))
+                    DrawAnimSwapTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
             if (ImGui.BeginTabItem("Misc"))
             {
                 if (ImGui.BeginChild("##misc_scroll"))
@@ -1009,6 +1017,16 @@ public static class PluginUI
 
     private static void DrawCameraDynamics()
     {
+        // Show which preset's dynamics the user is editing — edits
+        // target the ACTIVE preset (the one currently driving the
+        // camera), not the preset selected in the Presets tab list.
+        var activePreset = PresetManager.PresetOverride ?? PresetManager.ActivePreset;
+        if (activePreset != null)
+            ImGui.TextDisabled($"Editing: {activePreset.Name}  (activate a different preset to edit its dynamics)");
+        else
+            ImGui.TextDisabled("Editing global defaults (no active preset)");
+        ImGui.Spacing();
+
         // Search + reset-all toolbar
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 180 * ImGuiHelpers.GlobalScale);
         ImGui.InputText("Search##dynamics", ref _dynamicsSearch, 64);
@@ -1667,6 +1685,29 @@ public static class PluginUI
                 "Floating pill at the top-center of the screen. Hover the\n" +
                 "area to slide it down; click to teleport to the nearest\n" +
                 "Aetheryte for your current Main Scenario Quest objective.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Cutscene letterbox removal.
+        if (ImGuiEx.BeginGroupBox("Cutscene letterbox"))
+        {
+            ConfigCheckbox("Hide black bars##CutsceneLetterbox", ref noWickyXIV.Config.HideCutsceneLetterbox);
+            ImGui.TextDisabled(
+                "Removes the cinematic black bars during in-game\n" +
+                "rendered cutscenes. Ideal for ultrawide (21:9)\n" +
+                "monitors. Does not affect pre-rendered video cutscenes.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Enemy size clamp (duty-only).
+        if (ImGuiEx.BeginGroupBox("Enemy size clamp (duty only)"))
+        {
+            ConfigCheckbox("Enable##EnemySizeClamp", ref noWickyXIV.Config.EnableEnemySizeClamp);
+            ConfigSliderFloat("Max scale##EnemySizeClampMax", ref noWickyXIV.Config.EnemySizeClampMax, 0.5f, 10f, 3.0f);
+            ImGui.TextDisabled(
+                "Proportionally shrinks oversized enemy models during\n" +
+                "Duty Finder content so they don't fill the screen.\n" +
+                "Only active inside duties — overworld is never touched.");
             ImGuiEx.EndGroupBox();
         }
 
@@ -2890,5 +2931,368 @@ public static class PluginUI
 
         if (save)
             noWickyXIV.Config.Save();
+    }
+
+    // ── Animation Swaps tab ─────────────────────────────────────
+    private static (byte id, string name)[] _raceCache;
+    private static (uint id, string name)[] _jobCache;
+
+    private static unsafe void DrawAnimSwapTab()
+    {
+        ConfigCheckbox("Enable animation swaps", ref noWickyXIV.Config.EnableAnimationSwaps);
+        ImGui.TextDisabled(
+            "Transfer run/walk/idle animations from one race to another.\n" +
+            "Pick your race and the race whose animations you want.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var rules = noWickyXIV.Config.AnimationSwapRules;
+
+        // Add button.
+        if (ImGui.Button("+ Add Rule"))
+        {
+            rules.Add(new AnimationSwapRule());
+            noWickyXIV.Config.Save();
+        }
+
+        ImGui.Spacing();
+
+        // Draw each rule.
+        int removeIdx = -1;
+        for (int i = 0; i < rules.Count; i++)
+        {
+            var rule = rules[i];
+            ImGui.PushID(i);
+
+            string srcName = GetRaceName(rule.SourceRace);
+            string tgtName = GetRaceName(rule.TargetRace);
+            string header = $"{srcName}  →  {tgtName}##rule";
+            bool open = ImGui.CollapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowItemOverlap);
+
+            // Delete button.
+            ImGui.SameLine(ImGui.GetContentRegionAvail().X - 20f * ImGuiHelpers.GlobalScale);
+            ImGui.PushStyleColor(ImGuiCol.Text, 0xFF4444FFu);
+            if (ImGui.SmallButton("X"))
+                removeIdx = i;
+            ImGui.PopStyleColor();
+
+            if (open)
+            {
+                ImGui.Indent(10f);
+
+                // Enabled.
+                if (ImGui.Checkbox("Enabled", ref rule.Enabled))
+                    noWickyXIV.Config.Save();
+
+                // Source race (what you ARE).
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.BeginCombo("My Race", srcName))
+                {
+                    EnsureRaceCache();
+                    foreach (var (id, name) in _raceCache)
+                    {
+                        if (ImGui.Selectable(name, rule.SourceRace == id))
+                        {
+                            rule.SourceRace = id;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+
+                // Target race (whose animations to USE).
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.BeginCombo("Use Anims From", tgtName))
+                {
+                    EnsureRaceCache();
+                    foreach (var (id, name) in _raceCache)
+                    {
+                        if (id == 0) continue; // "Any" doesn't make sense as target
+                        if (ImGui.Selectable(name, rule.TargetRace == id))
+                        {
+                            rule.TargetRace = id;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+
+                ImGui.Spacing();
+
+                // Movement type toggles.
+                if (ImGui.Checkbox("Walk / Run", ref rule.SwapWalk))
+                    noWickyXIV.Config.Save();
+                ImGui.SameLine();
+                if (ImGui.Checkbox("Idle", ref rule.SwapIdle))
+                    noWickyXIV.Config.Save();
+
+                ImGui.Unindent(10f);
+            }
+
+            ImGui.PopID();
+            ImGui.Spacing();
+        }
+
+        if (removeIdx >= 0)
+        {
+            rules.RemoveAt(removeIdx);
+            noWickyXIV.Config.Save();
+        }
+
+        // ── Job animation swaps ──
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ConfigCheckbox("Enable job animation swaps", ref noWickyXIV.Config.EnableJobAnimationSwaps);
+        ImGui.TextDisabled("Swap weapon hold, movement, and auto-attack animations between jobs.");
+
+        ImGui.Spacing();
+
+        var jobRules = noWickyXIV.Config.JobAnimSwapRules;
+
+        if (ImGui.Button("+ Add Job Rule"))
+        {
+            jobRules.Add(new JobAnimSwapRule());
+            noWickyXIV.Config.Save();
+        }
+
+        ImGui.Spacing();
+
+        int removeJobIdx = -1;
+        for (int i = 0; i < jobRules.Count; i++)
+        {
+            var jr = jobRules[i];
+            ImGui.PushID(1000 + i);
+
+            string srcJobName = GetJobName(jr.SourceJob);
+            string holdJobName = jr.HoldTargetJob == 0 ? "None" : GetJobName(jr.HoldTargetJob);
+            string moveJobName = jr.MoveTargetJob == 0 ? "None" : GetJobName(jr.MoveTargetJob);
+            string atkJobName = jr.AttackTargetJob == 0 ? "None" : GetJobName(jr.AttackTargetJob);
+            string jobHeader = $"{srcJobName}  →  Hold: {holdJobName} / Move: {moveJobName} / Atk: {atkJobName}##jobrule";
+            bool jobOpen = ImGui.CollapsingHeader(jobHeader,
+                ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowItemOverlap);
+
+            // Delete button.
+            ImGui.SameLine(ImGui.GetContentRegionAvail().X - 20f * ImGuiHelpers.GlobalScale);
+            ImGui.PushStyleColor(ImGuiCol.Text, 0xFF4444FFu);
+            if (ImGui.SmallButton("X"))
+                removeJobIdx = i;
+            ImGui.PopStyleColor();
+
+            if (jobOpen)
+            {
+                ImGui.Indent(10f);
+
+                if (ImGui.Checkbox("Enabled", ref jr.Enabled))
+                    noWickyXIV.Config.Save();
+
+                // Source job (what you ARE).
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.BeginCombo("My Job", srcJobName))
+                {
+                    EnsureJobCache();
+                    // "Any" option.
+                    if (ImGui.Selectable("Any", jr.SourceJob == 0))
+                    {
+                        jr.SourceJob = 0;
+                        noWickyXIV.Config.Save();
+                    }
+                    foreach (var (id, name) in _jobCache)
+                    {
+                        if (ImGui.Selectable(name, jr.SourceJob == id))
+                        {
+                            jr.SourceJob = id;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+
+                // Weapon hold target job.
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.BeginCombo("Weapon Hold From", holdJobName))
+                {
+                    EnsureJobCache();
+                    if (ImGui.Selectable("None", jr.HoldTargetJob == 0))
+                    {
+                        jr.HoldTargetJob = 0;
+                        noWickyXIV.Config.Save();
+                    }
+                    foreach (var (id, name) in _jobCache)
+                    {
+                        if (ImGui.Selectable(name, jr.HoldTargetJob == id))
+                        {
+                            jr.HoldTargetJob = id;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+
+                // Movement target job.
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.BeginCombo("Movement From", moveJobName))
+                {
+                    EnsureJobCache();
+                    if (ImGui.Selectable("None", jr.MoveTargetJob == 0))
+                    {
+                        jr.MoveTargetJob = 0;
+                        noWickyXIV.Config.Save();
+                    }
+                    foreach (var (id, name) in _jobCache)
+                    {
+                        if (ImGui.Selectable(name, jr.MoveTargetJob == id))
+                        {
+                            jr.MoveTargetJob = id;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+
+                // Auto-attack target job.
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.BeginCombo("Auto-Attack From", atkJobName))
+                {
+                    EnsureJobCache();
+                    if (ImGui.Selectable("None", jr.AttackTargetJob == 0))
+                    {
+                        jr.AttackTargetJob = 0;
+                        noWickyXIV.Config.Save();
+                    }
+                    foreach (var (id, name) in _jobCache)
+                    {
+                        if (ImGui.Selectable(name, jr.AttackTargetJob == id))
+                        {
+                            jr.AttackTargetJob = id;
+                            noWickyXIV.Config.Save();
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+
+                ImGui.Unindent(10f);
+            }
+
+            ImGui.PopID();
+            ImGui.Spacing();
+        }
+
+        if (removeJobIdx >= 0)
+        {
+            jobRules.RemoveAt(removeJobIdx);
+            noWickyXIV.Config.Save();
+        }
+
+        // ── Diagnostic section ──
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // Live status.
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp != null)
+            {
+                var ch = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)lp.Address;
+                if (ch != null)
+                {
+                    ushort slot0 = ch->Timeline.TimelineSequencer.GetSlotTimeline(0);
+                    string key = AnimationSwap.LookupTimelineKey(slot0);
+                    byte race = ch->DrawData.CustomizeData.Race;
+                    byte sex = ch->DrawData.CustomizeData.Sex;
+                    ImGui.TextDisabled(
+                        $"Slot 0 = {slot0} \"{key}\"  |  " +
+                        $"Race = {AnimationSwap.LookupRaceName(race)} ({(sex == 0 ? "M" : "F")})");
+                }
+            }
+        }
+        catch { ImGui.TextDisabled("(unavailable)"); }
+
+        if (AnimationSwap.VisualRaceId != 0)
+            ImGui.TextDisabled(
+                $"Visual: {AnimationSwap.LookupRaceName(AnimationSwap.VisualRaceId)} " +
+                $"({AnimationSwap.VisualModelCode})");
+
+        ImGui.TextDisabled($"Vtable calls: {AnimationSwap.TotalHookCalls}  |  " +
+                           $"Penumbra swaps: {AnimationSwap.TotalSwaps}");
+        ImGui.TextDisabled($"Status: {AnimationSwap.ResourceHookStatus}");
+
+        // Buttons.
+        if (ImGui.SmallButton("Force Redraw"))
+            AnimationSwap.ForceRedraw();
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Dump Diagnostic"))
+            AnimationSwap.FlushDiag();
+        ImGui.SameLine();
+        ImGui.TextDisabled("animswap_diag.txt");
+    }
+
+    private static void EnsureRaceCache()
+    {
+        if (_raceCache != null) return;
+        try
+        {
+            var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Race>();
+            if (sheet == null) { _raceCache = new[] { ((byte)0, "Any") }; return; }
+
+            var list = new System.Collections.Generic.List<(byte id, string name)>();
+            list.Add((0, "Any"));
+            foreach (var row in sheet)
+            {
+                string name = row.Masculine.ExtractText();
+                if (string.IsNullOrEmpty(name)) continue;
+                list.Add(((byte)row.RowId, name));
+            }
+            _raceCache = list.ToArray();
+        }
+        catch { _raceCache = new[] { ((byte)0, "Any") }; }
+    }
+
+    private static string GetRaceName(byte raceId)
+    {
+        if (raceId == 0) return "Any";
+        EnsureRaceCache();
+        foreach (var (id, name) in _raceCache)
+            if (id == raceId) return name;
+        return $"Race #{raceId}";
+    }
+
+    private static void EnsureJobCache()
+    {
+        if (_jobCache != null) return;
+        try
+        {
+            var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>();
+            if (sheet == null) { _jobCache = Array.Empty<(uint, string)>(); return; }
+
+            var list = new System.Collections.Generic.List<(uint id, string name)>();
+            foreach (var row in sheet)
+            {
+                if (!AnimationSwap.JobWeaponFolder.ContainsKey(row.RowId)) continue;
+                string name = row.Abbreviation.ExtractText();
+                string full = row.Name.ExtractText();
+                if (string.IsNullOrEmpty(name)) continue;
+                string display = !string.IsNullOrEmpty(full)
+                    ? $"{name} ({full})"
+                    : name;
+                list.Add((row.RowId, display));
+            }
+            _jobCache = list.ToArray();
+        }
+        catch { _jobCache = Array.Empty<(uint, string)>(); }
+    }
+
+    private static string GetJobName(uint jobId)
+    {
+        if (jobId == 0) return "Any";
+        EnsureJobCache();
+        foreach (var (id, name) in _jobCache)
+            if (id == jobId) return name;
+        return $"Job #{jobId}";
     }
 }

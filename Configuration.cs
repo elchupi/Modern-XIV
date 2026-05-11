@@ -272,6 +272,31 @@ public class CameraConfigPreset
 //
 // Field defaults match Configuration.cs originals so a fresh
 // PresetDynamicsState() yields the same initial state as a fresh
+// A single animation swap rule: transfers locomotion animations
+// from one race to another (e.g. "play Hyur run/walk/idle on my
+// Miqo'te"). Toggles select which movement types to swap.
+public class AnimationSwapRule
+{
+    public bool Enabled = true;
+    public byte SourceRace;  // race the player IS (0 = any)
+    public byte TargetRace;  // race whose animations to USE
+    public bool SwapRun  = true;
+    public bool SwapWalk = true;
+    public bool SwapIdle = false;
+}
+
+// A single job animation swap rule: weapon hold, movement, and
+// auto-attacks can each target different jobs independently (mix and
+// match). Uses Penumbra IPC to redirect weapon-folder animation paths.
+public class JobAnimSwapRule
+{
+    public bool Enabled = true;
+    public uint SourceJob;          // ClassJob RowId (0 = any/current)
+    public uint HoldTargetJob;      // ClassJob whose weapon hold/stance to use (0 = no swap)
+    public uint MoveTargetJob;      // ClassJob whose weapon-held movement to use (0 = no swap)
+    public uint AttackTargetJob;    // ClassJob whose auto-attacks to use (0 = no swap)
+}
+
 // Configuration. Migration on load: if a preset has Dynamics == null
 // (saved before this field existed), PresetManager snapshots the
 // current Configuration into it on first activation so the user's
@@ -1066,6 +1091,29 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // Floating pill at top-center that slides down on hover and
     // teleports to the nearest Aetheryte for the current MSQ quest.
     public bool EnableMsqTeleport = false;
+
+    // ---- Cutscene letterbox removal ----
+    // Hides the black cinematic bars during in-game rendered cutscenes
+    // (CSE). Does not affect pre-rendered MP4 cutscenes.
+    public bool HideCutsceneLetterbox = false;
+
+    // ---- Animation swaps (locomotion) ----
+    // Per-frame override of the base animation timeline slot.
+    // Each rule swaps run and/or walk animations for a specific race.
+    public bool EnableAnimationSwaps = false;
+    public List<AnimationSwapRule> AnimationSwapRules = new();
+
+    // ---- Job animation swaps (battle) ----
+    // Redirects weapon-specific battle animations (sheathe, stance,
+    // auto-attacks) from one job's weapon type to another's via Penumbra.
+    public bool EnableJobAnimationSwaps = false;
+    public List<JobAnimSwapRule> JobAnimSwapRules = new();
+
+    // ---- Enemy size clamp (duty-only) ----
+    // Proportionally scales down oversized enemy models so they don't
+    // fill the screen. Only active inside Duty Finder content.
+    public bool  EnableEnemySizeClamp   = false;
+    public float EnemySizeClampMax      = 3.0f;
 
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -14,6 +16,11 @@ namespace noWickyXIV;
 // Hidden by default (faded + off-screen above the viewport edge).
 // On mouse-enter the hit-test strip at the very top, the pill slides
 // down + fades in. On mouse-leave it slides back up + fades out.
+//
+// Notification system: when the quest id or sequence changes, the pill
+// auto-reveals for a few seconds, shows a "(New)" badge with pulsing
+// border, and fires a Dalamud toast. Hovering or clicking dismisses
+// the notification.
 public static unsafe class MsqTeleport
 {
     // ── layout constants ──────────────────────────────────────────
@@ -22,6 +29,8 @@ public static unsafe class MsqTeleport
     private const float HOVER_STRIP_H    = 18f;   // invisible hit-test band at top
     private const float SLIDE_SPEED      = 8f;    // exp-lerp rate (1/s)
     private const float ROUNDING         = 10f;
+    private const float HOME_BTN_SIZE    = 32f;   // home button square side
+    private const float HOME_BTN_GAP     = 8f;    // gap between pill and home btn
 
     // ── cached MSQ data ──────────────────────────────────────────
     private static string _questName       = "";
@@ -38,10 +47,18 @@ public static unsafe class MsqTeleport
     // quest id or sequence actually changes.
     private static ushort _lastMsqId;
     private static byte   _lastSeq;
+    private static bool   _needsResolve;
+    private static bool   _firstDetect = true;   // suppress toast on initial detection
+    private static bool   _diagPrinted;           // one-shot diagnostic dump
 
     // ── animation state ───────────────────────────────────────────
     private static float _revealT;        // 0 = hidden, 1 = fully slid down
     private static bool  _hovered;
+
+    // ── notification state ────────────────────────────────────────
+    private static bool   _isNew;                 // quest changed, not yet dismissed
+    private static float  _newFadeT;              // 1→0 fade for the "(New)" badge
+    private static double _autoRevealUntilS;      // wall-clock until which pill auto-reveals
 
     // ── status flash ──────────────────────────────────────────────
     private static string _statusMsg = "";
@@ -49,17 +66,84 @@ public static unsafe class MsqTeleport
 
     public static void Update()
     {
-        // Only resolve quest data while the pill is actually visible
-        // (hovered). No polling when idle — zero cost, zero leaks.
         if (!noWickyXIV.Config.EnableMsqTeleport) return;
-        if (!_hovered) return;
 
+        // Always run: cheap quest-change detection (two pointer reads
+        // + one static call). This is what powers the notification
+        // system — we need to know about quest changes even when the
+        // pill is hidden.
+        DetectQuestChange();
+
+        // Full aetheryte/territory resolve only runs when the pill is
+        // visible (hovered or auto-revealing after a quest change).
         double now = Environment.TickCount64 / 1000.0;
-        if (now - _lastRefreshS >= REFRESH_INTERVAL)
+        bool visible = _hovered || now < _autoRevealUntilS;
+        if (!visible) return;
+
+        if (_needsResolve || now - _lastRefreshS >= REFRESH_INTERVAL)
         {
             _lastRefreshS = now;
+            _needsResolve = false;
             RefreshMsqData();
         }
+    }
+
+    // Lightweight check that runs every frame. Reads just the quest
+    // id + sequence and compares to the last known values. On change,
+    // sets notification state, fires a toast, and triggers auto-reveal.
+    private static void DetectQuestChange()
+    {
+        try
+        {
+            var agent = AgentScenarioTree.Instance();
+            if (agent == null || agent->Data == null) return;
+
+            ushort msqId = 0;
+            for (int i = 0; i < 3; i++)
+            {
+                ushort id = agent->Data->MainScenarioQuestIds[i];
+                if (id != 0) { msqId = id; break; }
+            }
+            if (msqId == 0) return;
+
+            byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
+
+            if (msqId == _lastMsqId && seq == _lastSeq) return;
+
+            bool wasFirst = _firstDetect;
+            _firstDetect = false;
+            _lastMsqId = msqId;
+            _lastSeq   = seq;
+            _needsResolve = true;
+
+            // Don't toast on initial plugin load — only on actual progression.
+            if (wasFirst) return;
+
+            // Quick quest-name lookup for the toast (just one sheet read,
+            // no aetheryte iteration). The full resolve fills in the rest
+            // when the pill becomes visible.
+            string toastName = "";
+            try
+            {
+                var questSheet = DalamudApi.DataManager.GetExcelSheet<Quest>();
+                if (questSheet != null)
+                {
+                    var row = questSheet.GetRowOrDefault(msqId);
+                    if (row == null) row = questSheet.GetRowOrDefault((uint)msqId + 0x10000u);
+                    if (row != null) toastName = row.Value.Name.ExtractText();
+                }
+            }
+            catch { }
+
+            if (string.IsNullOrEmpty(toastName)) toastName = $"Quest #{msqId}";
+
+            _isNew = true;
+            _newFadeT = 1f;
+            _autoRevealUntilS = Environment.TickCount64 / 1000.0 + 5.0;
+
+            try { DalamudApi.ShowQuestToast($"MSQ Updated: {toastName}"); } catch { }
+        }
+        catch { }
     }
 
     public static void Draw()
@@ -77,16 +161,32 @@ public static unsafe class MsqTeleport
         float ph = PILL_HEIGHT * scale;
         float stripH = HOVER_STRIP_H * scale;
 
+        float homeS = HOME_BTN_SIZE * scale;
+        float homeGap = HOME_BTN_GAP * scale;
+
+        // Center the pill (home button sits outside to the right).
         float posX = (disp.X - pw) * 0.5f;
         float pillY = -ph + _revealT * (ph + 4f);
 
-        // ── Invisible ImGui window for hover + click detection ──
-        // Raw foreground-draw-list doesn't participate in ImGui's
-        // input system, so we lay a transparent window over the
-        // hover strip + pill area.
+        // Home button Y: vertically centered with the pill.
+        float homeBtnX = posX + pw + homeGap;
+        float homeBtnY = pillY + (ph - homeS) * 0.5f;
+
+        // ── Invisible ImGui windows for hover + click detection ──
+        // The pill and home button each get their own window so hover
+        // detection is independent and clicking one doesn't require
+        // the other's window to report hovered.
         float hitH = MathF.Max(stripH, pillY + ph);
         if (hitH < stripH) hitH = stripH;
 
+        var hitFlags = ImGuiWindowFlags.NoDecoration
+                     | ImGuiWindowFlags.NoNav
+                     | ImGuiWindowFlags.NoFocusOnAppearing
+                     | ImGuiWindowFlags.NoMove
+                     | ImGuiWindowFlags.NoSavedSettings
+                     | ImGuiWindowFlags.NoBringToFrontOnFocus;
+
+        // — Pill hit-test —
         ImGui.SetNextWindowPos(new Vector2(posX, 0f));
         ImGui.SetNextWindowSize(new Vector2(pw, hitH));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
@@ -94,28 +194,53 @@ public static unsafe class MsqTeleport
         ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(1f, 1f));
         ImGui.PushStyleColor(ImGuiCol.WindowBg, 0u);
 
-        var flags = ImGuiWindowFlags.NoDecoration
-                  | ImGuiWindowFlags.NoNav
-                  | ImGuiWindowFlags.NoFocusOnAppearing
-                  | ImGuiWindowFlags.NoMove
-                  | ImGuiWindowFlags.NoSavedSettings
-                  | ImGuiWindowFlags.NoBringToFrontOnFocus;
-
-        ImGui.Begin("##MsqTpHit", flags);
-        bool wndHovered = ImGui.IsWindowHovered();
-        bool clicked = wndHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
+        ImGui.Begin("##MsqTpHit", hitFlags);
+        bool pillHovered = ImGui.IsWindowHovered();
+        bool clickedPill = pillHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
         ImGui.End();
-
         ImGui.PopStyleColor();
         ImGui.PopStyleVar(3);
 
-        _hovered = wndHovered;
+        // — Home button hit-test —
+        bool clickedHome = false;
+        bool homeHovered = false;
+        if (_revealT > 0.1f)
+        {
+            ImGui.SetNextWindowPos(new Vector2(homeBtnX, homeBtnY));
+            ImGui.SetNextWindowSize(new Vector2(homeS, homeS));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(1f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, 0u);
 
-        // Animate reveal.
-        float target = _hovered ? 1f : 0f;
+            ImGui.Begin("##MsqHomeHit", hitFlags);
+            homeHovered = ImGui.IsWindowHovered();
+            clickedHome = homeHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
+            ImGui.End();
+            ImGui.PopStyleColor();
+            ImGui.PopStyleVar(3);
+        }
+
+        _hovered = pillHovered || homeHovered;
+
+        // ── Dismiss notification on hover or click ──
+        if (_isNew && (_hovered || clickedPill))
+            _isNew = false;
+
+        // Decay "(New)" badge opacity after dismissal.
+        if (!_isNew && _newFadeT > 0f)
+        {
+            _newFadeT -= dt * 3f;   // ~0.33s fade-out
+            if (_newFadeT < 0f) _newFadeT = 0f;
+        }
+
+        // ── Animate reveal ──
+        double now = Environment.TickCount64 / 1000.0;
+        bool autoRevealing = now < _autoRevealUntilS;
+        float target = (_hovered || autoRevealing) ? 1f : 0f;
         float k = 1f - MathF.Exp(-SLIDE_SPEED * dt);
         _revealT += (target - _revealT) * k;
-        if (_revealT < 0.005f && !_hovered) _revealT = 0f;
+        if (_revealT < 0.005f && !_hovered && !autoRevealing) _revealT = 0f;
 
         // Don't draw if fully hidden.
         if (_revealT <= 0f) return;
@@ -125,22 +250,32 @@ public static unsafe class MsqTeleport
 
         var dl = ImGui.GetForegroundDrawList();
 
-        // Background pill.
+        // ── Background pill ──
         uint bgCol = PackRgba(0.08f, 0.08f, 0.12f, 0.92f * alpha);
         dl.AddRectFilled(
             new Vector2(posX, posY),
             new Vector2(posX + pw, posY + ph),
             bgCol, ROUNDING * scale);
 
-        // Border.
-        uint borderCol = PackRgba(0.95f, 0.75f, 0.20f, 0.7f * alpha);
+        // ── Border — pulses while notification is active ──
+        float borderAlpha;
+        if (_isNew || _newFadeT > 0.5f)
+        {
+            // Sine pulse: oscillates border brightness 0.35..1.0 at ~3 Hz.
+            float pulse = 0.35f + 0.65f * (0.5f + 0.5f * MathF.Sin((float)(now * 6.0)));
+            borderAlpha = pulse * alpha;
+        }
+        else
+        {
+            borderAlpha = 0.7f * alpha;
+        }
+        uint borderCol = PackRgba(0.95f, 0.75f, 0.20f, borderAlpha);
         dl.AddRect(
             new Vector2(posX, posY),
             new Vector2(posX + pw, posY + ph),
             borderCol, ROUNDING * scale, ImDrawFlags.None, 1.5f * scale);
 
-        // Text content.
-        double now = Environment.TickCount64 / 1000.0;
+        // ── Text content ──
         bool hasStatus = _statusMsg.Length > 0 && now < _statusUntilS;
 
         string label;
@@ -159,14 +294,96 @@ public static unsafe class MsqTeleport
         float ty = posY + (ph - textSize.Y) * 0.5f;
         dl.AddText(new Vector2(tx, ty), textCol, label);
 
-        // Click action: teleport or open Duty Finder.
-        if (clicked)
+        // ── "(New)" badge — floats at bottom-center of the pill ──
+        if (_newFadeT > 0.01f)
+        {
+            string newLabel = "(New)";
+            var newSize = ImGui.CalcTextSize(newLabel);
+            float padX = 8f * scale;
+            float padY = 3f * scale;
+            float badgeW = newSize.X + padX * 2f;
+            float badgeH = newSize.Y + padY * 2f;
+            float badgeX = posX + (pw - badgeW) * 0.5f;
+            float badgeY = posY + ph - badgeH * 0.5f;  // straddles the bottom edge
+
+            float badgeAlpha = _newFadeT * alpha;
+            uint badgeBg   = PackRgba(0.85f, 0.30f, 0.10f, 0.95f * badgeAlpha);
+            uint badgeBord = PackRgba(1f, 0.6f, 0.2f, 0.8f * badgeAlpha);
+            uint badgeText = PackRgba(1f, 1f, 1f, badgeAlpha);
+
+            dl.AddRectFilled(
+                new Vector2(badgeX, badgeY),
+                new Vector2(badgeX + badgeW, badgeY + badgeH),
+                badgeBg, 6f * scale);
+            dl.AddRect(
+                new Vector2(badgeX, badgeY),
+                new Vector2(badgeX + badgeW, badgeY + badgeH),
+                badgeBord, 6f * scale, ImDrawFlags.None, 1f * scale);
+            dl.AddText(
+                new Vector2(badgeX + padX, badgeY + padY),
+                badgeText, newLabel);
+        }
+
+        // ── Home button — floating circle to the right of the pill ──
+        {
+            float cx = homeBtnX + homeS * 0.5f;
+            float cy = homeBtnY + homeS * 0.5f;
+            float r  = homeS * 0.5f;
+
+            // Background circle.
+            bool homeHover = homeHovered;
+            float homeBgA = homeHover ? 0.95f : 0.85f;
+            uint homeBg = PackRgba(0.08f, 0.08f, 0.12f, homeBgA * alpha);
+            dl.AddCircleFilled(new Vector2(cx, cy), r, homeBg, 24);
+
+            // Border circle.
+            uint homeBorder = PackRgba(0.95f, 0.75f, 0.20f, 0.7f * alpha);
+            dl.AddCircle(new Vector2(cx, cy), r, homeBorder, 24, 1.5f * scale);
+
+            // House icon — geometric: triangle roof + rectangle body.
+            float iconScale = homeS * 0.35f;
+            float iconX = cx;
+            float iconTopY = cy - iconScale * 0.9f;
+            float roofHalfW = iconScale * 0.85f;
+            float roofBaseY = cy - iconScale * 0.15f;
+            float bodyBot   = cy + iconScale * 0.75f;
+            float bodyHalfW = iconScale * 0.6f;
+
+            uint iconCol = PackRgba(1f, 1f, 1f, alpha);
+
+            // Roof triangle.
+            dl.AddTriangleFilled(
+                new Vector2(iconX, iconTopY),
+                new Vector2(iconX - roofHalfW, roofBaseY),
+                new Vector2(iconX + roofHalfW, roofBaseY),
+                iconCol);
+
+            // Body rectangle.
+            dl.AddRectFilled(
+                new Vector2(iconX - bodyHalfW, roofBaseY),
+                new Vector2(iconX + bodyHalfW, bodyBot),
+                iconCol);
+
+            // Door cutout (dark rect in lower center of body).
+            float doorHalfW = bodyHalfW * 0.35f;
+            float doorTop   = roofBaseY + (bodyBot - roofBaseY) * 0.35f;
+            uint doorCol = PackRgba(0.08f, 0.08f, 0.12f, homeBgA * alpha);
+            dl.AddRectFilled(
+                new Vector2(iconX - doorHalfW, doorTop),
+                new Vector2(iconX + doorHalfW, bodyBot),
+                doorCol);
+        }
+
+        // ── Click actions ──
+        if (clickedPill)
         {
             if (_bestAetheryteId != 0)
                 ExecuteTeleport();
             else if (_dutyContentId != 0)
                 OpenDutyFinder();
         }
+        if (clickedHome)
+            TeleportToFcEstate();
     }
 
     // ── MSQ data resolution ───────────────────────────────────────
@@ -196,23 +413,10 @@ public static unsafe class MsqTeleport
             }
             if (msqId == 0) { ClearCachedData(); return; }
 
-            byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
-
-            // Fast path: quest id + sequence unchanged → no work needed.
-            // The heavy part (sheet lookups, aetheryte iteration) only
-            // runs when the player actually advances or changes quests.
-            if (msqId == _lastMsqId && seq == _lastSeq)
-                return;
-            _lastMsqId = msqId;
-            _lastSeq   = seq;
-
             // Full resolve — quest or step changed.
             ClearCachedData();
 
             // 2. Look up the quest in the Lumina Quest sheet.
-            //    Quest sheet uses row id = questId + 0x10000 in some versions,
-            //    but Dalamud's sheet accessor works with the raw id. We try
-            //    the id as-is first, then with the offset.
             var questSheet = DalamudApi.DataManager.GetExcelSheet<Quest>();
             if (questSheet == null) return;
 
@@ -225,20 +429,33 @@ public static unsafe class MsqTeleport
 
             var quest = questRow.Value;
             _questName = quest.Name.ExtractText();
+            byte seq = _lastSeq;
 
-            // 3. Build a priority-ordered list of candidate locations.
-            //    First: TodoParams objectives for the current sequence
-            //    step (where the game is telling you to go right now).
-            //    Then:  IssuerLocation as a last-resort fallback.
-            var candidates = new List<(float x, float z, uint terr)>();
+            // 3. Build candidate location lists.
+            //    Current-step locations are the primary signal. When
+            //    a single step spans multiple territories (common in
+            //    MSQ — cutscene markers, transition zones, instanced
+            //    content), picking the FIRST territory with an aetheryte
+            //    was wrong (it grabbed Sinus Lacrimarum for a quest
+            //    whose playable objective is Old Sharlayan). Fix:
+            //    group current-step candidates by territory, pick the
+            //    territory with the MOST entries (majority vote), then
+            //    find the nearest aetheryte there. Fallback steps and
+            //    IssuerLocation only fire if the current step yields
+            //    nothing.
+            var currentStepCands = new List<(float x, float z, uint terr)>();
+            var fallbackCands    = new List<(float x, float z, uint terr)>();
 
-            // TodoParams objective locations (step-based).
-            // If we have a current sequence, try that step's group first,
-            // then add all other groups as fallbacks.
             int todoCount = quest.TodoParams.Count;
 
-            // Current-step group first (seq is 1-based, TodoParams 0-based).
-            if (seq > 0 && seq - 1 < todoCount)
+            // seq=255 means "ready to turn in" — the player needs to
+            // go back to the quest NPC. Use IssuerLocation as the
+            // primary candidate so we teleport to the turn-in NPC
+            // instead of picking a random territory from old steps.
+            bool isTurnIn = (seq == 255 || seq - 1 >= todoCount);
+
+            // Current-step objectives (seq is 1-based, TodoParams 0-based).
+            if (!isTurnIn && seq > 0 && seq - 1 < todoCount)
             {
                 try
                 {
@@ -251,7 +468,7 @@ public static unsafe class MsqTeleport
                             if (!levelRef.IsValid) continue;
                             var level = levelRef.Value;
                             if (!level.Territory.IsValid) continue;
-                            candidates.Add((level.X, level.Z, level.Territory.RowId));
+                            currentStepCands.Add((level.X, level.Z, level.Territory.RowId));
                         }
                         catch { }
                     }
@@ -259,10 +476,25 @@ public static unsafe class MsqTeleport
                 catch { }
             }
 
-            // Remaining groups as fallbacks.
+            // Turn-in: IssuerLocation is the primary destination.
+            if (isTurnIn)
+            {
+                try
+                {
+                    if (quest.IssuerLocation.IsValid)
+                    {
+                        var issuer = quest.IssuerLocation.Value;
+                        if (issuer.Territory.IsValid)
+                            currentStepCands.Add((issuer.X, issuer.Z, issuer.Territory.RowId));
+                    }
+                }
+                catch { }
+            }
+
+            // Other steps as fallbacks (+ IssuerLocation when not turn-in).
             for (int i = 0; i < todoCount; i++)
             {
-                if (seq > 0 && i == seq - 1) continue; // already added above
+                if (!isTurnIn && seq > 0 && i == seq - 1) continue;
                 try
                 {
                     var locCol = quest.TodoParams[i].ToDoLocation;
@@ -274,116 +506,125 @@ public static unsafe class MsqTeleport
                             if (!levelRef.IsValid) continue;
                             var level = levelRef.Value;
                             if (!level.Territory.IsValid) continue;
-                            candidates.Add((level.X, level.Z, level.Territory.RowId));
+                            fallbackCands.Add((level.X, level.Z, level.Territory.RowId));
                         }
                         catch { }
                     }
                 }
                 catch { }
             }
+            if (!isTurnIn)
+            {
+                try
+                {
+                    if (quest.IssuerLocation.IsValid)
+                    {
+                        var issuer = quest.IssuerLocation.Value;
+                        if (issuer.Territory.IsValid)
+                            fallbackCands.Add((issuer.X, issuer.Z, issuer.Territory.RowId));
+                    }
+                }
+                catch { }
+            }
 
-            // IssuerLocation = last-resort fallback (quest giver, not
-            // the objective — user wants to TP to where they're GOING).
+            if (currentStepCands.Count == 0 && fallbackCands.Count == 0) return;
+
+            // Capture issuer territory — used as a tiebreaker when
+            // the current step has equal-count candidates across
+            // territories. MSQ quests often return the player to
+            // the hub they got the quest from after a cutscene in
+            // another zone, so the issuer territory is a strong
+            // signal for "where should I actually teleport."
+            uint issuerTerr = 0;
             try
             {
                 if (quest.IssuerLocation.IsValid)
                 {
-                    var issuer = quest.IssuerLocation.Value;
-                    if (issuer.Territory.IsValid)
-                        candidates.Add((issuer.X, issuer.Z, issuer.Territory.RowId));
+                    var il = quest.IssuerLocation.Value;
+                    if (il.Territory.IsValid)
+                        issuerTerr = il.Territory.RowId;
                 }
             }
             catch { }
 
-            if (candidates.Count == 0) return;
+            // Diagnostic: write candidate territory breakdown to file (once).
+            // Remove once routing is confirmed correct.
+            if (!_diagPrinted)
+            {
+                _diagPrinted = true;
+                try
+                {
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"=== MSQ Diagnostic — {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+                    sb.AppendLine($"Quest: {_questName}  id={msqId}  seq={seq}  isTurnIn={isTurnIn}");
+                    sb.AppendLine($"IssuerTerr: {issuerTerr}");
+                    sb.AppendLine($"CurrentStepCands: {currentStepCands.Count}  FallbackCands: {fallbackCands.Count}");
+                    sb.AppendLine();
 
-            // 4. Find the nearest unlocked Aetheryte to ANY candidate.
-            //    Walk each candidate in priority order. For each, find the
-            //    closest same-territory aetheryte. Stop at the first
-            //    candidate that produces a match — current-step objectives
-            //    win over the quest giver's location.
+                    var terrNames = new Dictionary<uint, string>();
+                    var terrSheet2 = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
+                    Action<string, List<(float x, float z, uint terr)>> dumpCands = (label, cands) =>
+                    {
+                        var terrCounts = new Dictionary<uint, int>();
+                        foreach (var c in cands)
+                        {
+                            if (!terrCounts.ContainsKey(c.terr)) terrCounts[c.terr] = 0;
+                            terrCounts[c.terr]++;
+                            if (!terrNames.ContainsKey(c.terr) && terrSheet2 != null)
+                            {
+                                var tr = terrSheet2.GetRowOrDefault(c.terr);
+                                if (tr.HasValue && tr.Value.PlaceName.IsValid)
+                                    terrNames[c.terr] = tr.Value.PlaceName.Value.Name.ExtractText();
+                            }
+                        }
+                        sb.AppendLine($"  {label}:");
+                        foreach (var kv in terrCounts)
+                        {
+                            string name = terrNames.ContainsKey(kv.Key) ? terrNames[kv.Key] : $"terr#{kv.Key}";
+                            string marker = kv.Key == issuerTerr ? " [issuer]" : "";
+                            sb.AppendLine($"    {name} x{kv.Value}{marker}");
+                        }
+                        if (terrCounts.Count == 0) sb.AppendLine("    (none)");
+                    };
+                    dumpCands("Current step", currentStepCands);
+                    dumpCands("Fallback", fallbackCands);
+
+                    var dir = PluginConfiguration.ConfigFolder.FullName;
+                    var path = System.IO.Path.Combine(dir, "msq_diag.txt");
+                    File.WriteAllText(path, sb.ToString());
+                    DalamudApi.LogInfo($"[MSQ] Diagnostic written to: {path}");
+                }
+                catch { }
+            }
+
+            // 4. Find the best aetheryte.
             var aetheryteSheet = DalamudApi.DataManager.GetExcelSheet<Aetheryte>();
             if (aetheryteSheet == null) return;
 
-            foreach (var cand in candidates)
-            {
-                float bestDist = float.MaxValue;
-                uint  bestId   = 0;
-                byte  bestSub  = 0;
-                string bestName = "";
+            // Try current-step candidates first, territory-majority-ordered,
+            // with issuer territory as tiebreaker.
+            if (currentStepCands.Count > 0
+                && TryResolveAetheryte(currentStepCands, aetheryteSheet,
+                       majorityVote: true, preferTerr: issuerTerr))
+                goto resolved;
 
-                foreach (var ae in DalamudApi.AetheryteList)
-                {
-                    try
-                    {
-                        var aethData = aetheryteSheet.GetRowOrDefault(ae.AetheryteId);
-                        if (aethData == null) continue;
-                        var aeth = aethData.Value;
-                        if (!aeth.IsAetheryte) continue;
-                        if (!aeth.Territory.IsValid) continue;
-                        if (aeth.Territory.RowId != cand.terr) continue;
+            // Fallback: other steps / issuer, simple first-match order.
+            if (fallbackCands.Count > 0
+                && TryResolveAetheryte(fallbackCands, aetheryteSheet,
+                       majorityVote: false, preferTerr: 0))
+                goto resolved;
 
-                        // Same territory — compute distance.
-                        float ax = 0f, az = 0f;
-                        try
-                        {
-                            var lvlArr = aeth.Level;
-                            if (lvlArr.Count > 0 && lvlArr[0].IsValid)
-                            {
-                                var lvl = lvlArr[0].Value;
-                                ax = lvl.X;
-                                az = lvl.Z;
-                            }
-                        }
-                        catch { }
-
-                        float dx = ax - cand.x;
-                        float dz = az - cand.z;
-                        float dist = dx * dx + dz * dz;
-                        if (dist < bestDist)
-                        {
-                            bestDist = dist;
-                            bestId   = ae.AetheryteId;
-                            bestSub  = ae.SubIndex;
-                            bestName = "";
-                            try
-                            {
-                                if (aeth.PlaceName.IsValid)
-                                    bestName = aeth.PlaceName.Value.Name.ExtractText();
-                            }
-                            catch { }
-                        }
-                    }
-                    catch { }
-                }
-
-                if (bestId != 0)
-                {
-                    _bestAetheryteId   = bestId;
-                    _bestSubIndex      = bestSub;
-                    _bestAetheryteName = bestName;
-                    // Use this candidate's territory for the zone name.
-                    try
-                    {
-                        var terrSheet = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
-                        var terr = terrSheet?.GetRowOrDefault(cand.terr);
-                        if (terr.HasValue && terr.Value.PlaceName.IsValid)
-                            _destZoneName = terr.Value.PlaceName.Value.Name.ExtractText();
-                    }
-                    catch { }
-                    break;   // first match wins (IssuerLocation priority)
-                }
-            }
+            resolved:
 
             // 5. If no aetheryte found, check if any candidate territory
-            //    is a duty (dungeon/trial/raid). If so, store the
-            //    ContentFinderCondition id so we can open the DF instead.
+            //    is a duty (dungeon/trial/raid).
             if (_bestAetheryteId == 0)
             {
+                var allCands = currentStepCands.Count > 0 ? currentStepCands : fallbackCands;
                 var terrSheet = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
                 if (terrSheet != null)
                 {
-                    foreach (var cand in candidates)
+                    foreach (var cand in allCands)
                     {
                         try
                         {
@@ -400,7 +641,6 @@ public static unsafe class MsqTeleport
                             if (string.IsNullOrEmpty(_dutyName))
                                 _dutyName = $"Duty #{cfcId}";
 
-                            // Resolve zone name from the duty territory.
                             if (tt.PlaceName.IsValid)
                                 _destZoneName = tt.PlaceName.Value.Name.ExtractText();
                             break;
@@ -417,8 +657,134 @@ public static unsafe class MsqTeleport
         }
         catch (Exception ex)
         {
-            DalamudApi.LogDebug($"[MsqTeleport] Refresh failed: {ex.Message}");
+            DalamudApi.LogInfo($"[MsqTeleport] Refresh failed: {ex.Message}");
         }
+    }
+
+    // Resolve the best aetheryte from a list of candidates.
+    // When majorityVote is true, candidates are grouped by territory
+    // and the territory with the most entries is tried first. This
+    // prevents a single cutscene/transition marker in another zone
+    // from overriding the primary objective territory (e.g. one
+    // Sinus Lacrimarum entry vs. three Old Sharlayan entries).
+    // When majorityVote is false, candidates are tried in list order.
+    // Returns true if an aetheryte was found and cached.
+    private static bool TryResolveAetheryte(
+        List<(float x, float z, uint terr)> candidates,
+        Lumina.Excel.ExcelSheet<Aetheryte> aetheryteSheet,
+        bool majorityVote, uint preferTerr = 0)
+    {
+        // Build ordered territory list.
+        IEnumerable<(float x, float z, uint terr)> ordered;
+        if (majorityVote && candidates.Count > 1)
+        {
+            // Group by territory, sort by count descending (most
+            // entries = most likely the real destination). If counts
+            // are tied, prefer the issuer's territory (MSQ quests
+            // frequently start and end in the same hub — cutscene
+            // markers in other zones are noise). Earliest list index
+            // breaks remaining ties.
+            var groups = new Dictionary<uint, (int count, int firstIdx)>();
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                uint t = candidates[i].terr;
+                if (!groups.ContainsKey(t))
+                    groups[t] = (1, i);
+                else
+                {
+                    var g = groups[t];
+                    groups[t] = (g.count + 1, g.firstIdx);
+                }
+            }
+            // Sort territories: most entries first, issuer territory
+            // wins ties, then earliest index.
+            var sortedTerrs = groups.OrderByDescending(kv => kv.Value.count)
+                                    .ThenByDescending(kv => preferTerr != 0 && kv.Key == preferTerr ? 1 : 0)
+                                    .ThenBy(kv => kv.Value.firstIdx)
+                                    .Select(kv => kv.Key)
+                                    .ToList();
+
+            // Rebuild candidate list in territory-priority order.
+            var reordered = new List<(float x, float z, uint terr)>();
+            foreach (uint terr in sortedTerrs)
+                foreach (var c in candidates)
+                    if (c.terr == terr)
+                        reordered.Add(c);
+            ordered = reordered;
+        }
+        else
+        {
+            ordered = candidates;
+        }
+
+        foreach (var cand in ordered)
+        {
+            float bestDist = float.MaxValue;
+            uint  bestId   = 0;
+            byte  bestSub  = 0;
+            string bestName = "";
+
+            foreach (var ae in DalamudApi.AetheryteList)
+            {
+                try
+                {
+                    var aethData = aetheryteSheet.GetRowOrDefault(ae.AetheryteId);
+                    if (aethData == null) continue;
+                    var aeth = aethData.Value;
+                    if (!aeth.IsAetheryte) continue;
+                    if (!aeth.Territory.IsValid) continue;
+                    if (aeth.Territory.RowId != cand.terr) continue;
+
+                    float ax = 0f, az = 0f;
+                    try
+                    {
+                        var lvlArr = aeth.Level;
+                        if (lvlArr.Count > 0 && lvlArr[0].IsValid)
+                        {
+                            var lvl = lvlArr[0].Value;
+                            ax = lvl.X;
+                            az = lvl.Z;
+                        }
+                    }
+                    catch { }
+
+                    float dx = ax - cand.x;
+                    float dz = az - cand.z;
+                    float dist = dx * dx + dz * dz;
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        bestId   = ae.AetheryteId;
+                        bestSub  = ae.SubIndex;
+                        bestName = "";
+                        try
+                        {
+                            if (aeth.PlaceName.IsValid)
+                                bestName = aeth.PlaceName.Value.Name.ExtractText();
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+
+            if (bestId != 0)
+            {
+                _bestAetheryteId   = bestId;
+                _bestSubIndex      = bestSub;
+                _bestAetheryteName = bestName;
+                try
+                {
+                    var terrSheet = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
+                    var terr = terrSheet?.GetRowOrDefault(cand.terr);
+                    if (terr.HasValue && terr.Value.PlaceName.IsValid)
+                        _destZoneName = terr.Value.PlaceName.Value.Name.ExtractText();
+                }
+                catch { }
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void ClearCachedData()
@@ -447,8 +813,87 @@ public static unsafe class MsqTeleport
         }
         catch (Exception ex)
         {
-            DalamudApi.LogDebug($"[MsqTeleport] Duty Finder failed: {ex.Message}");
+            DalamudApi.LogInfo($"[MsqTeleport] Duty Finder failed: {ex.Message}");
             ShowStatus("Duty Finder failed", 2.0);
+        }
+    }
+
+    private static void TeleportToFcEstate()
+    {
+        try
+        {
+            var telepo = FFXIVClientStructs.FFXIV.Client.Game.UI.Telepo.Instance();
+            if (telepo == null) { ShowStatus("Teleport unavailable", 2.0); return; }
+
+            // Refresh the internal list so housing entries are populated.
+            try { telepo->UpdateAetheryteList(); } catch { }
+
+            var list = telepo->TeleportList;
+            int count = (int)list.Count;
+
+            // Diagnostic: dump ALL entries to file so we can identify
+            // the FC estate. Remove once confirmed.
+            try
+            {
+                var aethSheet = DalamudApi.DataManager.GetExcelSheet<Aetheryte>();
+                var sb = new StringBuilder();
+                sb.AppendLine($"=== Home Teleport Diagnostic — {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+                sb.AppendLine($"Total entries: {count}");
+                sb.AppendLine();
+                for (int i = 0; i < count; i++)
+                {
+                    var info = list[i];
+                    string name = "";
+                    try
+                    {
+                        var row = aethSheet?.GetRowOrDefault(info.AetheryteId);
+                        if (row.HasValue && row.Value.PlaceName.IsValid)
+                            name = row.Value.PlaceName.Value.Name.ExtractText();
+                    }
+                    catch { }
+                    sb.AppendLine(
+                        $"  #{i} id={info.AetheryteId} sub={info.SubIndex} " +
+                        $"ward={info.Ward} plot={info.Plot} " +
+                        $"shared={info.IsSharedHouse} apt={info.IsApartment} " +
+                        $"name=\"{name}\"");
+                }
+                var dir = PluginConfiguration.ConfigFolder.FullName;
+                var path = System.IO.Path.Combine(dir, "home_diag.txt");
+                File.WriteAllText(path, sb.ToString());
+                DalamudApi.LogInfo($"[Home] Diagnostic written to: {path}");
+            }
+            catch { }
+
+            // Primary: look for IsSharedHouse (FC estate flag).
+            for (int i = 0; i < count; i++)
+            {
+                var info = list[i];
+                if (!info.IsSharedHouse) continue;
+                if (info.IsApartment) continue;
+
+                bool ok = telepo->Teleport(info.AetheryteId, info.SubIndex);
+                ShowStatus(ok ? "Teleporting to FC Estate..." : "Cannot teleport right now", ok ? 3.0 : 2.0);
+                return;
+            }
+
+            // Fallback: any entry with Ward > 0 that isn't apartment.
+            for (int i = 0; i < count; i++)
+            {
+                var info = list[i];
+                if (info.Ward == 0 && info.Plot == 0) continue;
+                if (info.IsApartment) continue;
+
+                bool ok = telepo->Teleport(info.AetheryteId, info.SubIndex);
+                ShowStatus(ok ? "Teleporting to estate..." : "Cannot teleport right now", ok ? 3.0 : 2.0);
+                return;
+            }
+
+            ShowStatus("No FC estate found", 2.0);
+        }
+        catch (Exception ex)
+        {
+            DalamudApi.LogInfo($"[MsqTeleport] FC teleport failed: {ex.Message}");
+            ShowStatus("FC teleport failed", 2.0);
         }
     }
 
@@ -471,7 +916,7 @@ public static unsafe class MsqTeleport
         }
         catch (Exception ex)
         {
-            DalamudApi.LogDebug($"[MsqTeleport] Teleport failed: {ex.Message}");
+            DalamudApi.LogInfo($"[MsqTeleport] Teleport failed: {ex.Message}");
             ShowStatus("Teleport failed", 2.0);
         }
     }

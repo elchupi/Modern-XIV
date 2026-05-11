@@ -142,6 +142,7 @@ public static class PresetManager
             {
                 if (_pendingDynamicsApply.Dynamics != null)
                     PresetDynamicsState.ApplyStateToConfig(_pendingDynamicsApply.Dynamics, noWickyXIV.Config);
+                _liveDynamicsPreset = _pendingDynamicsApply;
             }
             catch { /* defensive */ }
             _pendingDynamicsApply = null;
@@ -256,7 +257,18 @@ public static class PresetManager
             try { preset.Dynamics ??= PresetDynamicsState.SnapshotFrom(noWickyXIV.Config); }
             catch { /* defensive */ }
         }
-        _liveDynamicsPreset = preset;
+        // Track which preset's Dynamics are currently in Config.
+        // During a transition the incoming dynamics are DEFERRED
+        // (_pendingDynamicsApply), so Config still holds the OUTGOING
+        // preset's values. Setting _liveDynamicsPreset to the incoming
+        // preset here would cause SyncConfigToActivePresetDynamics()
+        // (called by every UI slider) to overwrite the incoming
+        // preset's Dynamics with the outgoing values — silently
+        // merging both presets. Defer the pointer update to
+        // Update() / CancelTransitionToTarget() where the apply
+        // actually happens.
+        if (!willTransition)
+            _liveDynamicsPreset = preset;
 
         // ---- Invariants snap immediately ----
         // FoVDelta only affects user wheel input, no visible motion.
@@ -431,6 +443,10 @@ public static class PresetManager
                     _pendingDynamicsApply = null;
                     if (pending.Dynamics != null)
                         PresetDynamicsState.ApplyStateToConfig(pending.Dynamics, noWickyXIV.Config);
+                    // NOW Config holds the incoming preset's dynamics —
+                    // safe to let SyncConfigToActivePresetDynamics() write
+                    // UI edits back into it.
+                    _liveDynamicsPreset = pending;
                 }
                 catch { /* defensive */ }
             }

@@ -26,6 +26,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // we have a more targeted suppression mechanism.
         // MountSoundFilter.Initialize();
         CharacterRollHook.Initialize();
+        CutsceneLetterbox.Initialize();
         // MountMomentum DISABLED — ViGEm-emitted analog stick was
         // observed pushing the character / camera continuously even
         // with the feature flag off. Re-enable once the stuck-input
@@ -63,6 +64,18 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
             }
         }
         if (sanitized) Config.Save();
+
+        // One-shot migration: presets saved before per-preset Dynamics
+        // existed have Dynamics == null. Populate them from the current
+        // global Config NOW (at plugin load) so every preset captures
+        // the user's intended global state. Doing this lazily inside
+        // ApplyPreset was wrong — by the time a preset first activated,
+        // Config already held a DIFFERENT preset's Dynamics values, so
+        // the migration copied the outgoing preset's values instead of
+        // the user's original globals.
+        foreach (var p in Config.Presets)
+            p.Dynamics ??= PresetDynamicsState.SnapshotFrom(Config);
+
         // Hypostasis base wires Draw + OpenConfigUi only. OpenMainUi was
         // added later by Dalamud as a distinct "open the plugin's primary
         // window" entrypoint (the click-to-open button in the installer);
@@ -208,6 +221,9 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // MountMomentum.Update();
         MountAudio.Update();
         MsqTeleport.Update();
+        CutsceneLetterbox.Update();
+        AnimationSwap.Update();
+        EnemySizeClamp.Update();
         CharacterRollHook.Tick();
     }
 
@@ -264,6 +280,9 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { LightSync.Dispose(); } catch { }
         try { MountAudio.Dispose(); } catch { }
         try { MountSoundFilter.Dispose(); } catch { }
+        try { CutsceneLetterbox.Dispose(); } catch { }
+        try { AnimationSwap.Dispose(); } catch { }
+        try { EnemySizeClamp.Dispose(); } catch { }
         try { CharacterRollHook.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;

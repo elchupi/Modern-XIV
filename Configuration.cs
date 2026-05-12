@@ -1136,6 +1136,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float CompassEdgeFadePct   = 0.18f;  // [0..0.5] portion of each side that fades
     public float CompassFadeSpeed     = 8f;
     public float CompassIconSize      = 22f;
+    public float CompassChevronOffsetY = 0f;
     public float CompassMaxRangeYalms = 200f;
     public float CompassBarColorR     = 0f;
     public float CompassBarColorG     = 0f;

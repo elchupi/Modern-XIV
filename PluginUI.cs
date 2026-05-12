@@ -1713,6 +1713,7 @@ public static class PluginUI
             ConfigSliderFloat("Edge fade %##Compass",     ref noWickyXIV.Config.CompassEdgeFadePct, 0f,  0.5f, 0.18f);
             ConfigSliderFloat("Fade speed##Compass",      ref noWickyXIV.Config.CompassFadeSpeed,  1f,   20f,  8f);
             ConfigSliderFloat("Icon size##Compass",       ref noWickyXIV.Config.CompassIconSize,   8f,   64f,  22f, "%.0f");
+            ConfigSliderFloat("Chevron Y offset##Compass", ref noWickyXIV.Config.CompassChevronOffsetY, -20f, 20f, 0f, "%.0f");
             ConfigSliderFloat("Max range (yalms)##Compass", ref noWickyXIV.Config.CompassMaxRangeYalms, 10f, 1000f, 200f, "%.0f");
             ImGui.Separator();
             ConfigSliderFloat("Bar R##Compass",   ref noWickyXIV.Config.CompassBarColorR, 0f, 1f, 0f);

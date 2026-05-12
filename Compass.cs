@@ -13,9 +13,22 @@ namespace noWickyXIV;
 
 public static unsafe class Compass
 {
-    private static float _alpha; // 0..1 enable fade
+    private static float _alpha;
     private static bool  _lastAnchorBottom;
     private static bool  _anchorFadingOut;
+
+    private static TargetState _tgt;
+    private static TargetState _ftgt;
+
+    private struct TargetState
+    {
+        public ulong Id;
+        public float Scale;
+        public float Alpha;
+        public Vector3 LastPos;
+        public uint LastIcon;
+        public bool Active;
+    }
 
     private static readonly Dictionary<uint, ISharedImmediateTexture?> _iconCache = new();
 
@@ -44,6 +57,12 @@ public static unsafe class Compass
 
         if (_alpha < 0.01f) return;
 
+        // Capture targets and animate scale/alpha
+        var targetObj = cfg.CompassShowTarget ? DalamudApi.TargetManager?.Target : null;
+        var focusObj  = cfg.CompassShowFocusTarget ? DalamudApi.TargetManager?.FocusTarget : null;
+        UpdateTargetState(ref _tgt, targetObj, 1.4f, dt);
+        UpdateTargetState(ref _ftgt, focusObj, 1.3f, dt);
+
         try
         {
             var cam = Common.CameraManager->worldCamera;
@@ -62,21 +81,30 @@ public static unsafe class Compass
             else
                 cy = vp.Pos.Y + cfg.CompassOffsetY + cfg.CompassHeight * 0.5f;
             Vector2 center = new(cx, cy);
+            bool bottom = _lastAnchorBottom;
 
             var dl = ImGui.GetForegroundDrawList();
 
+            // Layer 0: bar background + center chevron
             DrawBarBackground(dl, center, cfg);
-            if (cfg.CompassShowCardinals)    DrawCardinals(dl, center, cfg, camYaw);
-            if (cfg.CompassShowWaymarks)     DrawWaymarks(dl, center, cfg, camYaw, ppos);
-            if (cfg.CompassShowParty)        DrawParty(dl, center, cfg, camYaw, ppos);
-            if (cfg.CompassShowFates)        DrawFates(dl, center, cfg, camYaw, ppos);
-            if (cfg.CompassShowAetherytes)   DrawAetherytes(dl, center, cfg, camYaw, ppos);
+            DrawCenterChevron(dl, center, cfg, bottom);
+
+            // Layer 1: cardinals
+            if (cfg.CompassShowCardinals) DrawCardinals(dl, center, cfg, camYaw, bottom);
+
+            // Layer 2: world icons (non-selected only)
+            if (cfg.CompassShowWaymarks)   DrawWaymarks(dl, center, cfg, camYaw, ppos);
+            if (cfg.CompassShowParty)      DrawParty(dl, center, cfg, camYaw, ppos);
+            if (cfg.CompassShowFates)      DrawFates(dl, center, cfg, camYaw, ppos);
+            if (cfg.CompassShowAetherytes) DrawAetherytes(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowMsqMarkers || cfg.CompassShowSideQuestMarkers)
                 DrawNpcMarkers(dl, center, cfg, camYaw, ppos);
-            if (cfg.CompassShowFocusTarget)  DrawTarget(dl, center, cfg, camYaw, ppos,
-                                                        DalamudApi.TargetManager?.FocusTarget, isFocus: true);
-            if (cfg.CompassShowTarget)       DrawTarget(dl, center, cfg, camYaw, ppos,
-                                                        DalamudApi.TargetManager?.Target, isFocus: false);
+
+            // Layer 3: target indicators on top of everything (keep drawing during fade-out)
+            if (_ftgt.Alpha > 0.01f)
+                DrawTargetOverlay(dl, center, cfg, camYaw, ppos, ref _ftgt, isFocus: true);
+            if (_tgt.Alpha > 0.01f)
+                DrawTargetOverlay(dl, center, cfg, camYaw, ppos, ref _tgt, isFocus: false);
         }
         catch { }
     }
@@ -86,7 +114,7 @@ public static unsafe class Compass
         _iconCache.Clear();
     }
 
-    // ---------- Drawing ----------
+    // ---------- Structural elements ----------
 
     private static void DrawBarBackground(ImDrawListPtr dl, Vector2 center, Configuration cfg)
     {
@@ -110,22 +138,55 @@ public static unsafe class Compass
             barCol, barColEdge, barColEdge, barCol);
     }
 
-    private static void DrawCardinals(ImDrawListPtr dl, Vector2 center, Configuration cfg, float camYaw)
+    private static void DrawCenterChevron(ImDrawListPtr dl, Vector2 center, Configuration cfg, bool bottom)
     {
-        DrawTick(dl, center, cfg, camYaw, MathF.PI,         "N", primary: true);
-        DrawTick(dl, center, cfg, camYaw, 0f,               "S", primary: true);
-        DrawTick(dl, center, cfg, camYaw, MathF.PI * 0.5f,  "E", primary: true);
-        DrawTick(dl, center, cfg, camYaw, -MathF.PI * 0.5f, "W", primary: true);
-        DrawTick(dl, center, cfg, camYaw,  MathF.PI * 0.75f, null, primary: false);
-        DrawTick(dl, center, cfg, camYaw,  MathF.PI * 0.25f, null, primary: false);
-        DrawTick(dl, center, cfg, camYaw, -MathF.PI * 0.25f, null, primary: false);
-        DrawTick(dl, center, cfg, camYaw, -MathF.PI * 0.75f, null, primary: false);
+        float halfH = cfg.CompassHeight * 0.5f;
+        float s = 6f;
+        float thick = 1.5f;
+        float yOff = cfg.CompassChevronOffsetY;
+        uint col = PackColor(cfg.CompassTickColorR, cfg.CompassTickColorG,
+                             cfg.CompassTickColorB, cfg.CompassTickColorA * _alpha);
+
+        if (bottom)
+        {
+            float baseY = center.Y + halfH + yOff;
+            var tip   = new Vector2(center.X, baseY - 2f);
+            var left  = new Vector2(center.X - s, baseY + s);
+            var right = new Vector2(center.X + s, baseY + s);
+            dl.AddLine(left, tip, col, thick);
+            dl.AddLine(tip, right, col, thick);
+        }
+        else
+        {
+            float baseY = center.Y - halfH - yOff;
+            var tip   = new Vector2(center.X, baseY + 2f);
+            var left  = new Vector2(center.X - s, baseY - s);
+            var right = new Vector2(center.X + s, baseY - s);
+            dl.AddLine(left, tip, col, thick);
+            dl.AddLine(tip, right, col, thick);
+        }
+    }
+
+    // ---------- Data sources ----------
+
+    private static void DrawCardinals(ImDrawListPtr dl, Vector2 center, Configuration cfg,
+                                       float camYaw, bool bottom)
+    {
+        DrawTick(dl, center, cfg, camYaw, bottom, MathF.PI,         "N", primary: true);
+        DrawTick(dl, center, cfg, camYaw, bottom, 0f,               "S", primary: true);
+        DrawTick(dl, center, cfg, camYaw, bottom, MathF.PI * 0.5f,  "E", primary: true);
+        DrawTick(dl, center, cfg, camYaw, bottom, -MathF.PI * 0.5f, "W", primary: true);
+        DrawTick(dl, center, cfg, camYaw, bottom,  MathF.PI * 0.75f, null, primary: false);
+        DrawTick(dl, center, cfg, camYaw, bottom,  MathF.PI * 0.25f, null, primary: false);
+        DrawTick(dl, center, cfg, camYaw, bottom, -MathF.PI * 0.25f, null, primary: false);
+        DrawTick(dl, center, cfg, camYaw, bottom, -MathF.PI * 0.75f, null, primary: false);
     }
 
     private static void DrawTick(ImDrawListPtr dl, Vector2 center, Configuration cfg,
-                                  float camYaw, float worldBearing, string? label, bool primary)
+                                  float camYaw, bool bottom, float worldBearing,
+                                  string? label, bool primary)
     {
-        float rel = AngleDelta(camYaw, worldBearing);
+        float rel = BearingToRel(worldBearing, camYaw);
         if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
 
         float halfH = cfg.CompassHeight * 0.5f;
@@ -140,7 +201,12 @@ public static unsafe class Compass
         if (label != null)
         {
             var sz = ImGui.CalcTextSize(label);
-            var p = new Vector2(x - sz.X * 0.5f, center.Y - halfH - sz.Y - 2f);
+            float labelY;
+            if (bottom)
+                labelY = center.Y - halfH - sz.Y - 2f;
+            else
+                labelY = center.Y + halfH + 2f;
+            var p = new Vector2(x - sz.X * 0.5f, labelY);
             dl.AddText(p, tickCol, label);
         }
     }
@@ -164,15 +230,115 @@ public static unsafe class Compass
         }
     }
 
-    private static void DrawTarget(ImDrawListPtr dl, Vector2 center, Configuration cfg,
-                                    float camYaw, Vector3 ppos,
-                                    Dalamud.Game.ClientState.Objects.Types.IGameObject? obj,
-                                    bool isFocus)
+    private static void UpdateTargetState(ref TargetState st,
+                                            Dalamud.Game.ClientState.Objects.Types.IGameObject? obj,
+                                            float maxScale, float dt)
     {
-        if (obj == null) return;
-        Vector3 wpos = new(obj.Position.X, obj.Position.Y, obj.Position.Z);
-        DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos,
-            isFocus ? 0xFFFFA040u : 0xFF40A0FFu);
+        float lerpRate = 1f - MathF.Exp(-10f * dt);
+        bool hasTarget = obj != null;
+
+        if (hasTarget)
+        {
+            ulong id = obj!.GameObjectId;
+            st.Active = true;
+            st.Id = id;
+            st.LastPos = new Vector3(obj.Position.X, obj.Position.Y, obj.Position.Z);
+            st.Alpha += (1f - st.Alpha) * lerpRate;
+            st.Scale += (maxScale - st.Scale) * lerpRate;
+
+            // Resolve icon
+            try
+            {
+                if (obj.ObjectKind == ObjectKind.Aetheryte)
+                {
+                    st.LastIcon = 60453u;
+                    var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Aetheryte>();
+                    var row = sheet?.GetRowOrDefault(obj.BaseId);
+                    if (row != null && !row.Value.IsAetheryte)
+                        st.LastIcon = 60430u;
+                }
+                else
+                {
+                    var gop = (GameObject*)obj.Address;
+                    if (gop != null && gop->NamePlateIconId != 0)
+                        st.LastIcon = gop->NamePlateIconId;
+                    else if (st.LastIcon == 0)
+                        QuestMarkerHider.HiddenIcons.TryGetValue(id, out st.LastIcon);
+                }
+            }
+            catch { }
+        }
+        else
+        {
+            st.Alpha += (0f - st.Alpha) * lerpRate;
+            st.Scale += (1f - st.Scale) * lerpRate;
+            if (st.Alpha < 0.01f)
+            {
+                st.Active = false;
+                st.Id = 0;
+                st.LastIcon = 0;
+            }
+        }
+    }
+
+    private static void DrawTargetOverlay(ImDrawListPtr dl, Vector2 center, Configuration cfg,
+                                           float camYaw, Vector3 ppos,
+                                           ref TargetState st, bool isFocus)
+    {
+        Vector3 wpos = st.LastPos;
+
+        float distSq = (wpos.X - ppos.X) * (wpos.X - ppos.X)
+                     + (wpos.Z - ppos.Z) * (wpos.Z - ppos.Z);
+        float maxR = cfg.CompassMaxRangeYalms;
+        if (distSq > maxR * maxR) return;
+
+        float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
+        float rel = BearingToRel(worldBearing, camYaw);
+        if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
+
+        float a = _alpha * edgeAlpha * st.Alpha;
+        uint baseColor = isFocus ? 0xFFFFA040u : 0xFF40A0FFu;
+        float size = cfg.CompassIconSize * st.Scale;
+
+        var tl = new Vector2(x - size * 0.5f, center.Y - size * 0.5f);
+        var br = new Vector2(x + size * 0.5f, center.Y + size * 0.5f);
+
+        // No icon = don't show on compass
+        if (st.LastIcon == 0) return;
+
+        var wrap = GetIcon(st.LastIcon);
+        if (wrap == null) return;
+
+        try
+        {
+            var tex = wrap.GetWrapOrEmpty();
+
+            // Image glow: draw the icon at offsets tinted light yellow
+            float gs = 3f * st.Scale;
+            for (int pass = 0; pass < 2; pass++)
+            {
+                float off = pass == 0 ? gs : gs * 0.5f;
+                uint pt = PackColor(1f, 1f, 0.7f, a * (pass == 0 ? 0.3f : 0.5f));
+                dl.AddImage(tex.Handle, tl + new Vector2(-off, 0), br + new Vector2(-off, 0), Vector2.Zero, Vector2.One, pt);
+                dl.AddImage(tex.Handle, tl + new Vector2(off, 0),  br + new Vector2(off, 0),  Vector2.Zero, Vector2.One, pt);
+                dl.AddImage(tex.Handle, tl + new Vector2(0, -off), br + new Vector2(0, -off), Vector2.Zero, Vector2.One, pt);
+                dl.AddImage(tex.Handle, tl + new Vector2(0, off),  br + new Vector2(0, off),  Vector2.Zero, Vector2.One, pt);
+            }
+
+            // Actual icon on top
+            uint tint = PackColor(1f, 1f, 1f, a);
+            dl.AddImage(tex.Handle, tl, br, Vector2.Zero, Vector2.One, tint);
+        }
+        catch { }
+
+        // Stroke chevron at top-right — same color as tick/center chevron
+        float chevS = 4f;
+        float chevX = x + size * 0.35f;
+        float chevY = center.Y - size * 0.35f;
+        uint chevCol = PackColor(cfg.CompassTickColorR, cfg.CompassTickColorG,
+                                 cfg.CompassTickColorB, cfg.CompassTickColorA * a);
+        dl.AddLine(new Vector2(chevX, chevY + chevS), new Vector2(chevX + chevS, chevY), chevCol, 1.5f);
+        dl.AddLine(new Vector2(chevX + chevS, chevY), new Vector2(chevX + chevS * 2f, chevY + chevS), chevCol, 1.5f);
     }
 
     private static void DrawParty(ImDrawListPtr dl, Vector2 center, Configuration cfg,
@@ -184,10 +350,11 @@ public static unsafe class Compass
         foreach (var p in party)
         {
             if (p == null) continue;
-            if ((ulong)p.ObjectId == selfId) continue;
+            if ((ulong)p.EntityId == selfId) continue;
             var pos = p.Position;
             Vector3 wpos = new(pos.X, pos.Y, pos.Z);
-            DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0xFF40FF80u);
+            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0, "P",
+                              overrideColor: 0xFF40FF80u);
         }
     }
 
@@ -202,7 +369,8 @@ public static unsafe class Compass
             Vector3 wpos = new(f.Position.X, f.Position.Y, f.Position.Z);
             uint icon = (uint)f.IconId;
             if (icon == 0)
-                DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0xFFFFFF40u);
+                DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0, null,
+                                  overrideColor: 0xFFFFFF40u);
             else
                 DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, icon, null);
         }
@@ -222,7 +390,7 @@ public static unsafe class Compass
             try
             {
                 var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Aetheryte>();
-                var row = sheet?.GetRowOrDefault(o.DataId);
+                var row = sheet?.GetRowOrDefault(o.BaseId);
                 if (row != null && !row.Value.IsAetheryte)
                     icon = 60430u;
             }
@@ -263,7 +431,8 @@ public static unsafe class Compass
 
     private static void DrawIconAtBearing(ImDrawListPtr dl, Vector2 center, Configuration cfg,
                                            float camYaw, Vector3 ppos, Vector3 wpos,
-                                           uint iconId, string? labelFallback)
+                                           uint iconId, string? labelFallback,
+                                           uint overrideColor = 0)
     {
         float distSq = (wpos.X - ppos.X) * (wpos.X - ppos.X)
                      + (wpos.Z - ppos.Z) * (wpos.Z - ppos.Z);
@@ -271,7 +440,7 @@ public static unsafe class Compass
         if (distSq > maxR * maxR) return;
 
         float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
-        float rel = AngleDelta(camYaw, worldBearing);
+        float rel = BearingToRel(worldBearing, camYaw);
         if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
 
         float a = _alpha * edgeAlpha;
@@ -279,7 +448,20 @@ public static unsafe class Compass
         var tl = new Vector2(x - size * 0.5f, center.Y - size * 0.5f);
         var br = new Vector2(x + size * 0.5f, center.Y + size * 0.5f);
 
-        var wrap = GetIcon(iconId);
+        if (overrideColor != 0)
+        {
+            uint col = MultiplyAlpha(overrideColor, a);
+            dl.AddCircleFilled(new Vector2(x, center.Y), size * 0.4f, col, 24);
+            if (!string.IsNullOrEmpty(labelFallback))
+            {
+                var sz = ImGui.CalcTextSize(labelFallback);
+                var p = new Vector2(x - sz.X * 0.5f, center.Y - sz.Y * 0.5f);
+                dl.AddText(p, PackColor(0f, 0f, 0f, a), labelFallback);
+            }
+            return;
+        }
+
+        var wrap = iconId != 0 ? GetIcon(iconId) : null;
         if (wrap != null)
         {
             try
@@ -294,7 +476,7 @@ public static unsafe class Compass
 
         uint discCol = PackColor(cfg.CompassTickColorR, cfg.CompassTickColorG,
                                   cfg.CompassTickColorB, cfg.CompassTickColorA * a);
-        dl.AddCircleFilled(new Vector2(x, center.Y), size * 0.4f, discCol);
+        dl.AddCircleFilled(new Vector2(x, center.Y), size * 0.4f, discCol, 24);
         if (!string.IsNullOrEmpty(labelFallback))
         {
             var sz = ImGui.CalcTextSize(labelFallback);
@@ -303,45 +485,40 @@ public static unsafe class Compass
         }
     }
 
-    private static void DrawChevronAtBearing(ImDrawListPtr dl, Vector2 center, Configuration cfg,
-                                              float camYaw, Vector3 ppos, Vector3 wpos, uint rgba)
-    {
-        float distSq = (wpos.X - ppos.X) * (wpos.X - ppos.X)
-                     + (wpos.Z - ppos.Z) * (wpos.Z - ppos.Z);
-        float maxR = cfg.CompassMaxRangeYalms;
-        if (distSq > maxR * maxR) return;
-
-        float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
-        float rel = AngleDelta(camYaw, worldBearing);
-        if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
-
-        float a = _alpha * edgeAlpha;
-        uint col = MultiplyAlpha(rgba, a);
-        float halfH = cfg.CompassHeight * 0.5f;
-        float s = cfg.CompassIconSize * 0.5f;
-        var p1 = new Vector2(x,         center.Y - halfH + 2f);
-        var p2 = new Vector2(x - s,     center.Y - halfH - s);
-        var p3 = new Vector2(x + s,     center.Y - halfH - s);
-        dl.AddTriangleFilled(p1, p2, p3, col);
-    }
-
     private static bool ProjectToBar(float rel, Configuration cfg, out float x, out float edgeAlpha)
     {
         x = 0f; edgeAlpha = 0f;
         float fovRad = MathF.Max(10f, cfg.CompassFovDegrees) * MathF.PI / 180f;
-        if (MathF.Abs(rel) > fovRad * 0.5f) return false;
+        float halfFov = fovRad * 0.5f;
 
-        float t = rel / (fovRad * 0.5f); // [-1, 1]
+        bool clamped = false;
+        float clampedRel = rel;
+        if (MathF.Abs(rel) > halfFov)
+        {
+            clampedRel = MathF.Sign(rel) * halfFov;
+            clamped = true;
+        }
+
+        float t = clampedRel / halfFov;
         var vp = ImGui.GetMainViewport();
         float center = vp.Pos.X + vp.Size.X * 0.5f + cfg.CompassOffsetX;
         x = center + t * cfg.CompassWidth * 0.5f;
 
         float u = MathF.Abs(t);
         float fadeStart = 1f - MathF.Max(0.001f, cfg.CompassEdgeFadePct * 2f);
-        edgeAlpha = u < fadeStart
-            ? 1f
-            : MathF.Max(0f, 1f - (u - fadeStart) / (1f - fadeStart));
+        if (clamped)
+            edgeAlpha = 0.35f;
+        else if (u < fadeStart)
+            edgeAlpha = 1f;
+        else
+            edgeAlpha = MathF.Max(0f, 1f - (u - fadeStart) / (1f - fadeStart));
         return edgeAlpha > 0f;
+    }
+
+    private static float BearingToRel(float worldBearing, float camYaw)
+    {
+        float lookDir = camYaw + MathF.PI;
+        return AngleDelta(worldBearing, lookDir);
     }
 
     private static float AngleDelta(float from, float to)

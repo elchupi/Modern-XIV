@@ -1,11 +1,11 @@
 {
-  "Author": "ebhemmanuel",
-  "Name": "noWickyXIV",
+  "Author": "elchupi",
+  "Name": "Modern XIV",
   "InternalName": "noWickyXIV",
   "AssemblyVersion": "2.1.1.1",
-  "Description": "Fork of Cammy adding yaw lag, roll tilt, and position float for the third-person camera. Personal use.",
+  "Description": "All-in-one plugin: dynamic camera system, race/job animation swaps, Glamourer automation, custom teleport menu, HP vignette, MSQ overlay, and more.",
   "ApplicableVersion": "any",
-  "RepoUrl": "https://github.com/ebhemmanuel/noWickyXIV",
+  "RepoUrl": "https://github.com/elchupi/ModernXIV",
   "Tags": [
     "camera",
     "tps",
@@ -23,7 +23,7 @@
   "LoadSync": false,
   "CanUnloadAsync": false,
   "LoadPriority": 0,
-  "Punchline": "Personal-use camera fork (Cammy + dynamic feel layer)",
+  "Punchline": "Camera dynamics, animation swaps, glamour automation, and QoL tools for FFXIV",
   "Changelog": "Initial fork from Cammy.",
   "AcceptsFeedback": true
 }

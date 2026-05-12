@@ -286,7 +286,7 @@ public static unsafe class Compass
             {
                 var tex = wrap.GetWrapOrEmpty();
                 uint tint = PackColor(1f, 1f, 1f, a);
-                dl.AddImage(tex.ImGuiHandle, tl, br, Vector2.Zero, Vector2.One, tint);
+                dl.AddImage(tex.Handle, tl, br, Vector2.Zero, Vector2.One, tint);
                 return;
             }
             catch { }

@@ -106,6 +106,9 @@ public enum BuiltinPresetCondition
     // raid mechanics. Falls back to false when the target isn't a
     // hostile BattleChara or isn't currently casting.
     [Display(Name = "Enemy Casting")] EnemyCasting,
+    [Display(Name = "Weapon Drawn + Running")] WeaponDrawnRunning,
+    Falling,
+    [Display(Name = "Weapon Drawn")] WeaponDrawn,
 }
 
 public class CameraConfigPreset
@@ -167,6 +170,8 @@ public class CameraConfigPreset
     // Configuration as before — Dynamics is just the per-preset store.
     public PresetDynamicsState Dynamics = null;
 
+    public float PresetTransitionSeconds = 0.5f;
+
     public CameraConfigPreset Clone()
     {
         var c = (CameraConfigPreset)MemberwiseClone();
@@ -221,6 +226,17 @@ public class CameraConfigPreset
         return false;
     }
 
+    private static bool IsWeaponDrawn()
+    {
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) return false;
+            return (lp.StatusFlags & Dalamud.Game.ClientState.Objects.Enums.StatusFlags.WeaponOut) != 0;
+        }
+        catch { return false; }
+    }
+
     private static bool EvaluateBuiltinCondition(BuiltinPresetCondition c)
     {
         try
@@ -254,6 +270,12 @@ public class CameraConfigPreset
                     => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
                        && JobAura.IsMoving,
                 BuiltinPresetCondition.EnemyCasting => IsTargetEnemyCasting(),
+                BuiltinPresetCondition.WeaponDrawnRunning
+                    => IsWeaponDrawn() && JobAura.IsMoving,
+                BuiltinPresetCondition.Falling
+                    => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping],
+                BuiltinPresetCondition.WeaponDrawn
+                    => IsWeaponDrawn(),
                 _ => false,
             };
         }
@@ -675,6 +697,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // glide. If you want a cinematic ease-in, set 1-2s and avoid
     // scrolling through the transition window.
     public float PresetTransitionSeconds = 0.5f;
+    public bool  PresetTransitionMigrated = false;
     public bool EnableCameraNoClippy = false;
     public DeathCamSetting DeathCamMode = DeathCamSetting.Disabled;
     public bool EnableAdvancedFreeCamControls = false;
@@ -1229,6 +1252,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // from IBattleChara.CurrentHp. ON by default so the target ring is
     // visible out of the box — toggle lives in the Target UI tab.
     public bool  EnableHpRingOnTarget     = true;
+    public bool  EnableHpRingOnNpcTarget  = false;
     // Mirror it on every other party member too — quick at-a-glance
     // ally HP indicator that doesn't depend on the party-list HUD.
     public bool  EnableHpRingOnParty      = false;

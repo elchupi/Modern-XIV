@@ -22,6 +22,11 @@ public static class HpVignette
 {
     private const double REZ_FADE_SECONDS = 1.6;
     private const float  DEAD_ALPHA       = 0.65f;
+    // Single-frame HP gain (as a fraction of MaxHp) that counts as a
+    // "real heal" worth flashing. 0.06 catches Cure/Adloquium-class
+    // heals and bigger; sits above typical regen-tick magnitudes so
+    // passive ticks don't pulse the screen.
+    private const float  HEAL_GAIN_FRAC   = 0.06f;
 
     // True last frame the player was at HP = 0.
     private static bool   _wasDead;
@@ -31,6 +36,10 @@ public static class HpVignette
     private static double _rezFadeUntilS;
     // Smoothed alpha for fade-out when HP climbs above threshold.
     private static float  _smoothAlpha;
+    // Previous frame's CurrentHp for delta-based heal detection.
+    // uint.MaxValue = sentinel "no prior sample" (e.g., feature just
+    // enabled, zoning) so we don't fake a huge heal on the first frame.
+    private static uint   _prevCurrentHp = uint.MaxValue;
 
     public static void Update() { /* render does the state work */ }
 
@@ -43,6 +52,7 @@ public static class HpVignette
             _wasLowHp = false;
             _rezFadeUntilS = 0;
             _smoothAlpha = 0f;
+            _prevCurrentHp = uint.MaxValue;
             return;
         }
 
@@ -71,15 +81,45 @@ public static class HpVignette
             }
             _wasDead = isDead;
 
-            // Heal transition: HP was below threshold and just crossed above.
+            // Heal detection — two complementary triggers, both arm the
+            // same white-fade. Either can fire each frame; restarting an
+            // in-flight fade just refreshes its end time (visually a
+            // continued saturated flash, not a stutter).
+            //
+            //  (a) Threshold-cross: HP was below the user's "low" line
+            //      last frame and is no longer below it now. Catches the
+            //      slow-recovery case where a single heal bumps the bar
+            //      from 30% → 55% across one frame.
+            //  (b) Delta gain: CurrentHp jumped up by >= HEAL_GAIN_FRAC
+            //      of MaxHp in one frame. Catches "big heal landed even
+            //      though I was at 80%" — the old impl missed this
+            //      because the player never crossed the low threshold.
+            //
+            // The old `_rezFadeUntilS <= 0` gate is gone — without it,
+            // a heal during an active rez/heal fade can still re-arm,
+            // which is what the user wants ("for sure fire all the time").
             float threshold = MathF.Max(0.01f, c.HpVignetteThreshold);
             bool isLowHp = !isDead && hpFrac < threshold;
-            if (!isLowHp && _wasLowHp && !isDead && _rezFadeUntilS <= 0)
+
+            bool healFire = false;
+            if (!isDead && _wasLowHp && !isLowHp)
+                healFire = true;                                  // (a)
+            if (!isDead && _prevCurrentHp != uint.MaxValue
+                && bc.CurrentHp > _prevCurrentHp)
             {
-                // Healed above threshold — trigger same white-fade as rez.
-                _rezFadeUntilS = now + REZ_FADE_SECONDS;
+                float gainFrac = (bc.CurrentHp - _prevCurrentHp) / (float)bc.MaxHp;
+                if (gainFrac >= HEAL_GAIN_FRAC)
+                    healFire = true;                              // (b)
             }
+            if (healFire)
+                _rezFadeUntilS = now + REZ_FADE_SECONDS;
+
             _wasLowHp = isLowHp;
+            // Track previous HP for the next frame's delta check.
+            // While dead we reset to the sentinel so the rez itself
+            // (0 → full HP) doesn't read as a "heal" — the dead→alive
+            // transition above already arms the rez fade.
+            _prevCurrentHp = isDead ? uint.MaxValue : bc.CurrentHp;
 
             float r, g, b, alpha;
 

@@ -1159,6 +1159,11 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  EnableEnemySizeClamp   = false;
     public float EnemySizeClampMax      = 3.0f;
 
+    // ---- Quick menu (bottom-right launcher pill) ----
+    // Slides up from the bottom-right corner on hover; each row fires
+    // a single slash command via the Dalamud command dispatcher.
+    public bool  EnableQuickMenu        = true;
+
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the
     // ConditionFlag.InCombat is set, then back to the captured baseline

@@ -66,8 +66,9 @@ public static unsafe class EnemySizeClamp
             {
                 if (obj == null) continue;
                 if (obj is not IBattleNpc bn) continue;
-                // Only hostile NPCs (kind 2 = enemy).
-                if ((byte)bn.BattleNpcKind != 2) continue;
+                // Only hostile combatants. BattleNpcSubKind 5 = Enemy/Combatant;
+                // numeric compare avoids enum-name drift across Dalamud versions.
+                if ((byte)bn.BattleNpcKind != 5) continue;
 
                 var go = (GameObject*)obj.Address;
                 if (go == null || go->DrawObject == null) continue;

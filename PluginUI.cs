@@ -1689,6 +1689,19 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
+        // Quick menu launcher (bottom-right slide-up pill).
+        if (ImGuiEx.BeginGroupBox("Quick menu (bottom-right launcher)"))
+        {
+            ConfigCheckbox("Enable##QuickMenu", ref noWickyXIV.Config.EnableQuickMenu);
+            ImGui.TextDisabled(
+                "Floating pill at the bottom-right of the screen. Hover\n" +
+                "the corner to slide it up; click a row to fire its slash\n" +
+                "command. Rows (top → bottom):\n" +
+                "  /xlplugins   /nowickyxiv   /glamourer\n" +
+                "  /penumbra    /vfxedit");
+            ImGuiEx.EndGroupBox();
+        }
+
         // Custom teleport menu — replaces the native Teleport window.
         if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
         {
@@ -1759,15 +1772,14 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Hotbar Fader (cascade fade-in/out on weapon-drawn).
-        if (ImGuiEx.BeginGroupBox("Hotbar Fader (weapon-drawn cascade)"))
+        // Hotbar Fader (hover to reveal).
+        if (ImGuiEx.BeginGroupBox("Hotbar Fader (hover to reveal)"))
         {
             ConfigCheckbox("Enable##HotbarFader", ref noWickyXIV.Config.EnableHotbarFader);
             ImGui.TextDisabled(
-                "Fades hotbars 1, 7, 10 in cascade order on weapon draw,\n" +
-                "and reverse-cascade fades them out on sheath.\n" +
-                "Cascade delay = gap between each bar starting (default 0.95s).");
-            ConfigSliderFloat("Cascade delay (s)##HotbarFader", ref noWickyXIV.Config.HotbarFaderCascadeDelay, 0f,   3f,   0.95f, "%.2f");
+                "Every main hotbar (1..10) plus the Duty Actions bar\n" +
+                "sits at Sheathed alpha and fades up to Drawn alpha\n" +
+                "while the cursor is over it, then fades back out.");
             ConfigSliderFloat("Fade rate (1/s)##HotbarFader",   ref noWickyXIV.Config.HotbarFaderRate,         1f,   20f,  6.0f,  "%.1f");
             ConfigSliderFloat("Drawn alpha##HotbarFader",       ref noWickyXIV.Config.HotbarFaderDrawnAlpha,   0f,   1f,   1.0f,  "%.2f");
             ConfigSliderFloat("Sheathed alpha##HotbarFader",    ref noWickyXIV.Config.HotbarFaderSheathedAlpha,0f,   1f,   0.0f,  "%.2f");

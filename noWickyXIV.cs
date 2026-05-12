@@ -241,6 +241,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         HpRing.Draw();
         HpVignette.Draw();
         MsqTeleport.Draw();
+        QuickMenu.Draw();
         TargetUI.Draw();
         ChatBubbles.Draw();
     }

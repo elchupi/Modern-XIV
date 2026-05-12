@@ -262,15 +262,6 @@ public static class PluginUI
 
         ImGuiEx.SetItemTooltip("You can CTRL + Left Click sliders to input values manually.");
 
-        // Smooth transition slider — applies to AUTO condition-driven
-        // preset swaps. 0.05s ≈ instant snap; 0.5s default ≈ momentary
-        // glide. Anything past ~1s starts to fight Ctrl/Alt+scroll
-        // height/shoulder adjustments mid-transition.
-        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
-        ConfigSliderFloat("Transition seconds##PresetTransition",
-            ref noWickyXIV.Config.PresetTransitionSeconds, 0.05f, 5f, 0.5f, "%.2fs");
-        ImGui.TextDisabled("How long the camera takes to ease the position offsets (Height / Side / LookAtHeight) into a newly-activated preset. Zoom/FoV/Tilt snap immediately so they don't fight live wheel input. Ctrl/Alt+scroll cancels an in-flight transition.");
-
         ImGui.BeginChild("CammyPresetList", new Vector2(250 * ImGuiHelpers.GlobalScale, 0), true);
 
         for (int i = 0; i < noWickyXIV.Config.Presets.Count; i++)
@@ -384,6 +375,19 @@ public static class PluginUI
     {
         if (ImGui.InputText("Name", ref preset.Name, 64))
             noWickyXIV.Config.Save();
+
+        // Per-preset transition duration — applied when this preset
+        // becomes active (entering OR returning to it). Each profile
+        // can have its own feel (snap-in ADS vs. cinematic landscape
+        // glide). Replaces the previous global slider.
+        ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
+        ConfigSliderFloat("Transition seconds##PresetTransition",
+            ref preset.PresetTransitionSeconds, 0.05f, 5f, 0.5f, "%.2fs");
+        ImGui.TextDisabled(
+            "How long the camera takes to ease into THIS preset when\n" +
+            "activated. Zoom/FoV/Tilt snap immediately; only position\n" +
+            "offsets (Height / Side / LookAtHeight) lerp. Ctrl/Alt+\n" +
+            "scroll cancels an in-flight transition.");
 
         ImGui.Spacing();
 
@@ -1492,6 +1496,13 @@ public static class PluginUI
             ConfigCheckbox("Show HP rings on party members##TgtHpParty", ref noWickyXIV.Config.EnableHpRingOnParty);
             ImGui.TextDisabled(
                 "Same visual on every other party member.");
+            ConfigCheckbox("Pulse ring on NPC / object targets##TgtHpNpc",
+                ref noWickyXIV.Config.EnableHpRingOnNpcTarget);
+            ImGui.TextDisabled(
+                "Draws an emanating pulse ring on the current target when\n" +
+                "it's an NPC, aetheryte, gathering node, or other HP-less\n" +
+                "object. Pulse-only (no backdrop, no inner HP dot). Picks\n" +
+                "up hard, soft, and mouseover targets and fades in/out.");
             ImGuiEx.EndGroupBox();
         }
 
@@ -1762,10 +1773,21 @@ public static class PluginUI
             ConfigCheckbox("Enable##QuickMenu", ref noWickyXIV.Config.EnableQuickMenu);
             ImGui.TextDisabled(
                 "Floating pill at the bottom-right of the screen. Hover\n" +
-                "the corner to slide it up; click a row to fire its slash\n" +
-                "command. Rows (top → bottom):\n" +
-                "  /xlplugins   /nowickyxiv   /glamourer\n" +
-                "  /penumbra    /vfxedit");
+                "the corner to slide it up; click an icon to fire its\n" +
+                "slash command. Icons match the ones shown in /xlplugins:\n" +
+                "  Dalamud logo  → /xlplugins\n" +
+                "  this plugin   → /nowickyxiv\n" +
+                "  Glamourer     → /glamourer\n" +
+                "  Penumbra      → /penumbra\n" +
+                "  VFXEditor     → /vfxedit\n" +
+                "Third-party icons download once from each plugin's\n" +
+                "manifest IconUrl and are cached locally.");
+
+            if (ImGui.Button("Re-resolve icons##QuickMenu"))
+                QuickMenu.ReresolveAllIcons();
+            ImGui.SameLine();
+            ImGui.TextDisabled("(use after installing a missing plugin)");
+
             ImGuiEx.EndGroupBox();
         }
 

@@ -109,6 +109,9 @@ public enum BuiltinPresetCondition
     [Display(Name = "Weapon Drawn + Running")] WeaponDrawnRunning,
     Falling,
     [Display(Name = "Weapon Drawn")] WeaponDrawn,
+    // Chat input prompt is open / accepting keystrokes. Same signal
+    // ChatTypingEmote uses (RaptureAtkModule.IsTextInputActive).
+    [Display(Name = "Chat Prompt Open")] ChatOpen,
 }
 
 public class CameraConfigPreset
@@ -209,8 +212,13 @@ public class CameraConfigPreset
         catch { return false; }
     }
 
-    // Sprint (status ID 50). Used by both the BuiltinPresetCondition
-    // dispatch and LightSync's foot-movement state machine.
+    // Sprint-class buffs covered by the Sprinting preset condition
+    // and LightSync's foot-movement state machine.
+    //   50   = Sprint  (every job has it)
+    //   1199 = Peloton (BRD group sprint, applied out-of-combat)
+    // Add new ids here if any future buff needs to count as sprinting.
+    private static readonly uint[] SprintStatusIds = { 50u, 1199u };
+
     public static bool HasSprintStatus()
     {
         try
@@ -219,7 +227,10 @@ public class CameraConfigPreset
             if (lp == null) return false;
             foreach (var s in lp.StatusList)
             {
-                if (s != null && s.StatusId == 50) return true;
+                if (s == null) continue;
+                uint id = s.StatusId;
+                for (int i = 0; i < SprintStatusIds.Length; i++)
+                    if (id == SprintStatusIds[i]) return true;
             }
         }
         catch { }
@@ -276,8 +287,21 @@ public class CameraConfigPreset
                     => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping],
                 BuiltinPresetCondition.WeaponDrawn
                     => IsWeaponDrawn(),
+                BuiltinPresetCondition.ChatOpen
+                    => IsChatInputActive(),
                 _ => false,
             };
+        }
+        catch { return false; }
+    }
+
+    private static unsafe bool IsChatInputActive()
+    {
+        try
+        {
+            var ratk = FFXIVClientStructs.FFXIV.Client.UI.RaptureAtkModule.Instance();
+            if (ratk == null) return false;
+            return ratk->AtkModule.IsTextInputActive();
         }
         catch { return false; }
     }
@@ -1080,7 +1104,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float CrosshairAutoTargetRadius = 80f; // px hit-test radius
 
     // ---- Compass overlay ----
-    public bool  EnableCompass        = false;
+    public bool  EnableCompass        = true;
     public float CompassOffsetX       = 0f;     // px from screen center; +X = right
     public float CompassOffsetY       = 40f;    // px from top edge
     public float CompassWidth         = 600f;

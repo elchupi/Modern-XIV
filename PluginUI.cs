@@ -80,6 +80,14 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Compass"))
+            {
+                if (ImGui.BeginChild("##compass_scroll"))
+                    DrawCompassTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
             if (ImGui.BeginTabItem("Anim Swaps"))
             {
                 if (ImGui.BeginChild("##animswap_scroll"))
@@ -1674,6 +1682,49 @@ public static class PluginUI
             }
         }
         catch { /* defensive — ImGui IO can be unavailable mid-frame */ }
+    }
+
+    private static void DrawCompassTab()
+    {
+        if (ImGuiEx.BeginGroupBox("Compass overlay"))
+        {
+            ConfigCheckbox("Enable##Compass", ref noWickyXIV.Config.EnableCompass);
+            ImGui.TextDisabled(
+                "Horizontal bar pinned to the top of the screen. Cardinal\n" +
+                "directions and objective icons slide across as the camera\n" +
+                "rotates; alpha fades toward the left/right corners.");
+            ConfigSliderFloat("Offset X (px)##Compass",   ref noWickyXIV.Config.CompassOffsetX,    -800f, 800f, 0f,   "%.0f");
+            ConfigSliderFloat("Offset Y from top (px)##Compass", ref noWickyXIV.Config.CompassOffsetY, 0f, 400f, 40f, "%.0f");
+            ConfigSliderFloat("Width (px)##Compass",      ref noWickyXIV.Config.CompassWidth,      100f, 2000f, 600f, "%.0f");
+            ConfigSliderFloat("Height (px)##Compass",     ref noWickyXIV.Config.CompassHeight,     8f,   120f,  32f,  "%.0f");
+            ConfigSliderFloat("FOV (degrees)##Compass",   ref noWickyXIV.Config.CompassFovDegrees, 30f,  360f, 180f,  "%.0f");
+            ConfigSliderFloat("Edge fade %##Compass",     ref noWickyXIV.Config.CompassEdgeFadePct, 0f,  0.5f, 0.18f);
+            ConfigSliderFloat("Fade speed##Compass",      ref noWickyXIV.Config.CompassFadeSpeed,  1f,   20f,  8f);
+            ConfigSliderFloat("Icon size##Compass",       ref noWickyXIV.Config.CompassIconSize,   8f,   64f,  22f, "%.0f");
+            ConfigSliderFloat("Max range (yalms)##Compass", ref noWickyXIV.Config.CompassMaxRangeYalms, 10f, 1000f, 200f, "%.0f");
+            ImGui.Separator();
+            ConfigSliderFloat("Bar R##Compass",   ref noWickyXIV.Config.CompassBarColorR, 0f, 1f, 0f);
+            ConfigSliderFloat("Bar G##Compass",   ref noWickyXIV.Config.CompassBarColorG, 0f, 1f, 0f);
+            ConfigSliderFloat("Bar B##Compass",   ref noWickyXIV.Config.CompassBarColorB, 0f, 1f, 0f);
+            ConfigSliderFloat("Bar alpha##Compass", ref noWickyXIV.Config.CompassBarColorA, 0f, 1f, 0.45f);
+            ConfigSliderFloat("Tick R##Compass",  ref noWickyXIV.Config.CompassTickColorR, 0f, 1f, 1f);
+            ConfigSliderFloat("Tick G##Compass",  ref noWickyXIV.Config.CompassTickColorG, 0f, 1f, 1f);
+            ConfigSliderFloat("Tick B##Compass",  ref noWickyXIV.Config.CompassTickColorB, 0f, 1f, 1f);
+            ConfigSliderFloat("Tick alpha##Compass", ref noWickyXIV.Config.CompassTickColorA, 0f, 1f, 0.85f);
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Sources"))
+        {
+            ConfigCheckbox("Show cardinals (N/E/S/W)##Compass",        ref noWickyXIV.Config.CompassShowCardinals);
+            ConfigCheckbox("Show waymarks (A/B/C/D + 1/2/3/4)##Compass", ref noWickyXIV.Config.CompassShowWaymarks);
+            ConfigCheckbox("Show target##Compass",                      ref noWickyXIV.Config.CompassShowTarget);
+            ConfigCheckbox("Show focus target##Compass",                ref noWickyXIV.Config.CompassShowFocusTarget);
+            ConfigCheckbox("Show party members##Compass",               ref noWickyXIV.Config.CompassShowParty);
+            ConfigCheckbox("Show active FATEs##Compass",                ref noWickyXIV.Config.CompassShowFates);
+            ConfigCheckbox("Show nearby aetherytes##Compass",           ref noWickyXIV.Config.CompassShowAetherytes);
+            ImGuiEx.EndGroupBox();
+        }
     }
 
     private static unsafe void DrawMiscTab()

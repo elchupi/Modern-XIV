@@ -1056,6 +1056,33 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  EnableCrosshairAutoTarget = true;
     public float CrosshairAutoTargetRadius = 80f; // px hit-test radius
 
+    // ---- Compass overlay ----
+    public bool  EnableCompass        = false;
+    public float CompassOffsetX       = 0f;     // px from screen center; +X = right
+    public float CompassOffsetY       = 40f;    // px from top edge
+    public float CompassWidth         = 600f;
+    public float CompassHeight        = 32f;
+    public float CompassFovDegrees    = 180f;   // angular span the bar represents
+    public float CompassEdgeFadePct   = 0.18f;  // [0..0.5] portion of each side that fades
+    public float CompassFadeSpeed     = 8f;
+    public float CompassIconSize      = 22f;
+    public float CompassMaxRangeYalms = 200f;
+    public float CompassBarColorR     = 0f;
+    public float CompassBarColorG     = 0f;
+    public float CompassBarColorB     = 0f;
+    public float CompassBarColorA     = 0.45f;
+    public float CompassTickColorR    = 1f;
+    public float CompassTickColorG    = 1f;
+    public float CompassTickColorB    = 1f;
+    public float CompassTickColorA    = 0.85f;
+    public bool  CompassShowCardinals    = true;
+    public bool  CompassShowWaymarks     = true;
+    public bool  CompassShowTarget       = true;
+    public bool  CompassShowFocusTarget  = true;
+    public bool  CompassShowParty        = false;
+    public bool  CompassShowFates        = false;
+    public bool  CompassShowAetherytes   = false;
+
     // ---- Sensitivity (Phase E — fields added early so panel can show them) ----
     public float MouseSensitivityMul   = 1f;
 

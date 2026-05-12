@@ -210,6 +210,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         HotbarSwap.Update();
         CameraDynamics.Update();
         Crosshair.Update();
+        Compass.Update();
         JobAura.Update();
         HpRing.Update();
         HotbarFader.Update();
@@ -237,6 +238,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         PluginUI.Draw();
         PluginUI.DrawTeleportMenu();
         Crosshair.Draw();
+        Compass.Draw();
         JobAura.Draw();
         HpRing.Draw();
         HpVignette.Draw();
@@ -292,6 +294,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { TeleportMenu.Dispose(); } catch { }
         try { EnemySizeClamp.Dispose(); } catch { }
         try { CharacterRollHook.Dispose(); } catch { }
+        try { Compass.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;
 

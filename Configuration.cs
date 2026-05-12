@@ -284,7 +284,7 @@ public class CameraConfigPreset
                 BuiltinPresetCondition.WeaponDrawnRunning
                     => IsWeaponDrawn() && JobAura.IsMoving,
                 BuiltinPresetCondition.Falling
-                    => cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping],
+                    => IsFallingSustained(cond),
                 BuiltinPresetCondition.WeaponDrawn
                     => IsWeaponDrawn(),
                 BuiltinPresetCondition.ChatOpen
@@ -304,6 +304,29 @@ public class CameraConfigPreset
             return ratk->AtkModule.IsTextInputActive();
         }
         catch { return false; }
+    }
+
+    // Falling = ConditionFlag.Jumping held for at least FALLING_HOLDOFF_S.
+    // Filters trivial short hops (jumping over a curb / stepping up onto
+    // a ledge) so the preset doesn't twitch on every micro-airborne
+    // moment — only real jumps, ledge drops, and falls trigger it.
+    private const double FALLING_HOLDOFF_S = 0.20;
+    private static double _fallingAirborneStartS;
+    private static bool IsFallingSustained(Dalamud.Plugin.Services.ICondition cond)
+    {
+        bool airborne = cond[Dalamud.Game.ClientState.Conditions.ConditionFlag.Jumping];
+        double now = Environment.TickCount64 / 1000.0;
+        if (!airborne)
+        {
+            _fallingAirborneStartS = 0;
+            return false;
+        }
+        if (_fallingAirborneStartS <= 0)
+        {
+            _fallingAirborneStartS = now;
+            return false;
+        }
+        return (now - _fallingAirborneStartS) > FALLING_HOLDOFF_S;
     }
 
     public void Apply(bool isLoggingIn = false) => PresetManager.ApplyPreset(this, isLoggingIn);

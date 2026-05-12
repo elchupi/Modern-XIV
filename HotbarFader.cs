@@ -8,49 +8,55 @@ using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 
 namespace noWickyXIV;
 
-// Smooth fade for hotbars driven by weapon-drawn state, with several
-// override behaviours layered on top:
+// Smooth fade for hotbars and the Duty Actions bar. Every managed
+// addon is hover-only by default: it sits at SheathedAlpha (typically
+// 0 = invisible) and fades up to DrawnAlpha while the cursor is over
+// its rect, then fades back down on cursor-leave. Two opt-in overrides
+// can also pin a chosen bar visible:
 //
-//   - Cascade fade-in/out on weapon draw/sheath (bars 1, 7, 10).
-//   - Hover override: cursor over a bar's rect forces it visible.
-//   - Combo-prompt bar: a user-chosen hotbar fades in whenever an
-//     active combo action lives on one of its slots.
-//   - Availability-flash bar: a user-chosen hotbar fades in
-//     momentarily whenever any of its action slots transitions
-//     from "on cooldown" to "ready".
+//   - Combo-prompt bar: fades in whenever an active combo action
+//     lives on one of its slots.
+//   - Availability-flash bar: fades in momentarily whenever any of
+//     its action slots transitions from "on cooldown" to "ready".
 //
-// Per-frame logic for every managed bar:
-//   target_alpha = (any-override ? DrawnAlpha : cascade-driven value)
-// Where overrides are: hover, combo-prompt active, availability flash
-// timer running. The lerp itself is exponential (rate-based) so it
-// always settles to the target without overshooting.
+// Per-frame target alpha for every managed addon:
+//   target = (hover || combo-here || avail-flash-here) ? DrawnAlpha : SheathedAlpha
+// The lerp is exponential (rate-based) so it always settles to the
+// target without overshooting.
+//
+// The legacy weapon-drawn cascade infrastructure is left in place but
+// dormant — IsCascadeBar is all-false, so the cascade-target branch
+// never wins. Cascade-related config fields stay so old configs load
+// cleanly; they have no effect.
 //
 // FFXIV addon naming:
-//   Hotbar 1  = "_ActionBar"     (no suffix on the first one)
-//   Hotbar N (2..10) = "_ActionBarNN"  with NN = (N-1) zero-padded.
+//   Hotbar 1            = "_ActionBar"     (no suffix on the first one)
+//   Hotbar N (2..10)    = "_ActionBarNN"   with NN = (N-1) zero-padded.
+//   Duty Actions bar    = "_ActionContents"
 //
 // Alpha is written to the addon's RootNode color channel — the engine
 // multiplies that with each child node at render time, so a single
 // byte write fades the whole bar.
 public static unsafe class HotbarFader
 {
-    // Bars we manage. Each entry has a role:
-    //   isCascade = true  → bar fades in/out with the weapon-drawn
-    //                       cascade (currently only hotbar 1).
-    //   isCascade = false → bar is hover-only by default; visibility
-    //                       comes purely from override conditions
-    //                       (hover, combo-prompt match, availability
-    //                       flash). Battle / weapon-drawn alone does
-    //                       NOT show the bar.
-    //
-    // Hotbar 7 and 10 are intentionally NOT in the cascade — the user
-    // wants those bars to surface only when they're actually reaching
-    // for them (hover) or when the combo/availability-flash feature
-    // explicitly requests them.
+    // Every main hotbar (1..10) plus the Duty Actions bar. All are
+    // hover-only: invisible at rest, fade in on cursor-hover, fade out
+    // on cursor-leave. isCascade is all-false; the cascade branch in
+    // Update() is kept for code symmetry but never wins.
     private static readonly string[] ManagedAddons =
-        { "_ActionBar", "_ActionBar06", "_ActionBar09" };
+    {
+        "_ActionBar",   "_ActionBar01", "_ActionBar02", "_ActionBar03",
+        "_ActionBar04", "_ActionBar05", "_ActionBar06", "_ActionBar07",
+        "_ActionBar08", "_ActionBar09",
+        "_ActionContents",
+    };
     private static readonly bool[]   IsCascadeBar  =
-        { true,         false,           false };
+    {
+        false, false, false, false,
+        false, false, false, false,
+        false, false,
+        false,
+    };
 
     // Per-managed-bar animation state.
     private static readonly float[]  _barAlpha   = new float[ManagedAddons.Length];

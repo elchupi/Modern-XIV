@@ -207,6 +207,140 @@ public static unsafe class HpRing
             }
             catch { }
         }
+
+        // NPC / object target ring — anything currently targeted that
+        // ISN'T a hostile BattleNpc (aetherytes, EventNpcs, gathering
+        // nodes, treasure coffers, etc.). Same fade-in / fade-out
+        // logic as the enemy section so de-selecting smoothly ramps
+        // the ring out instead of cutting; the inner HP core is
+        // omitted since these targets don't have meaningful HP.
+        //
+        // IsTargetable is NOT checked: if the actor is the current
+        // hard/soft/mouseover target, the game has already deemed it
+        // targetable. Some Dalamud builds throw on IsTargetable for
+        // EventNpc / Aetheryte kinds, which silently killed the pass
+        // before and left aetherytes ringless.
+        //
+        // We also cache each qualified actor's feet position alongside
+        // the fade value so the fade-out keeps drawing at the last
+        // known position. De-selecting an aetheryte can pull it out
+        // of the object table on the next frame (esp. during teleport
+        // flow), so a SearchById round-trip would lose the actor mid-
+        // fade-out and the ring would pop instead of easing out.
+        if (noWickyXIV.Config.EnableHpRingOnNpcTarget)
+        {
+            ulong selfIdNpc = DalamudApi.ObjectTable?.LocalPlayer?.GameObjectId ?? 0UL;
+
+            // ---- Build the qualifying set + capture anchor position ----
+            // Anchor priority:
+            //   1. Bone position at JobAuraTargetBoneIndex (same bone the
+            //      Effects-tab JobAura ring uses on its target). Gives a
+            //      consistent waist-height ring on humanoid NPCs.
+            //   2. actor.Position.Y + 1.8m head-height fallback when the
+            //      bone sig is invalid OR the actor has no DrawObject
+            //      (typical for aetherytes / EventObjects / treasure
+            //      coffers, which have no skeleton).
+            int npcBoneIdx = noWickyXIV.Config.JobAuraTargetBoneIndex;
+            var qualifiedNpc = new System.Collections.Generic.Dictionary<ulong, Vector3>();
+            void TryQualifyNpc(Dalamud.Game.ClientState.Objects.Types.IGameObject t)
+            {
+                if (t == null) return;
+                if (t.GameObjectId == selfIdNpc) return;
+                if (t is Dalamud.Game.ClientState.Objects.Types.IBattleChara bcc
+                    && bcc.MaxHp > 0)
+                    return;
+
+                Vector3 pos = new Vector3(t.Position.X, t.Position.Y + 1.8f, t.Position.Z);
+                try
+                {
+                    var go = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)t.Address;
+                    bool drawOk = go != null && go->DrawObject != null;
+                    bool sigOk  = Hypostasis.Game.Common.getWorldBonePosition.IsValid;
+                    if (drawOk && sigOk)
+                    {
+                        var bw = Hypostasis.Game.Common.GetBoneWorldPosition(
+                            go, (uint)System.Math.Max(0, npcBoneIdx));
+                        if (bw != Vector3.Zero) pos = bw;
+                    }
+                }
+                catch { /* fallback already in pos */ }
+
+                qualifiedNpc[t.GameObjectId] = pos;
+            }
+            try { TryQualifyNpc(DalamudApi.TargetManager?.Target);          } catch { }
+            try { TryQualifyNpc(DalamudApi.TargetManager?.SoftTarget);      } catch { }
+            try { TryQualifyNpc(DalamudApi.TargetManager?.MouseOverTarget); } catch { }
+
+            // ---- Fade tracking ----
+            float dtN = 0.016f;
+            try { dtN = (float)DalamudApi.Framework.UpdateDelta.TotalSeconds; } catch { }
+            if (dtN <= 0f) dtN = 0.016f;
+            float kInN  = 1f - MathF.Exp(-noWickyXIV.Config.HpRingFadeInRate  * dtN);
+            float kOutN = 1f - MathF.Exp(-noWickyXIV.Config.HpRingFadeOutRate * dtN);
+
+            foreach (var kv in qualifiedNpc)
+            {
+                _npcFade.TryGetValue(kv.Key, out var prev);
+                _npcFade[kv.Key] = new NpcFadeEntry
+                {
+                    Fade = prev.Fade + (1f - prev.Fade) * kInN,
+                    LastFeet = kv.Value,
+                };
+            }
+            if (_pendingNpcFadeRemove == null)
+                _pendingNpcFadeRemove = new System.Collections.Generic.List<ulong>();
+            else _pendingNpcFadeRemove.Clear();
+            // Snapshot keys first because we mutate the dict inside.
+            var keys = new ulong[_npcFade.Count];
+            int ki = 0; foreach (var k in _npcFade.Keys) keys[ki++] = k;
+            for (int i = 0; i < keys.Length; i++)
+            {
+                ulong id = keys[i];
+                if (qualifiedNpc.ContainsKey(id)) continue;
+                var entry = _npcFade[id];
+                float decayed = entry.Fade + (0f - entry.Fade) * kOutN;
+                if (decayed < 0.005f) _pendingNpcFadeRemove.Add(id);
+                else _npcFade[id] = new NpcFadeEntry { Fade = decayed, LastFeet = entry.LastFeet };
+            }
+            foreach (var id in _pendingNpcFadeRemove) _npcFade.Remove(id);
+
+            // ---- Draw all tracked entries (qualified or fading out) ----
+            // NPC / object rings deliberately render JUST the emanating
+            // pulse — no backdrop disc, no fixed-radius throb, no inner
+            // core. That's the wave that reads as a target reticle in
+            // FFXIV's native UI.
+            foreach (var kv in _npcFade)
+            {
+                if (kv.Value.Fade < 0.005f) continue;
+                if (!DalamudApi.GameGui.WorldToScreen(kv.Value.LastFeet, out var screen))
+                    continue;
+                DrawNpcPulseOnly(dl, screen, kv.Value.Fade);
+            }
+        }
+    }
+
+    // Emanating-pulse-only renderer for NPC / object targets. Shares
+    // the same pulse phase + colour the regular HpRing uses, but skips
+    // every other layer (backdrop, throb, inner core) so what the user
+    // sees is exactly the "wave expanding outward" ring and nothing
+    // else.
+    private static void DrawNpcPulseOnly(ImDrawListPtr dl, Vector2 center, float alphaMul)
+    {
+        var cfg = noWickyXIV.Config;
+        float baseR = cfg.HpRingRadius;
+        float backdropR = baseR * cfg.JobAuraHpBackdropRadiusFactor;
+
+        float pulseT = (float)_hpPulsePhase;
+        float pulseR = backdropR
+                     + (backdropR * cfg.JobAuraHpPulseExpandFactor - backdropR) * pulseT;
+        float pulseA = (1f - pulseT) * cfg.JobAuraHpPulseAlpha * alphaMul;
+        if (pulseA < 0.005f) return;
+
+        var pCol = new Vector4(
+            cfg.JobAuraHpPulseColorR, cfg.JobAuraHpPulseColorG, cfg.JobAuraHpPulseColorB,
+            pulseA);
+        dl.AddCircle(center, pulseR, ImGui.GetColorU32(pCol),
+            96, cfg.JobAuraHpPulseThickness);
     }
 
     // Pulse phases for the JobAura-style ring layers. Shared across
@@ -239,6 +373,17 @@ public static unsafe class HpRing
     // than disappearing instantly.
     private static readonly System.Collections.Generic.Dictionary<ulong, float> _enemyFade = new();
     private static System.Collections.Generic.List<ulong> _pendingFadeRemove;
+    // Parallel fade table for the NPC / object target ring. Reuses the
+    // same HpRingFadeIn / FadeOut rates so the two pulse families
+    // behave identically. We cache LastFeet alongside Fade because:
+    //   (a) de-selecting may remove the actor from ObjectTable on the
+    //       very next frame (esp. aetherytes during teleport flow), so
+    //       a SearchById-based round-trip is unreliable, AND
+    //   (b) we want the fade-out ring to keep drawing at the last
+    //       known position even after the actor reference is gone.
+    private struct NpcFadeEntry { public float Fade; public Vector3 LastFeet; }
+    private static readonly System.Collections.Generic.Dictionary<ulong, NpcFadeEntry> _npcFade = new();
+    private static System.Collections.Generic.List<ulong> _pendingNpcFadeRemove;
 
     // Shared ring-drawing helper. Pull the per-actor alpha + radius math
     // out so we can reuse it for the player, current target, and each
@@ -346,7 +491,8 @@ public static unsafe class HpRing
     // ramps in as HP drops.
     private static void DrawRingsAtScreen(ImDrawListPtr dl, Vector2 center, float hpPct,
         bool applyHpAlphaGate = true,
-        float alphaMul = 1f)
+        float alphaMul = 1f,
+        bool omitInnerCore = false)
     {
         var cfg = noWickyXIV.Config;
         float pct = MathF.Min(1f, MathF.Max(0f, hpPct));
@@ -399,15 +545,21 @@ public static unsafe class HpRing
                 96, cfg.JobAuraHpPulseThickness);
         }
 
-        // Inner core — radius + alpha scale with HP.
-        float coreR = baseR * cfg.JobAuraHpInnerRadiusFactor * pct;
-        float coreA = cfg.JobAuraHpInnerAlpha * MathF.Max(0.05f, pct) * baseAlphaMul;
-        if (coreR > 0.5f && coreA >= 0.005f)
+        // Inner core — radius + alpha scale with HP. Skipped entirely
+        // for HP-less targets (aetherytes, EventObjects, EventNpcs):
+        // the dot is the only piece of the ring that's HP-driven, so
+        // it has no meaning when the target has no HP bar.
+        if (!omitInnerCore)
         {
-            var core = new Vector4(
-                cfg.JobAuraHpInnerColorR, cfg.JobAuraHpInnerColorG, cfg.JobAuraHpInnerColorB,
-                coreA);
-            dl.AddCircleFilled(center, coreR, ImGui.GetColorU32(core), 64);
+            float coreR = baseR * cfg.JobAuraHpInnerRadiusFactor * pct;
+            float coreA = cfg.JobAuraHpInnerAlpha * MathF.Max(0.05f, pct) * baseAlphaMul;
+            if (coreR > 0.5f && coreA >= 0.005f)
+            {
+                var core = new Vector4(
+                    cfg.JobAuraHpInnerColorR, cfg.JobAuraHpInnerColorG, cfg.JobAuraHpInnerColorB,
+                    coreA);
+                dl.AddCircleFilled(center, coreR, ImGui.GetColorU32(core), 64);
+            }
         }
 
         // Emanating pulse ring — period from shared HP phase.

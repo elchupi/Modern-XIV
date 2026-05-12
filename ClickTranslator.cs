@@ -430,6 +430,12 @@ public static class ClickTranslator
     // enough that the resume feels responsive.
     private const double CYCLE_RETRY_INTERVAL_S    = 0.6;
 
+    // Movement detection — suppress retries while the player is
+    // repositioning so the auto-cycle doesn't force-face the enemy
+    // during mechanics that require looking away.
+    private static System.Numerics.Vector3 _cycleLastPos;
+    private static bool _cyclePosValid;
+
     // True once the positional tail has been appended to _cycleSeq.
     // Replaces the older "if length == 1, resolve tail" proxy, which
     // didn't work for the combo-aware mid-chain entry paths where
@@ -469,6 +475,55 @@ public static class ClickTranslator
         catch { return (0u, 0f); }
     }
 
+    /// <summary>
+    /// Returns true if the current target is within melee range (3y +
+    /// hitbox radii). Used to gate all SendShiftDigit calls so the
+    /// auto-cycle never fires an action that would force-face the
+    /// character toward a distant target.
+    /// </summary>
+    private static bool IsTargetInMeleeRange()
+    {
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) return false;
+            var t = DalamudApi.TargetManager?.Target;
+            if (t == null) return false;
+            var delta = lp.Position - t.Position;
+            float dist = MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
+            float range = 3f + lp.HitboxRadius + t.HitboxRadius;
+            return dist <= range;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Returns true if the local player's position changed since last
+    /// check — i.e. they are actively moving. Checked every frame by
+    /// TickAutoCycle to suppress retries while repositioning.
+    /// </summary>
+    private static bool IsPlayerMoving()
+    {
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) return false;
+            var pos = lp.Position;
+            if (!_cyclePosValid)
+            {
+                _cycleLastPos = pos;
+                _cyclePosValid = true;
+                return false;
+            }
+            var delta = pos - _cycleLastPos;
+            _cycleLastPos = pos;
+            // Horizontal distance only (ignore Y / vertical).
+            float distSq = delta.X * delta.X + delta.Z * delta.Z;
+            return distSq > 0.0001f; // ~1 cm per frame
+        }
+        catch { return false; }
+    }
+
     private static void StartAutoCycle()
     {
         // Read live combo state so a click made mid-chain CONTINUES
@@ -478,6 +533,12 @@ public static class ClickTranslator
         // combo and breaks any chain currently in progress.
         var (comboAction, comboTimer) = GetSamComboState();
         bool comboActive = comboTimer > 0.1f;
+
+        // Only actually send the input if the target is in melee range.
+        // If out of range, set up the cycle but let TickAutoCycle's
+        // retry logic fire once the player closes the gap. This prevents
+        // the character from snap-facing the target at distance.
+        bool inRange = IsTargetInMeleeRange();
 
         if (comboActive && comboAction == SAM_HAKAZE)
         {
@@ -489,13 +550,13 @@ public static class ClickTranslator
             _cycleSeq = System.Array.Empty<int>();
             ResolveCycleTail();
             if (_cycleSeq == null || _cycleSeq.Length == 0) { CancelAutoCycle(); return; }
-            SendShiftDigit(_cycleSeq[0], false);
+            if (inRange) SendShiftDigit(_cycleSeq[0], false);
             _cycleIdx = 0;                  // points at the chord we just sent
             _tailResolved = true;
             _retryResamplePositional = true; // chord 1 is positional
             _cyclePhase = CyclePhase.WaitingToRegister;
             _cyclePhaseStartS = NowSeconds();
-            _cycleLastSendS = NowSeconds();
+            _cycleLastSendS = inRange ? NowSeconds() : 0;
             _cyclePrevRemaining = -1f;
             return;
         }
@@ -508,13 +569,13 @@ public static class ClickTranslator
             // FFXIV's combo state has already locked in the slot.
             int chord2 = comboAction == SAM_JINPU ? VK_2 : VK_3;
             _cycleSeq = new[] { chord2 };
-            SendShiftDigit(chord2, false);
+            if (inRange) SendShiftDigit(chord2, false);
             _cycleIdx = 0;
             _tailResolved = true;
             _retryResamplePositional = false; // chord 2: chain locked
             _cyclePhase = CyclePhase.WaitingToRegister;
             _cyclePhaseStartS = NowSeconds();
-            _cycleLastSendS = NowSeconds();
+            _cycleLastSendS = inRange ? NowSeconds() : 0;
             _cyclePrevRemaining = -1f;
             return;
         }
@@ -525,12 +586,12 @@ public static class ClickTranslator
         // slot is the one that actually decides the branch.
         _cycleSeq = new[] { VK_2 };
         _cycleIdx = 0;
-        SendShiftDigit(_cycleSeq[0], false);
+        if (inRange) SendShiftDigit(_cycleSeq[0], false);
         _tailResolved = false;
         _retryResamplePositional = false;     // chord 0 (Hakaze): non-positional
         _cyclePhase = CyclePhase.WaitingToRegister;
         _cyclePhaseStartS = NowSeconds();
-        _cycleLastSendS = NowSeconds();
+        _cycleLastSendS = inRange ? NowSeconds() : 0;
         _cyclePrevRemaining = -1f;
     }
 
@@ -559,6 +620,7 @@ public static class ClickTranslator
     {
         _cyclePhase = CyclePhase.Idle;
         _cycleSeq = null;
+        _cyclePosValid = false;
     }
 
     // Drive the cycle one frame. Called from Update() so all game-
@@ -618,6 +680,12 @@ public static class ClickTranslator
             // Hard timeout — chord still hasn't landed. Bail.
             if (phaseElapsed > CYCLE_REGISTER_TIMEOUT_S) { CancelAutoCycle(); return; }
 
+            // Pause retries while the player is moving or the target is
+            // out of melee range. Sending an action at distance causes
+            // the character to snap-face the target, which is dangerous
+            // during mechanics that require facing away from the enemy.
+            if (IsPlayerMoving() || !IsTargetInMeleeRange()) return;
+
             // Resend cadence — when the chord didn't register (player
             // out of melee range, target moved), keep retrying so
             // the cycle picks up automatically the moment the player
@@ -655,6 +723,9 @@ public static class ClickTranslator
         if (_cyclePhase == CyclePhase.WaitingForTail)
         {
             if (remaining > windowSec) return;
+
+            // Don't fire the next chord if out of range or moving.
+            if (!IsTargetInMeleeRange() || IsPlayerMoving()) return;
 
             // Right before firing chord 1 — the moment the queue window
             // opens — re-sample positional and append the tail. Player

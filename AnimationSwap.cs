@@ -51,10 +51,8 @@ public static unsafe class AnimationSwap
 
     // ── Swap state ──────────────────────────────────────────────
     private static bool _anySwapActive;
-    private static bool _swapRun, _swapWalk, _swapIdle;
     private static nint _localPlayerDrawObj;
     private static string _lastSrcCode, _lastTgtCode;
-    private static bool _lastSwapRun, _lastSwapWalk, _lastSwapIdle;
 
     // Visual race detection — auto-detected from intercepted paths.
     public static byte VisualRaceId;
@@ -192,19 +190,68 @@ public static unsafe class AnimationSwap
         _pendingReapplyDelay = delayFrames;
     }
 
+    // Login readiness retry. On a cold-start login the player can take
+    // many frames after Login fires to actually finish drawing —
+    // LocalPlayer arrives first, then DrawObject, then the engine has
+    // to redraw once for the vtable hook (installed by Update()) to
+    // observe a PAP path and resolve VisualRaceId. Without a fully
+    // resolved VisualRaceId the apply targets the customize race
+    // instead of the Glamourer-overridden visual race, and the cache
+    // locks that wrong value in for the rest of the session.
+    //
+    // Counter ticks down each ExecuteReapply call; while it's > 0 and
+    // the player isn't fully ready, ExecuteReapply re-arms itself and
+    // forces a redraw so the hook gets a chance to fire. Once ready
+    // (or out of retries), the normal flow takes over.
+    private static int _loginReapplyRetries;
+    private const int  LOGIN_REAPPLY_MAX_RETRIES = 30;
+    private const int  LOGIN_REAPPLY_RETRY_FRAMES = 60; // ~1s between retries
+
+    private static unsafe bool IsPlayerFullyReady()
+    {
+        try
+        {
+            var lp = DalamudApi.ObjectTable.LocalPlayer;
+            if (lp == null) return false;
+            var go = (GameObject*)lp.Address;
+            if (go == null || go->DrawObject == null) return false;
+            // VisualRaceId is only populated by the vtable hook
+            // observing a PAP-path resolve — i.e. the character has
+            // actually drawn at least once since the hook installed.
+            // No race detection = no valid model code to swap against.
+            if (VisualRaceId == 0) return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
     private static void ExecuteReapply()
     {
         _lastSrcCode = null;
         _lastTgtCode = null;
-        _lastSwapRun = false;
-        _lastSwapWalk = false;
-        _lastSwapIdle = false;
         _lastJobSrcFolder = null;
         _lastJobHoldTgtFolder = null;
         _lastJobMoveTgtFolder = null;
         _lastJobAttackTgtFolder = null;
         _lastJobModelCode = null;
         _lastJobVisualModel = null;
+
+        // Login-path retry: if the player isn't fully drawn yet, force
+        // a redraw and try again in LOGIN_REAPPLY_RETRY_FRAMES. Caches
+        // are already cleared above so the eventual apply runs against
+        // whatever state the engine has populated by retry time.
+        if (_loginReapplyRetries > 0 && !IsPlayerFullyReady())
+        {
+            _loginReapplyRetries--;
+            DalamudApi.LogInfo(
+                $"[AnimSwap] Reapply not ready (lp={(DalamudApi.ObjectTable.LocalPlayer != null)} race={VisualRaceId}); " +
+                $"requesting redraw + retry, {_loginReapplyRetries} attempts left");
+            RequestRedraw();
+            _pendingReapplyDelay = LOGIN_REAPPLY_RETRY_FRAMES;
+            return;
+        }
+
+        _loginReapplyRetries = 0;
         DalamudApi.LogInfo("[AnimSwap] Deferred ForceReapply executing — resetting cached state");
     }
 
@@ -293,6 +340,50 @@ public static unsafe class AnimationSwap
 
     public static void ForceRedraw() => RequestRedraw();
 
+    /// <summary>
+    /// Called from the noWickyXIV login workflow. The very first Update()
+    /// after login can hit any of:
+    ///   * Penumbra IPC not yet ready -> ApplyPenumbraSwaps no-ops silently
+    ///     and the cached _lastSrcCode never gets populated.
+    ///   * VisualRaceId still 0 (vtable hook fires during character draw,
+    ///     which only happens once a redraw triggers a re-resolve).
+    ///   * Race-specific code path under chara/human/c{visual}/animation
+    ///     isn't yet known to the system.
+    /// Force a redraw immediately so the vtable hook gets a fresh draw to
+    /// observe, then schedule a deferred re-apply far enough out that the
+    /// visual race is detected and Penumbra is reachable.
+    /// </summary>
+    public static void OnLogin()
+    {
+        // Reset every cached "we've already registered this code" guard
+        // so the next UpdateSwapState always re-registers with whatever
+        // race/visual the engine reports post-redraw.
+        _lastSrcCode = null;
+        _lastTgtCode = null;
+        _lastJobSrcFolder = null;
+        _lastJobHoldTgtFolder = null;
+        _lastJobMoveTgtFolder = null;
+        _lastJobAttackTgtFolder = null;
+        _lastJobModelCode = null;
+        _lastJobVisualModel = null;
+        _everActivated = false;
+        VisualRaceId = 0;
+        VisualSex = 0;
+        VisualModelCode = "";
+
+        RequestRedraw();
+        // First reapply tick at 30 frames (~0.5 s) — catches most warm
+        // logins. If at that point the player still isn't fully drawn
+        // (DrawObject null or VisualRaceId still 0 — common on cold
+        // start), ExecuteReapply auto-rearms itself and forces another
+        // redraw, up to LOGIN_REAPPLY_MAX_RETRIES times (~30 s total
+        // window). Each retry gives the vtable hook another chance to
+        // observe a PAP-path resolve and populate VisualRaceId before
+        // the apply runs.
+        _loginReapplyRetries = LOGIN_REAPPLY_MAX_RETRIES;
+        ForceReapply(30);
+    }
+
     public static void Dispose()
     {
         RemoveJobSwaps();
@@ -343,7 +434,7 @@ public static unsafe class AnimationSwap
 
         try
         {
-            var swaps = BuildSwapPaths(srcCode, tgtCode, _swapRun, _swapWalk, _swapIdle);
+            var swaps = BuildSwapPaths(srcCode, tgtCode);
             if (swaps.Count == 0)
             {
                 _penumbraStatus = "no valid swap paths found in game data";
@@ -402,32 +493,7 @@ public static unsafe class AnimationSwap
     // matching source path gets a corresponding target path with
     // the model code replaced.
 
-    // Idle-related keywords — excluded when SwapIdle is off.
-    private static readonly string[] IdleKeywords =
-        { "idle", "stand", "sit", "pose", "loop" };
-    // Run-related keywords — excluded when SwapRun is off.
-    private static readonly string[] RunKeywords =
-        { "run", "sprint" };
-    // Walk-related keywords — excluded when SwapWalk is off.
-    private static readonly string[] WalkKeywords =
-        { "walk", "move" };
-
-    private static bool IsAllowedByToggles(string key, bool run, bool walk, bool idle)
-    {
-        // Check if this key is in a toggled-off category.
-        // Keys that don't match ANY category pass through (emotes, jumps, etc.).
-        bool isIdle = MatchesAny(key, IdleKeywords);
-        bool isRun  = MatchesAny(key, RunKeywords);
-        bool isWalk = MatchesAny(key, WalkKeywords);
-
-        if (isIdle && !idle) return false;
-        if (isRun  && !run)  return false;
-        if (isWalk && !walk) return false;
-        return true;
-    }
-
-    private static Dictionary<string, string> BuildSwapPaths(string srcCode, string tgtCode,
-        bool swapRun, bool swapWalk, bool swapIdle)
+    private static Dictionary<string, string> BuildSwapPaths(string srcCode, string tgtCode)
     {
         var swaps = new Dictionary<string, string>();
         var tried = new HashSet<string>();
@@ -445,11 +511,11 @@ public static unsafe class AnimationSwap
                     {
                         string key = row.Key.ExtractText();
                         if (string.IsNullOrEmpty(key) || key.Length < 2) continue;
-                        // Skip clearly non-human animation keys.
                         if (key.StartsWith("mon_") || key.StartsWith("demi_human/")
                             || key.StartsWith("weapon/") || key.StartsWith("bg/")) continue;
 
-                        if (!IsAllowedByToggles(key, swapRun, swapWalk, swapIdle)) continue;
+                        // Skip idle animations — only swap walk/run/movement.
+                        if (key.Contains("idle", StringComparison.OrdinalIgnoreCase)) continue;
 
                         TryAddSwap(swaps, tried, srcCode, tgtCode, $"a0001/bt_common/{key}");
                     }
@@ -461,21 +527,20 @@ public static unsafe class AnimationSwap
 
         // 2. Also try known resident/nonresident sub-paths that may
         //    not appear as ActionTimeline keys.
+        // Known movement/action paths — idle excluded (only walk/run swaps).
         string[] knownPaths =
         {
-            "resident/idle", "resident/move", "resident/move_a", "resident/move_b",
+            "resident/move", "resident/move_a", "resident/move_b",
             "resident/move_c", "resident/move_d", "resident/run", "resident/walk",
             "resident/sprint", "resident/sprint_a", "resident/sprint_b",
             "resident/jump", "resident/fall", "resident/land", "resident/landing",
             "resident/turn_l", "resident/turn_r",
             "resident/sit", "resident/sit_loop", "resident/stand",
-            "nonresident/idle", "nonresident/move", "nonresident/run", "nonresident/walk",
+            "nonresident/move", "nonresident/run", "nonresident/walk",
         };
 
         foreach (var p in knownPaths)
         {
-            if (!IsAllowedByToggles(p, swapRun, swapWalk, swapIdle)) continue;
-
             TryAddSwap(swaps, tried, srcCode, tgtCode, $"a0001/bt_common/{p}");
             TryAddSwap(swaps, tried, srcCode, tgtCode, $"a0001/{p}");
         }
@@ -897,13 +962,11 @@ public static unsafe class AnimationSwap
 
         byte sex = ch->DrawData.CustomizeData.Sex;
 
-        // Use visual race (Glamourer-aware) if detected.
         byte matchRace = VisualRaceId != 0 ? VisualRaceId : ch->DrawData.CustomizeData.Race;
         byte matchSex = VisualRaceId != 0 ? VisualSex : sex;
 
         bool prevActive = _anySwapActive;
 
-        _swapRun = false; _swapWalk = false; _swapIdle = false;
         _anySwapActive = false;
 
         string srcCode = null;
@@ -919,38 +982,32 @@ public static unsafe class AnimationSwap
             if (rule.SourceRace != 0 && rule.SourceRace != matchRace) continue;
             if (rule.TargetRace == 0 || rule.TargetRace == matchRace) continue;
 
-            // Compute source model code (what the character currently loads).
             byte srcTribe = GetDefaultTribe(matchRace);
             srcCode = GetModelCode(matchRace, matchSex, srcTribe);
 
-            // Compute target model code (the animations to use instead).
             byte tgtTribe = GetDefaultTribe(rule.TargetRace);
-            byte tgtSex = rule.UseFemaleAnims ? (byte)1 : matchSex;
+            byte tgtSex = rule.UseFemaleAnims ? (byte)(matchSex == 0 ? 1 : 0) : matchSex;
             tgtCode = GetModelCode(rule.TargetRace, tgtSex, tgtTribe);
 
-            _swapRun = rule.SwapWalk;  // Run follows Walk toggle
-            _swapWalk = rule.SwapWalk;
-            _swapIdle = rule.SwapIdle;
-            _anySwapActive = _swapRun || _swapWalk || _swapIdle;
+            _anySwapActive = true;
             break;
         }
 
-        // Apply/remove Penumbra swaps when state changes.
         bool needsUpdate = _anySwapActive != prevActive
-            || (_anySwapActive && (srcCode != _lastSrcCode || tgtCode != _lastTgtCode
-                || _swapRun != _lastSwapRun || _swapWalk != _lastSwapWalk
-                || _swapIdle != _lastSwapIdle));
+            || (_anySwapActive && (srcCode != _lastSrcCode || tgtCode != _lastTgtCode));
 
         if (needsUpdate)
         {
             if (_anySwapActive && srcCode != null && tgtCode != null)
             {
                 ApplyPenumbraSwaps(srcCode, tgtCode);
-                _lastSrcCode = srcCode;
-                _lastTgtCode = tgtCode;
-                _lastSwapRun = _swapRun;
-                _lastSwapWalk = _swapWalk;
-                _lastSwapIdle = _swapIdle;
+                // Only cache state if Penumbra registration succeeded.
+                // If it failed (e.g. Penumbra not ready), we retry next frame.
+                if (_penumbraSwapsActive)
+                {
+                    _lastSrcCode = srcCode;
+                    _lastTgtCode = tgtCode;
+                }
             }
             else
             {
@@ -962,14 +1019,13 @@ public static unsafe class AnimationSwap
             _lastSwapActive = _anySwapActive;
             RequestRedraw();
 
-            // On first-ever activation (login/plugin load), Penumbra may
-            // not have fully processed the temporary mod before the redraw
-            // fires. Schedule a second re-apply after a short delay so the
-            // character redraws with swaps actually in effect.
-            if (_anySwapActive && !_everActivated)
+            // On first successful activation, schedule a delayed re-apply.
+            // The game often redraws the character during post-login loading,
+            // which can override our initial swap. The delayed re-apply catches this.
+            if (_anySwapActive && _penumbraSwapsActive && !_everActivated)
             {
                 _everActivated = true;
-                ForceReapply(30);
+                ForceReapply(120);
             }
         }
     }
@@ -1159,11 +1215,10 @@ public static unsafe class AnimationSwap
             sb.AppendLine("── Penumbra IPC ──");
             sb.AppendLine($"  Status: {_penumbraStatus}");
             sb.AppendLine($"  Swaps active: {_penumbraSwapsActive}  Registered paths: {_registeredSwapCount}");
-            sb.AppendLine($"  Last src: {_lastSrcCode ?? "(none)"}  Last tgt: {_lastTgtCode ?? "(none)"}");
 
             sb.AppendLine();
             sb.AppendLine($"Vtable hook: {(_vtableHook != null ? $"installed at 0x{_hookedVtableFnAddr:X}" : "not installed")}");
-            sb.AppendLine($"Swap active: {_anySwapActive}  Run={_swapRun} Walk={_swapWalk} Idle={_swapIdle}");
+            sb.AppendLine($"Swap active: {_anySwapActive}");
             sb.AppendLine($"Total vtable calls: {TotalHookCalls}");
             sb.AppendLine($"LP DrawObj: 0x{_localPlayerDrawObj:X}");
 
@@ -1179,9 +1234,9 @@ public static unsafe class AnimationSwap
                 bool tgtValid = r.TargetRace != 0 && r.TargetRace != matchRace;
                 sb.AppendLine($"  [{i}] Enabled={r.Enabled} Src={r.SourceRace}({LookupRaceName(r.SourceRace)}) " +
                               $"Tgt={r.TargetRace}({LookupRaceName(r.TargetRace)}) " +
-                              $"Run={r.SwapRun} Walk={r.SwapWalk} Idle={r.SwapIdle}");
+                              $"OppGender={r.UseFemaleAnims}");
                 sb.AppendLine($"       srcMatch={srcMatch} tgtValid={tgtValid} " +
-                              $"wouldActivate={r.Enabled && srcMatch && tgtValid && (r.SwapRun || r.SwapWalk || r.SwapIdle)}");
+                              $"wouldActivate={r.Enabled && srcMatch && tgtValid}");
             }
 
             // Timeline slots.

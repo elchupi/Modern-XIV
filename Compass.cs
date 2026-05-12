@@ -7,21 +7,16 @@ using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using Hypostasis.Game;
+using GameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
 
 namespace noWickyXIV;
 
-// Horizontal compass overlay drawn via ImGui's foreground draw list.
-// Tracks camera yaw so cardinals + objective icons slide across the bar
-// as the camera rotates. Alpha falls off toward the left/right edges so
-// markers fade in/out smoothly instead of popping.
-//
-// Sources are all per-source toggles (config): waymarks, target, focus,
-// party, FATEs, aetherytes. Cardinal ticks (N/E/S/W) are independent.
 public static unsafe class Compass
 {
     private static float _alpha; // 0..1 enable fade
+    private static bool  _lastAnchorBottom;
+    private static bool  _anchorFadingOut;
 
-    // Cached icon textures, keyed by game icon id.
     private static readonly Dictionary<uint, ISharedImmediateTexture?> _iconCache = new();
 
     public static void Update() { }
@@ -33,9 +28,20 @@ public static unsafe class Compass
         if (dt <= 0f) dt = 0.016f;
 
         var cfg = noWickyXIV.Config;
-        bool wantOn = cfg.EnableCompass && !ShouldHide();
+
+        if (cfg.CompassAnchorBottom != _lastAnchorBottom && !_anchorFadingOut)
+            _anchorFadingOut = true;
+
+        bool wantOn = cfg.EnableCompass && !ShouldHide() && !_anchorFadingOut;
         float rate = MathF.Max(0.5f, cfg.CompassFadeSpeed);
         _alpha += ((wantOn ? 1f : 0f) - _alpha) * (1f - MathF.Exp(-rate * dt));
+
+        if (_anchorFadingOut && _alpha < 0.01f)
+        {
+            _lastAnchorBottom = cfg.CompassAnchorBottom;
+            _anchorFadingOut = false;
+        }
+
         if (_alpha < 0.01f) return;
 
         try
@@ -50,7 +56,11 @@ public static unsafe class Compass
 
             var vp = ImGui.GetMainViewport();
             float cx = vp.Pos.X + vp.Size.X * 0.5f + cfg.CompassOffsetX;
-            float cy = vp.Pos.Y + cfg.CompassOffsetY + cfg.CompassHeight * 0.5f;
+            float cy;
+            if (_lastAnchorBottom)
+                cy = vp.Pos.Y + vp.Size.Y - cfg.CompassOffsetY - cfg.CompassHeight * 0.5f;
+            else
+                cy = vp.Pos.Y + cfg.CompassOffsetY + cfg.CompassHeight * 0.5f;
             Vector2 center = new(cx, cy);
 
             var dl = ImGui.GetForegroundDrawList();
@@ -58,21 +68,21 @@ public static unsafe class Compass
             DrawBarBackground(dl, center, cfg);
             if (cfg.CompassShowCardinals)    DrawCardinals(dl, center, cfg, camYaw);
             if (cfg.CompassShowWaymarks)     DrawWaymarks(dl, center, cfg, camYaw, ppos);
-            if (cfg.CompassShowTarget)       DrawTarget(dl, center, cfg, camYaw, ppos,
-                                                        DalamudApi.TargetManager?.Target, isFocus: false);
-            if (cfg.CompassShowFocusTarget)  DrawTarget(dl, center, cfg, camYaw, ppos,
-                                                        DalamudApi.TargetManager?.FocusTarget, isFocus: true);
             if (cfg.CompassShowParty)        DrawParty(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowFates)        DrawFates(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowAetherytes)   DrawAetherytes(dl, center, cfg, camYaw, ppos);
+            if (cfg.CompassShowMsqMarkers || cfg.CompassShowSideQuestMarkers)
+                DrawNpcMarkers(dl, center, cfg, camYaw, ppos);
+            if (cfg.CompassShowFocusTarget)  DrawTarget(dl, center, cfg, camYaw, ppos,
+                                                        DalamudApi.TargetManager?.FocusTarget, isFocus: true);
+            if (cfg.CompassShowTarget)       DrawTarget(dl, center, cfg, camYaw, ppos,
+                                                        DalamudApi.TargetManager?.Target, isFocus: false);
         }
-        catch { /* defensive — never let a draw crash the plugin */ }
+        catch { }
     }
 
     public static void Dispose()
     {
-        // ISharedImmediateTexture entries are managed by Dalamud's
-        // texture provider; we don't own the wraps so just drop refs.
         _iconCache.Clear();
     }
 
@@ -85,11 +95,8 @@ public static unsafe class Compass
         var tl = new Vector2(center.X - halfW, center.Y - halfH);
         var br = new Vector2(center.X + halfW, center.Y + halfH);
 
-        // Gradient: edges fade toward fully transparent so the bar
-        // visually matches the per-marker edge fade.
         float fadeStart = 1f - MathF.Max(0.001f, cfg.CompassEdgeFadePct * 2f);
         float edgeW = halfW * (1f - fadeStart);
-        // Center solid stripe…
         var cl = new Vector2(tl.X + edgeW, tl.Y);
         var cr = new Vector2(br.X - edgeW, br.Y);
         uint barCol = PackColor(cfg.CompassBarColorR, cfg.CompassBarColorG,
@@ -97,7 +104,6 @@ public static unsafe class Compass
         uint barColEdge = PackColor(cfg.CompassBarColorR, cfg.CompassBarColorG,
                                     cfg.CompassBarColorB, 0f);
         dl.AddRectFilled(cl, cr, barCol);
-        // …with fading wings on each side.
         dl.AddRectFilledMultiColor(new Vector2(tl.X, tl.Y), new Vector2(cl.X, br.Y),
             barColEdge, barCol, barCol, barColEdge);
         dl.AddRectFilledMultiColor(new Vector2(cr.X, tl.Y), new Vector2(br.X, br.Y),
@@ -106,17 +112,10 @@ public static unsafe class Compass
 
     private static void DrawCardinals(ImDrawListPtr dl, Vector2 center, Configuration cfg, float camYaw)
     {
-        // FFXIV world: +Z is south, -Z is north, +X is east, -X is west.
-        // Our world-bearing formula is atan2(dx, dz), so:
-        //   north → atan2(0, -1) =  π
-        //   south → atan2(0,  1) =  0
-        //   east  → atan2( 1, 0) =  π/2
-        //   west  → atan2(-1, 0) = -π/2
         DrawTick(dl, center, cfg, camYaw, MathF.PI,         "N", primary: true);
         DrawTick(dl, center, cfg, camYaw, 0f,               "S", primary: true);
         DrawTick(dl, center, cfg, camYaw, MathF.PI * 0.5f,  "E", primary: true);
         DrawTick(dl, center, cfg, camYaw, -MathF.PI * 0.5f, "W", primary: true);
-        // Intercardinals — short ticks, no label, half-strength.
         DrawTick(dl, center, cfg, camYaw,  MathF.PI * 0.75f, null, primary: false);
         DrawTick(dl, center, cfg, camYaw,  MathF.PI * 0.25f, null, primary: false);
         DrawTick(dl, center, cfg, camYaw, -MathF.PI * 0.25f, null, primary: false);
@@ -152,15 +151,13 @@ public static unsafe class Compass
         var mc = FFXIVClientStructs.FFXIV.Client.Game.UI.MarkingController.Instance();
         if (mc == null) return;
 
-        // FieldMarkers index: 0..3 = A/B/C/D, 4..7 = 1/2/3/4.
-        // Each FieldMarker has int X/Y/Z scaled ×1000 and an Active flag.
         var markers = mc->FieldMarkers;
         for (int i = 0; i < 8; i++)
         {
             var m = markers[i];
             if (!m.Active) continue;
             Vector3 wpos = new(m.X / 1000f, m.Y / 1000f, m.Z / 1000f);
-            uint iconId = (uint)(61241 + i); // A..D=61241..61244, 1..4=61245..61248
+            uint iconId = (uint)(61241 + i);
             DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId,
                               labelFallback: i < 4 ? ((char)('A' + i)).ToString()
                                                     : (i - 3).ToString());
@@ -175,7 +172,7 @@ public static unsafe class Compass
         if (obj == null) return;
         Vector3 wpos = new(obj.Position.X, obj.Position.Y, obj.Position.Z);
         DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos,
-            isFocus ? 0xFFFFA040u : 0xFF40A0FFu); // focus = orange, target = blue
+            isFocus ? 0xFFFFA040u : 0xFF40A0FFu);
     }
 
     private static void DrawParty(ImDrawListPtr dl, Vector2 center, Configuration cfg,
@@ -190,7 +187,7 @@ public static unsafe class Compass
             if ((ulong)p.ObjectId == selfId) continue;
             var pos = p.Position;
             Vector3 wpos = new(pos.X, pos.Y, pos.Z);
-            DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0xFF40FF80u); // green
+            DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0xFF40FF80u);
         }
     }
 
@@ -205,7 +202,7 @@ public static unsafe class Compass
             Vector3 wpos = new(f.Position.X, f.Position.Y, f.Position.Z);
             uint icon = (uint)f.IconId;
             if (icon == 0)
-                DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0xFFFFFF40u); // fallback yellow
+                DrawChevronAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0xFFFFFF40u);
             else
                 DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, icon, null);
         }
@@ -221,7 +218,44 @@ public static unsafe class Compass
             if (o == null) continue;
             if (o.ObjectKind != ObjectKind.Aetheryte) continue;
             Vector3 wpos = new(o.Position.X, o.Position.Y, o.Position.Z);
-            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, 60453u, null);
+            uint icon = 60453u;
+            try
+            {
+                var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Aetheryte>();
+                var row = sheet?.GetRowOrDefault(o.DataId);
+                if (row != null && !row.Value.IsAetheryte)
+                    icon = 60430u;
+            }
+            catch { }
+            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, icon, null);
+        }
+    }
+
+    private static void DrawNpcMarkers(ImDrawListPtr dl, Vector2 center, Configuration cfg,
+                                        float camYaw, Vector3 ppos)
+    {
+        var ot = DalamudApi.ObjectTable;
+        if (ot == null) return;
+        foreach (var o in ot)
+        {
+            if (o == null) continue;
+            if (o.ObjectKind != ObjectKind.EventNpc && o.ObjectKind != ObjectKind.BattleNpc) continue;
+            var gop = (GameObject*)o.Address;
+            if (gop == null) continue;
+
+            uint iconId = gop->NamePlateIconId;
+            if (iconId == 0)
+                QuestMarkerHider.HiddenIcons.TryGetValue(o.GameObjectId, out iconId);
+            if (iconId == 0) continue;
+
+            bool isMsq = iconId >= 71201 && iconId <= 71299;
+            bool isSide = iconId >= 71001 && iconId <= 71199;
+            if (isMsq && !cfg.CompassShowMsqMarkers) continue;
+            if (isSide && !cfg.CompassShowSideQuestMarkers) continue;
+            if (!isMsq && !isSide) continue;
+
+            Vector3 wpos = new(o.Position.X, o.Position.Y, o.Position.Z);
+            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId, null);
         }
     }
 
@@ -255,10 +289,9 @@ public static unsafe class Compass
                 dl.AddImage(tex.ImGuiHandle, tl, br, Vector2.Zero, Vector2.One, tint);
                 return;
             }
-            catch { /* fall through to label */ }
+            catch { }
         }
 
-        // Texture not ready yet — draw a labeled disc as fallback.
         uint discCol = PackColor(cfg.CompassTickColorR, cfg.CompassTickColorG,
                                   cfg.CompassTickColorB, cfg.CompassTickColorA * a);
         dl.AddCircleFilled(new Vector2(x, center.Y), size * 0.4f, discCol);
@@ -286,7 +319,6 @@ public static unsafe class Compass
         uint col = MultiplyAlpha(rgba, a);
         float halfH = cfg.CompassHeight * 0.5f;
         float s = cfg.CompassIconSize * 0.5f;
-        // Downward-pointing chevron above the bar.
         var p1 = new Vector2(x,         center.Y - halfH + 2f);
         var p2 = new Vector2(x - s,     center.Y - halfH - s);
         var p3 = new Vector2(x + s,     center.Y - halfH - s);
@@ -325,7 +357,6 @@ public static unsafe class Compass
 
     private static uint MultiplyAlpha(uint rgba, float mul)
     {
-        // rgba is stored AABBGGRR in ImGui's ColorU32 byte order.
         uint a = (rgba >> 24) & 0xFFu;
         float na = MathF.Max(0f, MathF.Min(1f, (a / 255f) * mul));
         return (rgba & 0x00FFFFFFu) | ((uint)(na * 255f) << 24);

@@ -1082,6 +1082,12 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  CompassShowParty        = false;
     public bool  CompassShowFates        = false;
     public bool  CompassShowAetherytes   = false;
+    public bool  CompassShowMsqMarkers     = true;
+    public bool  CompassShowSideQuestMarkers = true;
+    public bool  CompassAnchorBottom       = false;
+
+    // ---- Quest marker hider ----
+    public bool  EnableHideQuestMarkers = false;
 
     // ---- Sensitivity (Phase E — fields added early so panel can show them) ----
     public float MouseSensitivityMul   = 1f;

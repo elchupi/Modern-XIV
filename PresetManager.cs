@@ -100,6 +100,11 @@ public static class PresetManager
     private static float  _txTargetZoom;
     private static float  _txTargetFoV;
     private static CameraConfigPreset _txTarget;
+    // Duration captured at transition start from the incoming preset's
+    // PresetTransitionSeconds. Snapshotted (rather than re-read each
+    // frame from the preset) so that editing the slider mid-transition
+    // doesn't warp the remaining time.
+    private static float  _txDuration;
 
     private static double NowSec() => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
 
@@ -220,7 +225,7 @@ public static class PresetManager
         //    don't flip mid-transition and drop the camera by the
         //    accumulated contribution).
         bool willTransition = transition && !isLoggingIn
-            && noWickyXIV.Config.PresetTransitionSeconds > 0.06f;
+            && preset.PresetTransitionSeconds > 0.06f;
         if (!isLoggingIn)
         {
             try
@@ -290,7 +295,7 @@ public static class PresetManager
             : Math.Min(Math.Max(camera->currentFoV, preset.MinFoV), preset.MaxFoV);
 
         if (transition && !isLoggingIn
-            && noWickyXIV.Config.PresetTransitionSeconds > 0.06f)
+            && preset.PresetTransitionSeconds > 0.06f)
         {
             // Tell CameraDynamics the lerp is about to start so it can
             // cleanly remove its additive contributions (PitchTilt,
@@ -325,6 +330,7 @@ public static class PresetManager
             _txTargetFoV   = targetFoV;
             _txTarget      = preset;
             _txStartT      = NowSec();
+            _txDuration    = MathF.Max(0.05f, preset.PresetTransitionSeconds);
             _txActive      = true;
             // Tilt snaps — it's not visually significant enough to
             // warrant its own lerp axis, and CameraDynamics rewrites
@@ -420,10 +426,29 @@ public static class PresetManager
 
     public static unsafe void Update()
     {
+        // One-shot migration of the old global Config.PresetTransitionSeconds
+        // into each preset's per-preset PresetTransitionSeconds. Runs at
+        // most once per config; gated by Config.PresetTransitionMigrated.
+        if (!noWickyXIV.Config.PresetTransitionMigrated)
+        {
+            try
+            {
+                float seed = noWickyXIV.Config.PresetTransitionSeconds;
+                foreach (var p in noWickyXIV.Config.Presets)
+                    p.PresetTransitionSeconds = seed;
+                noWickyXIV.Config.PresetTransitionMigrated = true;
+                noWickyXIV.Config.Save();
+            }
+            catch { /* defensive — next frame retries */ }
+        }
+
         if (_txActive && _txTarget != null)
         {
             // Smoothstep all transition axes toward the target.
-            float dur = MathF.Max(0.05f, noWickyXIV.Config.PresetTransitionSeconds);
+            // Duration was captured at transition start from the
+            // incoming preset's PresetTransitionSeconds, so an edit
+            // to the slider mid-transition doesn't warp remaining time.
+            float dur = MathF.Max(0.05f, _txDuration);
             float t = (float)((NowSec() - _txStartT) / dur);
             bool justEnded = false;
             if (t >= 1f) { t = 1f; _txActive = false; justEnded = true; }

@@ -283,6 +283,7 @@ public class AnimationSwapRule
     public bool SwapRun  = true;
     public bool SwapWalk = true;
     public bool SwapIdle = false;
+    public bool UseFemaleAnims = false; // force female animation set for target race
     public ushort TerritoryId;      // 0 = any territory
     public string TerritoryName = "";  // cached display name
 }
@@ -1139,6 +1140,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // the player is not in any listed territory.
     public bool EnableGlamourerTerritoryAuto = false;
     public List<GlamourerTerritoryOverride> GlamourerTerritoryOverrides = new();
+    public string GlamourerDutyDesign = "";  // single design applied in any duty (territory rules supersede)
 
     // ---- Custom teleport menu ----
     // Replaces the game's native Teleport window with a searchable,

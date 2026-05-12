@@ -23,6 +23,7 @@ public static class GlamourerBridge
 
     // ── State ──────────────────────────────────────────────────
     private static ushort _lastTerritory;
+    private static bool _lastInDuty;           // duty state last frame
     private static bool _hadOverride;          // was the previous territory an override?
     private static string _activeDesignName;   // last design we applied (null = none)
     private static bool _wasEnabled;
@@ -49,6 +50,7 @@ public static class GlamourerBridge
     public static void Initialize()
     {
         _lastTerritory = 0;
+        _lastInDuty = false;
         _hadOverride = false;
         _activeDesignName = null;
         _wasEnabled = false;
@@ -116,28 +118,46 @@ public static class GlamourerBridge
             return; // still waiting
         }
 
-        // ── Territory change detection ─────────────────────────
+        // ── Territory / duty change detection ─────────────────
         ushort territory = 0;
         try { territory = (ushort)DalamudApi.ClientState.TerritoryType; } catch { return; }
         if (territory == 0) return;
 
-        if (territory == _lastTerritory) return;
+        bool inDuty = false;
+        try { inDuty = DalamudApi.Condition[ConditionFlag.BoundByDuty]
+                     || DalamudApi.Condition[ConditionFlag.BoundByDuty56]; }
+        catch { }
+
+        bool changed = territory != _lastTerritory || inDuty != _lastInDuty;
         _lastTerritory = territory;
+        _lastInDuty = inDuty;
+        if (!changed) return;
 
-        // Find matching override for this territory.
+        // Find matching design. Priority:
+        //   1. Territory rule matching this zone (most specific)
+        //   2. Global duty design (when in a duty and no territory rule matched)
         var overrides = noWickyXIV.Config.GlamourerTerritoryOverrides;
-        var match = overrides.FirstOrDefault(o => o.TerritoryId == territory);
+        string matchedDesign = null;
 
-        if (match != null && !string.IsNullOrEmpty(match.DesignName))
+        // Specific territory rule always wins.
+        var terrMatch = overrides.FirstOrDefault(o =>
+            o.TerritoryId == territory && !string.IsNullOrEmpty(o.DesignName));
+        if (terrMatch != null)
+            matchedDesign = terrMatch.DesignName;
+
+        // Duty fallback — single global design.
+        if (matchedDesign == null && inDuty
+            && !string.IsNullOrEmpty(noWickyXIV.Config.GlamourerDutyDesign))
+            matchedDesign = noWickyXIV.Config.GlamourerDutyDesign;
+
+        if (matchedDesign != null)
         {
-            // Don't apply immediately — queue it for after the load screen.
-            _pendingDesignName = match.DesignName;
+            _pendingDesignName = matchedDesign;
             _pendingDelay = PostLoadDelayFrames;
-            _status = $"queued \"{match.DesignName}\" (waiting for load)";
+            _status = $"queued \"{matchedDesign}\" (waiting for load)";
         }
         else
         {
-            // Not in any listed territory — queue revert for after load.
             if (_hadOverride)
             {
                 _pendingRevert = true;
@@ -191,6 +211,7 @@ public static class GlamourerBridge
     public static void ForceReevaluate()
     {
         _lastTerritory = 0;
+        _lastInDuty = false;
     }
 
     /// <summary>Manual revert.</summary>

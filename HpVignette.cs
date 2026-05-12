@@ -25,8 +25,12 @@ public static class HpVignette
 
     // True last frame the player was at HP = 0.
     private static bool   _wasDead;
-    // Wall time the rez fade ends. <= 0 means no fade in flight.
+    // True last frame the player's HP was below the vignette threshold.
+    private static bool   _wasLowHp;
+    // Wall time the rez/heal fade ends. <= 0 means no fade in flight.
     private static double _rezFadeUntilS;
+    // Smoothed alpha for fade-out when HP climbs above threshold.
+    private static float  _smoothAlpha;
 
     public static void Update() { /* render does the state work */ }
 
@@ -36,7 +40,9 @@ public static class HpVignette
         if (!c.EnableHpVignette)
         {
             _wasDead = false;
+            _wasLowHp = false;
             _rezFadeUntilS = 0;
+            _smoothAlpha = 0f;
             return;
         }
 
@@ -65,6 +71,16 @@ public static class HpVignette
             }
             _wasDead = isDead;
 
+            // Heal transition: HP was below threshold and just crossed above.
+            float threshold = MathF.Max(0.01f, c.HpVignetteThreshold);
+            bool isLowHp = !isDead && hpFrac < threshold;
+            if (!isLowHp && _wasLowHp && !isDead && _rezFadeUntilS <= 0)
+            {
+                // Healed above threshold — trigger same white-fade as rez.
+                _rezFadeUntilS = now + REZ_FADE_SECONDS;
+            }
+            _wasLowHp = isLowHp;
+
             float r, g, b, alpha;
 
             if (isDead)
@@ -75,7 +91,7 @@ public static class HpVignette
             }
             else if (_rezFadeUntilS > 0 && now < _rezFadeUntilS)
             {
-                // Mode 3: rez fade — white that decays to transparent
+                // Mode 3: rez/heal fade — white that decays to transparent
                 // over REZ_FADE_SECONDS from full DEAD_ALPHA.
                 float remain = (float)((_rezFadeUntilS - now) / REZ_FADE_SECONDS);
                 if (remain < 0f) remain = 0f;
@@ -88,25 +104,33 @@ public static class HpVignette
                 // Clear any expired rez fade so we don't keep checking.
                 if (_rezFadeUntilS > 0 && now >= _rezFadeUntilS) _rezFadeUntilS = 0;
 
-                // Mode 1: alive, HP-driven red.
-                float threshold = MathF.Max(0.01f, c.HpVignetteThreshold);
+                // Mode 1: alive, HP-driven red with smooth fade-out.
                 const float FADE_IN_BAND = 0.10f;
                 float fadeInStart = threshold + FADE_IN_BAND;
-                float t;
-                if (hpFrac >= fadeInStart) return;
+                float targetAlpha;
+                if (hpFrac >= fadeInStart)
+                    targetAlpha = 0f;
                 else if (hpFrac >= threshold)
                 {
                     float band = (fadeInStart - hpFrac) / FADE_IN_BAND;
-                    t = 0.5f * band;
+                    targetAlpha = 0.5f * band;
                 }
                 else
                 {
                     float belowFrac = 1f - (hpFrac / threshold);
-                    t = 0.5f + 0.5f * belowFrac;
+                    targetAlpha = 0.5f + 0.5f * belowFrac;
                 }
                 float maxAlpha = MathF.Max(0f, MathF.Min(1f, c.HpVignetteMaxAlpha));
+                targetAlpha *= maxAlpha;
+
+                // Smooth lerp so red fades out gradually instead of cutting.
+                float dt = ImGui.GetIO().DeltaTime;
+                float speed = targetAlpha >= _smoothAlpha ? 12f : 3f; // fast in, gentle out
+                _smoothAlpha += (targetAlpha - _smoothAlpha) * MathF.Min(1f, speed * dt);
+                if (MathF.Abs(_smoothAlpha - targetAlpha) < 0.002f) _smoothAlpha = targetAlpha;
+
                 r = c.HpVignetteR; g = c.HpVignetteG; b = c.HpVignetteB;
-                alpha = t * maxAlpha;
+                alpha = _smoothAlpha;
             }
 
             if (alpha <= 0.005f) return;

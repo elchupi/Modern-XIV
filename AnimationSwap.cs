@@ -76,6 +76,7 @@ public static unsafe class AnimationSwap
     private static int _redrawPhase;
     private static int _redrawCooldown;
     private static bool _lastSwapActive;
+    private static bool _everActivated; // first-load: schedule delayed re-apply
 
     // Deferred re-apply — wait for external redraws (Glamourer) to settle.
     private static int _pendingReapplyDelay;
@@ -924,7 +925,8 @@ public static unsafe class AnimationSwap
 
             // Compute target model code (the animations to use instead).
             byte tgtTribe = GetDefaultTribe(rule.TargetRace);
-            tgtCode = GetModelCode(rule.TargetRace, matchSex, tgtTribe);
+            byte tgtSex = rule.UseFemaleAnims ? (byte)1 : matchSex;
+            tgtCode = GetModelCode(rule.TargetRace, tgtSex, tgtTribe);
 
             _swapRun = rule.SwapWalk;  // Run follows Walk toggle
             _swapWalk = rule.SwapWalk;
@@ -959,6 +961,16 @@ public static unsafe class AnimationSwap
 
             _lastSwapActive = _anySwapActive;
             RequestRedraw();
+
+            // On first-ever activation (login/plugin load), Penumbra may
+            // not have fully processed the temporary mod before the redraw
+            // fires. Schedule a second re-apply after a short delay so the
+            // character redraws with swaps actually in effect.
+            if (_anySwapActive && !_everActivated)
+            {
+                _everActivated = true;
+                ForceReapply(30);
+            }
         }
     }
 

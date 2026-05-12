@@ -3040,6 +3040,9 @@ public static class PluginUI
                 ImGui.SameLine();
                 if (ImGui.Checkbox("Idle", ref rule.SwapIdle))
                     noWickyXIV.Config.Save();
+                ImGui.SameLine();
+                if (ImGui.Checkbox("Female Anims", ref rule.UseFemaleAnims))
+                    noWickyXIV.Config.Save();
 
                 ImGui.Spacing();
 
@@ -3292,6 +3295,49 @@ public static class PluginUI
             designNames = glamDesigns.Values.OrderBy(n => n).ToArray();
         }
 
+        // ── Duty glam (single design for all duties) ──
+        ImGui.TextUnformatted("Duty Glamour:");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(250f * ImGuiHelpers.GlobalScale);
+        if (designNames != null && designNames.Length > 0)
+        {
+            string dutyDesign = noWickyXIV.Config.GlamourerDutyDesign ?? "";
+            string dutyPreview = string.IsNullOrEmpty(dutyDesign) ? "(none)" : dutyDesign;
+            if (ImGui.BeginCombo("##dutyGlam", dutyPreview))
+            {
+                if (ImGui.Selectable("(none)", string.IsNullOrEmpty(dutyDesign)))
+                {
+                    noWickyXIV.Config.GlamourerDutyDesign = "";
+                    noWickyXIV.Config.Save();
+                    GlamourerBridge.ForceReevaluate();
+                }
+                foreach (var dn in designNames)
+                {
+                    if (ImGui.Selectable(dn, dutyDesign == dn))
+                    {
+                        noWickyXIV.Config.GlamourerDutyDesign = dn;
+                        noWickyXIV.Config.Save();
+                        GlamourerBridge.ForceReevaluate();
+                    }
+                }
+                ImGui.EndCombo();
+            }
+        }
+        else
+        {
+            string dutyInput = noWickyXIV.Config.GlamourerDutyDesign ?? "";
+            ImGui.SetNextItemWidth(250f * ImGuiHelpers.GlobalScale);
+            if (ImGui.InputText("##dutyGlamText", ref dutyInput, 256))
+            {
+                noWickyXIV.Config.GlamourerDutyDesign = dutyInput;
+                noWickyXIV.Config.Save();
+                GlamourerBridge.ForceReevaluate();
+            }
+        }
+        ImGui.TextDisabled("Applied in any duty unless a territory rule matches.");
+
+        ImGui.Spacing();
+
         int removeGlamIdx = -1;
         for (int i = 0; i < glamOverrides.Count; i++)
         {
@@ -3510,7 +3556,7 @@ public static class PluginUI
     private static int  _tpDrawNavI;               // per-frame counter incremented during draw
     private static bool _tpNavScrollTo;            // scroll the selected item into view
     private static TeleportMenu.TeleportEntry _tpNavSelectedEntry; // captured during draw for confirm
-    private static bool _tpKeyDownPrev, _tpKeyUpPrev, _tpKeyFPrev; // edge-detect for raw keys
+    private static bool _tpKeyDownPrev, _tpKeyUpPrev, _tpKeyFPrev, _tpKeyEnterPrev; // edge-detect for raw keys
     private static string _tpLastSearch = "";       // detect typing → cancel nav
 
     // Layout constants.
@@ -3668,12 +3714,15 @@ public static class PluginUI
         bool downNow = VkDown(0x28); // VK_DOWN
         bool upNow   = VkDown(0x26); // VK_UP
         bool fNow    = VkDown(0x46); // VK_F
+        bool enterNow = VkDown(0x0D); // VK_RETURN
         bool downEdge = downNow && !_tpKeyDownPrev;
         bool upEdge   = upNow   && !_tpKeyUpPrev;
         bool fEdge    = fNow    && !_tpKeyFPrev;
+        bool enterEdge = enterNow && !_tpKeyEnterPrev;
         _tpKeyDownPrev = downNow;
         _tpKeyUpPrev   = upNow;
         _tpKeyFPrev    = fNow;
+        _tpKeyEnterPrev = enterNow;
 
         if (wantOpen)
         {
@@ -3864,13 +3913,15 @@ public static class PluginUI
         // Finalize nav count for next frame's clamping.
         _tpNavCount = _tpDrawNavI;
 
-        // Shift+F confirms the keyboard-selected entry.
-        if (_tpNavActive && _tpNavIdx >= 0 && VkDown(0x10) && fEdge) // VK_SHIFT + F edge
+        // Shift+F or Enter confirms the keyboard-selected entry.
+        bool confirm = _tpNavActive && _tpNavIdx >= 0
+            && ((VkDown(0x10) && fEdge) || enterEdge);
+        if (confirm)
         {
             if (_tpNavSelectedEntry != null)
                 TeleportMenu.DoTeleport(_tpNavSelectedEntry);
             else if (_tpNavIdx == 0 && noWickyXIV.Config.FcHouseAetheryteId != 0)
-                TeleportMenu.TeleportToFcHouse(); // FC house is index 0 when visible
+                TeleportMenu.TeleportToFcHouse();
         }
 
         ImGui.End();

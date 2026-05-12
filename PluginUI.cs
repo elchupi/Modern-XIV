@@ -1694,7 +1694,8 @@ public static class PluginUI
                 "directions and objective icons slide across as the camera\n" +
                 "rotates; alpha fades toward the left/right corners.");
             ConfigSliderFloat("Offset X (px)##Compass",   ref noWickyXIV.Config.CompassOffsetX,    -800f, 800f, 0f,   "%.0f");
-            ConfigSliderFloat("Offset Y from top (px)##Compass", ref noWickyXIV.Config.CompassOffsetY, 0f, 400f, 40f, "%.0f");
+            ConfigCheckbox("Anchor to bottom##Compass", ref noWickyXIV.Config.CompassAnchorBottom);
+            ConfigSliderFloat("Offset Y (px)##Compass", ref noWickyXIV.Config.CompassOffsetY, 0f, 400f, 40f, "%.0f");
             ConfigSliderFloat("Width (px)##Compass",      ref noWickyXIV.Config.CompassWidth,      100f, 2000f, 600f, "%.0f");
             ConfigSliderFloat("Height (px)##Compass",     ref noWickyXIV.Config.CompassHeight,     8f,   120f,  32f,  "%.0f");
             ConfigSliderFloat("FOV (degrees)##Compass",   ref noWickyXIV.Config.CompassFovDegrees, 30f,  360f, 180f,  "%.0f");
@@ -1723,6 +1724,21 @@ public static class PluginUI
             ConfigCheckbox("Show party members##Compass",               ref noWickyXIV.Config.CompassShowParty);
             ConfigCheckbox("Show active FATEs##Compass",                ref noWickyXIV.Config.CompassShowFates);
             ConfigCheckbox("Show nearby aetherytes##Compass",           ref noWickyXIV.Config.CompassShowAetherytes);
+            ConfigCheckbox("Show MSQ markers##Compass",                   ref noWickyXIV.Config.CompassShowMsqMarkers);
+            ConfigCheckbox("Show side quest markers##Compass",            ref noWickyXIV.Config.CompassShowSideQuestMarkers);
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Quest markers"))
+        {
+            ConfigCheckbox("Hide quest markers above NPCs##QuestHider", ref noWickyXIV.Config.EnableHideQuestMarkers);
+            ImGui.TextDisabled("Removes the floating quest icons above NPC heads for immersion.\nQuest markers still appear on the compass when enabled above.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Waymark quick-place"))
+        {
+            ImGui.TextDisabled("Middle-click the AreaMap to open a waymark picker.\nWaymarks are placed at the clicked map position.");
             ImGuiEx.EndGroupBox();
         }
     }

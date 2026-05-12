@@ -299,6 +299,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { EnemySizeClamp.Dispose(); } catch { }
         try { CharacterRollHook.Dispose(); } catch { }
         try { Compass.Dispose(); } catch { }
+        try { MapWaymarks.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();
         DalamudApi.ClientState.Login -= Login;
 

@@ -206,7 +206,7 @@ public static unsafe class Compass
                 labelY = center.Y - halfH - sz.Y - 2f;
             else
                 labelY = center.Y + halfH + 2f;
-            var p = new Vector2(x - sz.X * 0.5f, labelY);
+            var p = new Vector2(MathF.Round(x - sz.X * 0.5f), labelY);
             dl.AddText(p, tickCol, label);
         }
     }
@@ -294,6 +294,7 @@ public static unsafe class Compass
 
         float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
         float rel = BearingToRel(worldBearing, camYaw);
+        rel = DampenProximity(rel, distSq);
         if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
 
         float a = _alpha * edgeAlpha * st.Alpha;
@@ -441,6 +442,7 @@ public static unsafe class Compass
 
         float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
         float rel = BearingToRel(worldBearing, camYaw);
+        rel = DampenProximity(rel, distSq);
         if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
 
         float a = _alpha * edgeAlpha;
@@ -527,6 +529,15 @@ public static unsafe class Compass
         while (d >  MathF.PI) d -= 2f * MathF.PI;
         while (d < -MathF.PI) d += 2f * MathF.PI;
         return d;
+    }
+
+    private static float DampenProximity(float rel, float distSq)
+    {
+        const float threshold = 3f;
+        float threshSq = threshold * threshold;
+        if (distSq >= threshSq) return rel;
+        float t = MathF.Sqrt(distSq) / threshold;
+        return rel * t;
     }
 
     private static uint PackColor(float r, float g, float b, float a)

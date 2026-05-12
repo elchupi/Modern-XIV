@@ -1,46 +1,31 @@
-# noWickyXIV
+# Modern XIV
 
-Personal-use Dalamud plugin — a fork of [Cammy](https://github.com/UnknownX7/Cammy) with a dynamic-feel camera layer ported from the user's `noWickyTPS_MP` Wicked third-person camera mod.
+All-in-one FFXIV Dalamud plugin: dynamic camera, animation swaps, Glamourer automation, teleport menu, HP vignette, and more.
 
-**This is a personal fork.** Not for redistribution, not submitted to DalamudPluginsD17.
+## Features
 
-## What it adds over Cammy
+- **Dynamic Camera** — TPS-style camera with distance-based FOV, combat zoom, and smooth transitions
+- **Race Animation Swaps** — swap walk/run/idle animations between races via Penumbra IPC, with per-rule female animation toggle
+- **Glamourer Automation** — auto-apply Glamourer designs by territory or duty, with revert on leave
+- **Custom Teleport Menu** — searchable teleport list with favorites and FC house shortcut
+- **MSQ Overlay** — pill-style overlay showing current MSQ with one-click teleport to the next objective
+- **HP Vignette** — screen-edge red vignette at low HP with smooth fade-out and white flash on heal/revive
+- **Mount Momentum** — variable-speed mount movement via virtual gamepad input
+- **Mount Audio** — per-state engine sound layers (idle/accel/cruise/decel) with speed-based pitch shifting
+- **Cutscene Letterbox** — customizable letterbox bars during cutscenes
+- **Enemy Size Clamp** — cap large enemy model sizes for visibility
 
-- Roll tilt — camera banks into turns based on yaw velocity
-- Pitch tilt — look-at offset shifts as pitch changes
-- Position float — discreet float behind the player (velocity-driven offset)
-- Swivel-on-Move — auto-center yaw behind player after a movement delay
-- ADS-on-RMB — held right-mouse narrows FoV/zoom for aim-zoom feel
-- Sensitivity multiplier + Y axis invert
-- Crosshair overlay (configurable, fades, hides in cutscenes)
-- Hotkeys: F6 (settings), V (crosshair), Q (manual shoulder swap), Ctrl+1..9 (preset slots), Ctrl/Alt+scroll (live height nudge)
-- Auto-shoulder swap state machine (raycast probe is a stub pending API verification)
+## Requirements
 
-## Documentation
+- [Dalamud](https://github.com/goatcorp/Dalamud) (API level 15+)
+- [Penumbra](https://github.com/xivdev/Penumbra) — for animation swaps
+- [Glamourer](https://github.com/Ottermandias/Glamourer) — for glamour automation (optional)
+- [ViGEmBus Driver](https://github.com/nefarius/ViGEmBus) — for mount momentum (optional)
 
-Full docs in [`docs/`](docs/):
+## Installation
 
-- [`docs/README.md`](docs/README.md) — index + repo layout
-- [`docs/01-getting-started.md`](docs/01-getting-started.md) — local dev environment
-- [`docs/02-project-layout.md`](docs/02-project-layout.md) — csproj, manifest, file roles
-- [`docs/03-services.md`](docs/03-services.md) — Dalamud services we use
-- [`docs/04-camera-architecture.md`](docs/04-camera-architecture.md) — the per-frame writer (heart of the fork)
-- [`docs/05-debugging.md`](docs/05-debugging.md) — VS attach, logs, crash analysis
-- [`docs/06-versions.md`](docs/06-versions.md) — Dalamud API level + migration notes
-- [`docs/07-contributing.md`](docs/07-contributing.md) — daily edit/build/push workflow
+Add as a dev plugin or install from a custom Dalamud repo.
 
-Distilled from [dalamud.dev](https://dalamud.dev). Read [04-camera-architecture.md](docs/04-camera-architecture.md) first if you only have time for one.
+## License
 
-## Quick start
-
-```bash
-cd "%AppData%\XIVLauncher\devPlugins\noWickyXIV"
-dotnet build noWickyXIV.csproj -c Debug
-```
-
-Then in-game: `/xlsettings → Experimental → Dev Plugin Locations` add the project folder, enable in `/xlplugins`, run `/nowickyxiv`.
-
-## Credits
-
-- Built on top of [UnknownX7/Cammy](https://github.com/UnknownX7/Cammy) (camera struct hooks, preset system, free-cam mode)
-- Math + design references the user's own `noWickyTPS_MP` mod
+For personal use. Not affiliated with Square Enix.

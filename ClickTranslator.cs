@@ -121,6 +121,15 @@ public static class ClickTranslator
     private const int VK_RBUTTON = 0x02;
     private const int VK_SHIFT   = 0x10;
     private const int VK_CONTROL = 0x11;
+    private const int VK_MENU    = 0x12; // Alt
+
+    // ---- Single source of truth: the modifier key all three features
+    // ---- (positional auto-modifier, positional auto-cycle, hotbar-3
+    // ---- digit translator) treat as a virtual Ctrl. Change this one
+    // ---- value to swap the modifier (e.g. VK_RBUTTON, VK_MENU,
+    // ---- VK_LMENU, VK_RMENU, etc.) — no other code edits needed.
+    private const int CLICK_MODIFIER_VK = VK_MENU;
+    private static bool IsClickModifierHeld() => (GetAsyncKeyState(CLICK_MODIFIER_VK) & 0x8000) != 0;
     private const int VK_W       = 0x57;
     private const int VK_S       = 0x53;
     private const int VK_1       = 0x31;
@@ -301,9 +310,9 @@ public static class ClickTranslator
 
         bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
-        // RMB is a virtual Ctrl modifier (per user spec).
-        bool ctrlLike = kbCtrl || rmb;
+        // Configurable click modifier acts as a virtual Ctrl (see
+        // CLICK_MODIFIER_VK at top of file — single source of truth).
+        bool ctrlLike = kbCtrl || IsClickModifierHeld();
 
         // Modifier-held LMB click while a cycle is running = explicit
         // user override. Cancel the in-flight cycle so its remaining
@@ -831,20 +840,18 @@ public static class ClickTranslator
 
         bool kbShift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
         bool kbCtrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        bool rmb     = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
 
-        // -- RMB-as-Ctrl rule (highest priority): RMB held + 1/2/3 → Ctrl+<n>.
+        // -- Modifier-as-Ctrl rule (highest priority): modifier held + 1/2/3 → Ctrl+<n>.
         // Gate matches the LMB translator above: weapon drawn OR hostile
         // target selected. Lets the auto-target → ability chain work
-        // while sheathed.
-        if (rmb && IsGameForeground() && (IsWeaponDrawn() || HasHostileTarget()))
+        // while sheathed. Uses the shared CLICK_MODIFIER_VK (single
+        // source of truth at top of file).
+        if (IsClickModifierHeld() && IsGameForeground() && (IsWeaponDrawn() || HasHostileTarget()))
         {
             int digitVk = isOne ? VK_1 : (isTwo ? VK_2 : VK_3);
             SendCtrlDigit(digitVk, kbCtrl);
             return new IntPtr(1); // suppress original digit
         }
-
-        // (forward/back + 2 rule removed — redundant with RMB-as-Ctrl above.)
 
     pass:
         return CallNextHookEx(_hookHandle, nCode, wParam, lParam);

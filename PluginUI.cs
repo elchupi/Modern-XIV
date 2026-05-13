@@ -464,7 +464,7 @@ public static class PluginUI
 
         ResetSliderFloat("Camera Height Offset", ref preset.HeightOffset, -2, 4, 0, "%.2f");
         ImGuiEx.SetItemTooltip("Ctrl+scroll in-game adjusts this same value.");
-        ResetSliderFloat("Camera Side Offset", ref preset.SideOffset, -1, 1, 0, "%.2f");
+        ResetSliderFloat("Camera Side Offset", ref preset.SideOffset, -4, 4, 0, "%.2f");
         ResetSliderFloat("Tilt", ref preset.Tilt, -MathF.PI, MathF.PI, 0, "%f");
         ImGuiEx.SetItemTooltip("Not meant for general gameplay use! Will be moved to a separate feature in a later update.");
         ResetSliderFloat("Look at Height Offset", ref preset.LookAtHeightOffset, -10, 10, () => Game.GetDefaultLookAtHeightOffset() ?? 0, "%f");
@@ -550,6 +550,20 @@ public static class PluginUI
             "(InCombat, Mounted, Passenger, Talking to NPC) and don't need any extra plugins.\n" +
             "QoL Bar sets are sourced from the QoL Bar plugin and let you build composite conditions.\n" +
             "Presets higher in the preset list win when multiple conditions match.");
+
+        // Per-preset hitbox size threshold — only shown when the
+        // LargeEnemy condition is selected. Lets the user tune what
+        // counts as "large" for their boss-fight camera preset.
+        if (preset.Condition == BuiltinPresetCondition.LargeEnemy
+            || preset.Condition == BuiltinPresetCondition.LargeEnemyCasting)
+        {
+            if (ImGui.SliderFloat("Enemy Size Threshold", ref preset.TargetSizeThreshold, 1f, 30f, "%.1f"))
+                noWickyXIV.Config.Save();
+            ImGuiEx.SetItemTooltip(
+                "Minimum hitbox radius to trigger this preset.\n" +
+                "Small mobs ≈ 1-3  |  A-rank hunts ≈ 4-6  |  Trial bosses ≈ 8-12  |  Raid bosses ≈ 15+\n" +
+                "Target an enemy and check the diagnostic to see their actual hitbox radius.");
+        }
     }
 
     private static string BuiltinConditionLabel(BuiltinPresetCondition c) => c switch
@@ -562,6 +576,8 @@ public static class PluginUI
         BuiltinPresetCondition.MovingMount  => "Moving on Mount",
         BuiltinPresetCondition.Sprinting    => "Sprinting",
         BuiltinPresetCondition.RunningInCombat => "Running in Combat",
+        BuiltinPresetCondition.LargeEnemy        => "Large Enemy",
+        BuiltinPresetCondition.LargeEnemyCasting => "Large Enemy Casting",
         _                                    => c.ToString(),
     };
 
@@ -1738,6 +1754,7 @@ public static class PluginUI
             ConfigCheckbox("Show nearby aetherytes##Compass",           ref noWickyXIV.Config.CompassShowAetherytes);
             ConfigCheckbox("Show MSQ markers##Compass",                   ref noWickyXIV.Config.CompassShowMsqMarkers);
             ConfigCheckbox("Show side quest markers##Compass",            ref noWickyXIV.Config.CompassShowSideQuestMarkers);
+            ConfigCheckbox("Show unlock quest markers##Compass",          ref noWickyXIV.Config.CompassShowUnlockQuestMarkers);
             ImGuiEx.EndGroupBox();
         }
 
@@ -1745,6 +1762,19 @@ public static class PluginUI
         {
             ConfigCheckbox("Hide quest markers above NPCs##QuestHider", ref noWickyXIV.Config.EnableHideQuestMarkers);
             ImGui.TextDisabled("Removes the floating quest icons above NPC heads for immersion.\nQuest markers still appear on the compass when enabled above.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // Player nicknames.
+        if (ImGuiEx.BeginGroupBox("Player nicknames"))
+        {
+            ConfigCheckbox("Enable##PlayerNicknames", ref noWickyXIV.Config.EnablePlayerNicknames);
+            ImGui.TextDisabled(
+                "Right-click a player to assign a nickname.\n" +
+                "/w Nickname message  ->  /tell RealName@World message\n" +
+                "Chat displays nicknames instead of real names.");
+            if (noWickyXIV.Config.EnablePlayerNicknames)
+                PlayerNicknames.DrawManagementUI();
             ImGuiEx.EndGroupBox();
         }
 
@@ -2999,6 +3029,8 @@ public static class PluginUI
                 }
             }
 
+            ImGui.Spacing();
+
             ImGui.TextUnformatted("Death Cam Mode");
             ImGuiEx.Prefix(true);
             save |= ImGuiEx.EnumCombo("##DeathCam", ref noWickyXIV.Config.DeathCamMode);
@@ -3136,15 +3168,11 @@ public static class PluginUI
 
                 ImGui.Spacing();
 
-                // Movement type toggles.
-                if (ImGui.Checkbox("Walk / Run", ref rule.SwapWalk))
+                if (ImGui.Checkbox("Opposite Gender", ref rule.UseFemaleAnims))
+                {
                     noWickyXIV.Config.Save();
-                ImGui.SameLine();
-                if (ImGui.Checkbox("Idle", ref rule.SwapIdle))
-                    noWickyXIV.Config.Save();
-                ImGui.SameLine();
-                if (ImGui.Checkbox("Female Anims", ref rule.UseFemaleAnims))
-                    noWickyXIV.Config.Save();
+                    AnimationSwap.ForceReapply(2);
+                }
 
                 ImGui.Spacing();
 

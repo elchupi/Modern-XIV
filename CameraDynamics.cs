@@ -630,13 +630,16 @@ public static unsafe class CameraDynamics
         ImGuiIOPtr io;
         try { io = ImGui.GetIO(); } catch { ShowOsCursor(); return; }
 
-        // Don't fight the game's own RMB-held mouselook — skip OUR drive but
-        // KEEP the cursor hidden. Prior code called ShowOsCursor() here which
-        // produced a brief cursor flash whenever the user pressed RMB during
-        // mouselook mode. We only need to stop our delta application; the
-        // cursor stays hidden because the user is still in mouselook intent.
+        // RMB held: FFXIV's native RMB-drag mouselook also activates.
+        // We must NOT apply our own camera delta (that would double the
+        // input → erratic/fast movement). Instead we skip our delta but
+        // keep cursor centering active so the native handler sees near-
+        // zero mouse delta each frame. This prevents the flight-stick
+        // drift that the old "yield completely" approach caused (where
+        // no centering ran and the native handler picked up full stick
+        // input), while also preventing the double-input that running
+        // both handlers caused.
         bool rmbHeld = RmbHeldNow;
-        if (rmbHeld) { _mouseLookInit = false; HideOsCursor(); return; }
 
         // Don't fight ImGui — if a panel captured the mouse, leave it alone.
         bool wantCaptureMouse;
@@ -663,7 +666,12 @@ public static unsafe class CameraDynamics
         else
         {
             var delta = curPos - _mouseLookPrevPos;
-            if (MathF.Abs(delta.X) > 0.01f || MathF.Abs(delta.Y) > 0.01f)
+            // Only apply OUR delta when RMB is NOT held. When held,
+            // FFXIV's native handler is also writing camera angles —
+            // applying ours too would double the input (erratic/fast).
+            // Cursor centering below still runs, so the native handler
+            // sees near-zero mouse delta each frame.
+            if (!rmbHeld && (MathF.Abs(delta.X) > 0.01f || MathF.Abs(delta.Y) > 0.01f))
             {
                 float sens = MathF.Max(0.0001f, noWickyXIV.Config.MouseLookSensitivity);
                 float xSign = noWickyXIV.Config.MouseLookInvertX ? +1f : -1f; // default negate: matches FFXIV's RMB-drag direction
@@ -851,6 +859,7 @@ public static unsafe class CameraDynamics
     }
 
     private static readonly DateTime _epoch = DateTime.UtcNow;
+
 
     // Cubic Bezier with P0=0, P3=1, given P1 / P2 (control y-coords). Approx
     // ease-out style. Matches the Wicked AutoShoulderSwap easing.

@@ -630,7 +630,8 @@ public static class ChatBubbles
             string timeStr = e.LastMessageAt != default
                 ? e.LastMessageAt.ToString("HH:mm")
                 : "";
-            string nameStr = string.IsNullOrEmpty(e.Sender) ? ChannelLabel(e.Channel) : e.Sender;
+            string rawName = string.IsNullOrEmpty(e.Sender) ? ChannelLabel(e.Channel) : e.Sender;
+            string nameStr = PlayerNicknames.GetNickname(rawName) ?? rawName;
             string label = e.FromSelf
                 ? timeStr
                 : (string.IsNullOrEmpty(timeStr) ? nameStr : $"{nameStr}  {timeStr}");
@@ -885,7 +886,7 @@ public static class ChatBubbles
     //   "Zykov R."  ↔  "Zykov Romanov"      → true
     //   "First L."  ↔  "First Last"         → true
     //   anything else                       → false
-    private static bool IsShorthandOf(string candidate, string fullName)
+    internal static bool IsShorthandOf(string candidate, string fullName)
     {
         if (string.IsNullOrEmpty(candidate) || string.IsNullOrEmpty(fullName)) return false;
         // Whole-name match (some encodings repeat the full name).

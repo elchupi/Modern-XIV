@@ -97,7 +97,7 @@ public static unsafe class Compass
             if (cfg.CompassShowParty)      DrawParty(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowFates)      DrawFates(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowAetherytes) DrawAetherytes(dl, center, cfg, camYaw, ppos);
-            if (cfg.CompassShowMsqMarkers || cfg.CompassShowSideQuestMarkers)
+            if (cfg.CompassShowMsqMarkers || cfg.CompassShowSideQuestMarkers || cfg.CompassShowUnlockQuestMarkers)
                 DrawNpcMarkers(dl, center, cfg, camYaw, ppos);
 
             // Layer 3: target indicators on top of everything (keep drawing during fade-out)
@@ -417,11 +417,19 @@ public static unsafe class Compass
                 QuestMarkerHider.HiddenIcons.TryGetValue(o.GameObjectId, out iconId);
             if (iconId == 0) continue;
 
-            bool isMsq = iconId >= 71201 && iconId <= 71299;
-            bool isSide = iconId >= 71001 && iconId <= 71199;
-            if (isMsq && !cfg.CompassShowMsqMarkers) continue;
-            if (isSide && !cfg.CompassShowSideQuestMarkers) continue;
-            if (!isMsq && !isSide) continue;
+            // Quest icon sub-ranges within the 71xxx nameplate block.
+            // Each quest type occupies a 20-wide slot with +0/+1/+2
+            // for available/ongoing/complete states:
+            //   71201-71219  MSQ (meteor icon)
+            //   71221-71239  Yellow side quests
+            //   71241+       Feature/unlock quest (blue +), repeatables, leves, etc.
+            bool isMsq    = iconId >= 71201 && iconId <= 71219;
+            bool isSideNarrow = iconId >= 71221 && iconId <= 71239;
+            bool isUnlock = iconId >= 71001 && iconId <= 71999 && !isMsq && !isSideNarrow;
+            if (isMsq        && !cfg.CompassShowMsqMarkers) continue;
+            if (isSideNarrow && !cfg.CompassShowSideQuestMarkers) continue;
+            if (isUnlock     && !cfg.CompassShowUnlockQuestMarkers) continue;
+            if (!isMsq       && !isSideNarrow && !isUnlock) continue;
 
             Vector3 wpos = new(o.Position.X, o.Position.Y, o.Position.Z);
             DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId, null);

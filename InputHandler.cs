@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using Hypostasis.Game.Structures;
 
 namespace noWickyXIV;
@@ -34,17 +35,35 @@ public static class InputHandler
     // Edge-detect cache for keyboard hotkeys. Kept by virtual-key int.
     private static readonly System.Collections.Generic.Dictionary<int, bool> _keyPrev = new();
 
-    public static void Update()
+    public static unsafe void Update()
     {
         SuppressNextZoom = false;
 
+        // Scroll-wheel actions use the mouse, not the keyboard — they
+        // stay active even while a text field has focus.
         UpdateScrollHeight();
-        UpdateSettingsHotkey();
-        UpdateCrosshairHotkey();
-        UpdateShoulderSwapHotkey();
-        UpdatePresetSlotHotkeys();
-        UpdateCursorReleaseHotkey();
-        UpdateTeleportMenuHotkey();
+
+        // Gate all keyboard hotkeys while a text input (chat box, search
+        // field, retainer naming, etc.) has focus so keystrokes that are
+        // meant for typing don't also fire plugin actions.
+        bool textInputActive = false;
+        try
+        {
+            var ratk = RaptureAtkModule.Instance();
+            if (ratk != null) textInputActive = ratk->AtkModule.IsTextInputActive();
+        }
+        catch { }
+
+        if (!textInputActive)
+        {
+            UpdateSettingsHotkey();
+            UpdateCrosshairHotkey();
+            UpdateShoulderSwapHotkey();
+            UpdatePresetSlotHotkeys();
+            UpdateCursorReleaseHotkey();
+            UpdateTeleportMenuHotkey();
+        }
+
         ClickTranslator.Update();
     }
 
@@ -225,9 +244,8 @@ public static class InputHandler
                 if (preset == null) return;
                 float step = noWickyXIV.Config.HeightOffsetStep;
                 float next = preset.SideOffset - wheel * step;
-                // Cammy's SideOffset is unbounded but +/-2 is plenty extreme.
-                if (next < -2f) next = -2f;
-                if (next >  2f) next =  2f;
+                if (next < -4f) next = -4f;
+                if (next >  4f) next =  4f;
 
                 if (Math.Abs(next - preset.SideOffset) > 0.0001f)
                 {

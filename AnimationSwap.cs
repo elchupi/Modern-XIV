@@ -980,7 +980,10 @@ public static unsafe class AnimationSwap
             if (!rule.Enabled) continue;
             if (rule.TerritoryId != 0 && rule.TerritoryId != currentTerritory) continue;
             if (rule.SourceRace != 0 && rule.SourceRace != matchRace) continue;
-            if (rule.TargetRace == 0 || rule.TargetRace == matchRace) continue;
+            if (rule.TargetRace == 0) continue;
+            // Same race is only valid when opposite gender is on — the
+            // sex difference produces a different model code.
+            if (rule.TargetRace == matchRace && !rule.UseFemaleAnims) continue;
 
             byte srcTribe = GetDefaultTribe(matchRace);
             srcCode = GetModelCode(matchRace, matchSex, srcTribe);
@@ -1231,7 +1234,8 @@ public static unsafe class AnimationSwap
             {
                 var r = noWickyXIV.Config.AnimationSwapRules[i];
                 bool srcMatch = r.SourceRace == 0 || r.SourceRace == matchRace;
-                bool tgtValid = r.TargetRace != 0 && r.TargetRace != matchRace;
+                bool tgtValid = r.TargetRace != 0
+                    && (r.TargetRace != matchRace || r.UseFemaleAnims);
                 sb.AppendLine($"  [{i}] Enabled={r.Enabled} Src={r.SourceRace}({LookupRaceName(r.SourceRace)}) " +
                               $"Tgt={r.TargetRace}({LookupRaceName(r.TargetRace)}) " +
                               $"OppGender={r.UseFemaleAnims}");

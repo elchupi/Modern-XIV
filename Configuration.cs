@@ -43,6 +43,16 @@ public class LightSyncDevice
     public bool   SwapSegmentSides = false;
 }
 
+// Player nickname entry — maps a real player name + home world to a
+// user-assigned nickname. Used by PlayerNicknames to rewrite chat
+// display and /tell aliases.
+public class PlayerNicknameEntry
+{
+    public string PlayerName = "";    // "First Last"
+    public string WorldName  = "";    // "Excalibur"
+    public string Nickname   = "";    // user-assigned display name
+}
+
 // Per-slot custom file path for a specific mount's audio pack.
 // User-defined overrides take priority over the convention-based
 // lookup (assets/mount-audio/<mountId>/<slot>.wav). Empty FilePath
@@ -112,6 +122,16 @@ public enum BuiltinPresetCondition
     // Chat input prompt is open / accepting keystrokes. Same signal
     // ChatTypingEmote uses (RaptureAtkModule.IsTextInputActive).
     [Display(Name = "Chat Prompt Open")] ChatOpen,
+    // Current target is a hostile BattleNpc whose HitboxRadius ≥ the
+    // per-preset TargetSizeThreshold. Designed for boss fights: create
+    // a preset with pitched-up MaxVRotation and more zoom, assign this
+    // condition, and tune the threshold. Small overworld mobs (~1-3)
+    // won't trigger it; trial/raid bosses (~8-20) will.
+    [Display(Name = "Large Enemy")] LargeEnemy,
+    // Combines LargeEnemy + EnemyCasting — target is a large hostile
+    // BattleNpc AND it's currently casting. Useful for cinematic
+    // pull-back presets during boss mechanics.
+    [Display(Name = "Large Enemy Casting")] LargeEnemyCasting,
 }
 
 public class CameraConfigPreset
@@ -163,6 +183,14 @@ public class CameraConfigPreset
     // Condition Set dropdown sets this and clears ConditionSet so the
     // two triggers don't collide.
     public BuiltinPresetCondition Condition = BuiltinPresetCondition.None;
+    // Hitbox-radius threshold for the LargeEnemy condition. Only
+    // consulted when Condition == LargeEnemy. Typical values:
+    //   ~2-4  = large overworld mobs / A-rank hunts
+    //   ~8-12 = trial / extreme bosses
+    //   ~15+  = raid bosses, primals
+    // Default 8 catches most boss-size enemies without triggering on
+    // regular trash pulls.
+    public float TargetSizeThreshold = 8f;
 
     // Per-preset Camera-Dynamics + Misc-tab snapshot. Lazy-populated by
     // PresetManager.ApplyPreset on first activation if null (migration
@@ -189,7 +217,7 @@ public class CameraConfigPreset
     {
         // Built-in condition wins if set.
         if (Condition != BuiltinPresetCondition.None)
-            return EvaluateBuiltinCondition(Condition);
+            return EvaluateBuiltinCondition(Condition, this);
         // QoL Bar set, or unconditional ("None").
         return ConditionSet < 0 || IPC.QoLBarEnabled && IPC.CheckConditionSet(ConditionSet);
     }
@@ -208,6 +236,22 @@ public class CameraConfigPreset
             if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return false;
             if ((byte)bn.BattleNpcKind == 2) return false;
             return bn.IsCasting;
+        }
+        catch { return false; }
+    }
+
+    // True when the current target is a hostile BattleNpc whose
+    // HitboxRadius meets or exceeds the given threshold. Used by the
+    // LargeEnemy preset condition to auto-switch to a boss-fight
+    // camera preset (pitched up, zoomed out) for large enemies.
+    public static bool IsTargetLargeEnemy(float threshold)
+    {
+        try
+        {
+            var t = DalamudApi.TargetManager?.Target;
+            if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return false;
+            if ((byte)bn.BattleNpcKind == 2) return false; // friendly NPC
+            return bn.HitboxRadius >= threshold;
         }
         catch { return false; }
     }
@@ -248,7 +292,7 @@ public class CameraConfigPreset
         catch { return false; }
     }
 
-    private static bool EvaluateBuiltinCondition(BuiltinPresetCondition c)
+    private static bool EvaluateBuiltinCondition(BuiltinPresetCondition c, CameraConfigPreset preset = null)
     {
         try
         {
@@ -289,6 +333,11 @@ public class CameraConfigPreset
                     => IsWeaponDrawn(),
                 BuiltinPresetCondition.ChatOpen
                     => IsChatInputActive(),
+                BuiltinPresetCondition.LargeEnemy
+                    => IsTargetLargeEnemy(preset?.TargetSizeThreshold ?? 8f),
+                BuiltinPresetCondition.LargeEnemyCasting
+                    => IsTargetLargeEnemy(preset?.TargetSizeThreshold ?? 8f)
+                       && IsTargetEnemyCasting(),
                 _ => false,
             };
         }
@@ -352,7 +401,7 @@ public class AnimationSwapRule
     public bool SwapRun  = true;
     public bool SwapWalk = true;
     public bool SwapIdle = false;
-    public bool UseFemaleAnims = false; // force female animation set for target race
+    public bool UseFemaleAnims = false; // use opposite gender's animation set for target race
     public ushort TerritoryId;      // 0 = any territory
     public string TerritoryName = "";  // cached display name
 }
@@ -746,6 +795,25 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float PresetTransitionSeconds = 0.5f;
     public bool  PresetTransitionMigrated = false;
     public bool EnableCameraNoClippy = false;
+
+    // ---- Collision Softening ----
+    // Smooths the camera's collision snap so walls, floors, and bridges
+    // ease the camera in/out instead of violently teleporting it. The
+    // game writes `interpolatedZoom` each frame as the post-collision
+    // distance; we lerp `currentZoom` toward it rather than letting the
+    // engine snap. Does NOT touch cam->maxZoom — presets own that field.
+    public bool  EnableCollisionSoftening       = false;
+    public float CollisionPushInSpeed           = 8f;   // exp-lerp speed for pushing camera IN (fast — avoid clipping)
+    public float CollisionPullOutSpeed          = 3f;   // exp-lerp speed for easing camera back OUT (slower — cinematic)
+    public float CollisionMinZoom               = 1.5f; // never push closer than this (avoids inside-head)
+    // Small-space dampening: when the camera has been collision-pushed
+    // continuously for this many seconds, soft-clamp the zoom to the
+    // average collided distance so the camera preemptively sits closer
+    // instead of constantly fighting geometry. Only limits currentZoom —
+    // never overwrites the preset's maxZoom.
+    public bool  EnableSmallSpaceDampening      = false;
+    public float SmallSpaceDetectSeconds        = 1.5f; // continuous collision time before engaging
+    public float SmallSpaceDampenSpeed          = 2f;   // exp-lerp speed for dampening ease
     public DeathCamSetting DeathCamMode = DeathCamSetting.Disabled;
     public bool EnableAdvancedFreeCamControls = false;
     public bool FadeOutAdvancedFreeCamControls = false;
@@ -1153,8 +1221,9 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  CompassShowParty        = false;
     public bool  CompassShowFates        = false;
     public bool  CompassShowAetherytes   = false;
-    public bool  CompassShowMsqMarkers     = true;
-    public bool  CompassShowSideQuestMarkers = true;
+    public bool  CompassShowMsqMarkers          = true;
+    public bool  CompassShowSideQuestMarkers   = true;
+    public bool  CompassShowUnlockQuestMarkers = true;
     public bool  CompassAnchorBottom       = false;
 
     // ---- Quest marker hider ----
@@ -1256,6 +1325,13 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public uint FcHouseAetheryteId = 0;     // Captured via "Set" — 0 = not set
     public byte FcHouseSubIndex    = 0;
     public List<RecentTeleportEntry> RecentTeleports = new();
+
+    // ---- Player nicknames ----
+    // Right-click a player to assign a nickname. /t Nickname rewrites
+    // to /tell RealName@World, and displayed chat shows the nickname
+    // instead of the real name.
+    public bool EnablePlayerNicknames = false;
+    public List<PlayerNicknameEntry> PlayerNicknames = new();
 
     // ---- Enemy size clamp (duty-only) ----
     // Proportionally scales down oversized enemy models so they don't

@@ -21,6 +21,12 @@ public static class ChatBubbles
     {
         public XivChatType Channel;
         public string Sender = "";
+        // Stable identity used for same-sender merge. Built from the first
+        // PlayerPayload (just the player name, no world/icon noise) so
+        // two messages from the same player merge even when the surrounding
+        // payloads vary (cross-world tags, FC icons, shorthand display
+        // forms — all of which can come and go between consecutive lines).
+        public string SenderKey = "";
         public string Body = "";
         public bool   FromSelf;
         // ReceivedT — when the bubble first appeared. Drives the
@@ -296,6 +302,7 @@ public static class ChatBubbles
 
             var senderText = ExtractSeStringText(message.Sender);
             var bodyText   = ExtractSeStringText(message.Message);
+            var senderKey  = ExtractPlayerKey(message.Sender, senderText);
 
             // Cache local player name once. The lookup must happen on
             // the framework thread, but we're already in the Update
@@ -319,9 +326,17 @@ public static class ChatBubbles
             if (_entries.Count > 0)
             {
                 var last = _entries[_entries.Count - 1];
+                // Compare by SenderKey (player name only) so payload
+                // variation between consecutive messages doesn't break
+                // the merge. Fall back to the full sender text only when
+                // a sender has no PlayerPayload (e.g. NPC or system —
+                // unlikely here since IsConversationalChannel filtered).
+                bool senderMatch = !string.IsNullOrEmpty(senderKey)
+                    ? string.Equals(last.SenderKey, senderKey, StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(last.Sender,    senderText, StringComparison.OrdinalIgnoreCase);
                 if (last.Channel == chType
                     && last.FromSelf == fromSelf
-                    && string.Equals(last.Sender, senderText, StringComparison.OrdinalIgnoreCase)
+                    && senderMatch
                     && (now - last.LastMessageT) <= MERGE_WINDOW_SEC)
                 {
                     last.Body = string.IsNullOrEmpty(last.Body)
@@ -337,6 +352,7 @@ public static class ChatBubbles
             {
                 Channel       = chType,
                 Sender        = senderText,
+                SenderKey     = senderKey,
                 Body          = bodyText,
                 FromSelf      = fromSelf,
                 ReceivedT     = now,
@@ -1017,6 +1033,37 @@ public static class ChatBubbles
         _                            => "",
     };
 
+    // Stable per-sender identity for the same-sender merge. Walks the
+    // sender SeString and returns the FIRST PlayerPayload's PlayerName
+    // (no world tag, no FC icon, no shorthand TextPayload). This is the
+    // one piece of the sender that's consistent across every message a
+    // given player sends — the surrounding payloads (cross-world world
+    // text, FC channel icons, shorthand display forms) can come and go
+    // line-to-line and break a full-string sender comparison.
+    //
+    // Falls back to the display text when there's no PlayerPayload at
+    // all (non-player senders still merge by name).
+    private static string ExtractPlayerKey(
+        Dalamud.Game.Text.SeStringHandling.SeString seString, string fallbackDisplay)
+    {
+        try
+        {
+            if (seString != null)
+            {
+                foreach (var p in seString.Payloads)
+                {
+                    if (p is Dalamud.Game.Text.SeStringHandling.Payloads.PlayerPayload pp)
+                    {
+                        var nm = pp.PlayerName;
+                        if (!string.IsNullOrEmpty(nm)) return nm;
+                    }
+                }
+            }
+        }
+        catch { }
+        return fallbackDisplay ?? "";
+    }
+
     // Convert a SeString to display-friendly text. Direct .TextValue
     // works for plain TextPayloads but produces garbage for messages
     // with attached map links / item links / party-finder links —
@@ -1426,11 +1473,17 @@ public static class ChatBubbles
 
                 // Columns 2/3 — sender and body. Decode SeString to
                 // get the visible text value (resolves item links etc.)
-                string senderText, bodyText;
-                try { senderText = ExtractSeStringText(Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[2])); }
+                string senderText, bodyText, senderKey;
+                Dalamud.Game.Text.SeStringHandling.SeString senderSe = null;
+                try
+                {
+                    senderSe = Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[2]);
+                    senderText = ExtractSeStringText(senderSe);
+                }
                 catch { senderText = ""; }
                 try { bodyText   = ExtractSeStringText(Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[3])); }
                 catch { bodyText = ""; }
+                senderKey = ExtractPlayerKey(senderSe, senderText);
                 if (string.IsNullOrEmpty(bodyText)) { skipped++; continue; }
 
                 bool fromSelf = !string.IsNullOrEmpty(selfName)
@@ -1440,7 +1493,8 @@ public static class ChatBubbles
 
                 // Same-sender merge inside backfill list (matches the
                 // live OnChatMessage merge so consecutive lines from
-                // one person collapse).
+                // one person collapse). Uses SenderKey (player name only)
+                // so payload variation can't split the merge.
                 // Best-effort wall-clock for the label. The engine's
                 // log entries don't expose a parseable timestamp via
                 // a public API we trust, so we approximate by walking
@@ -1452,8 +1506,11 @@ public static class ChatBubbles
                 if (fresh.Count > 0)
                 {
                     var last = fresh[fresh.Count - 1];
+                    bool senderMatch = !string.IsNullOrEmpty(senderKey)
+                        ? string.Equals(last.SenderKey, senderKey, StringComparison.OrdinalIgnoreCase)
+                        : string.Equals(last.Sender,    senderText, StringComparison.OrdinalIgnoreCase);
                     if (last.Channel == chType && last.FromSelf == fromSelf
-                        && string.Equals(last.Sender, senderText, StringComparison.OrdinalIgnoreCase)
+                        && senderMatch
                         && (t - last.LastMessageT) <= MERGE_WINDOW_SEC)
                     {
                         last.Body = string.IsNullOrEmpty(last.Body) ? bodyText : last.Body + "\n" + bodyText;
@@ -1468,6 +1525,7 @@ public static class ChatBubbles
                 {
                     Channel       = chType,
                     Sender        = senderText,
+                    SenderKey     = senderKey,
                     Body          = bodyText,
                     FromSelf      = fromSelf,
                     ReceivedT     = t,

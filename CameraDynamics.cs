@@ -95,6 +95,7 @@ public static unsafe class CameraDynamics
     private static bool    _mouseLookSkipNextDelta;
     private static Vector2 _mouseLookPrevPos;
 
+
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
 
@@ -621,12 +622,11 @@ public static unsafe class CameraDynamics
     }
 
     // ---- Always-on mouselook (FPS-style camera lock) ----
-    // When enabled and cursor is "grabbed" (default; F7 toggles to release):
-    //   - Read mouse delta vs our tracked previous position
-    //   - Apply to currentHRotation (yaw) + currentVRotation (pitch)
-    //   - Recenter cursor via Win32 SetCursorPos so the cursor never reaches
-    //     a screen edge. We track the recentered position internally so the
-    //     next frame's delta is user-input only (not our own recenter move).
+    // Cursor-position based delta tracking with edge-wrap to keep the
+    // (hidden) cursor on-screen. Raw input would be cleaner but
+    // registering it from inside the FFXIV process replaces FFXIV's own
+    // raw-input registration and breaks its native RMB-drag — staying
+    // on the cursor-position path keeps FFXIV's rotation intact.
     //
     // Bypassed while RMB is held — let FFXIV's own mouselook take over so
     // we don't double-rotate. Bypassed when an ImGui window has captured
@@ -646,15 +646,6 @@ public static unsafe class CameraDynamics
         ImGuiIOPtr io;
         try { io = ImGui.GetIO(); } catch { ShowOsCursor(); return; }
 
-        // RMB held: FFXIV's native RMB-drag mouselook also activates.
-        // We must NOT apply our own camera delta (that would double the
-        // input → erratic/fast movement). Instead we skip our delta but
-        // keep cursor centering active so the native handler sees near-
-        // zero mouse delta each frame. This prevents the flight-stick
-        // drift that the old "yield completely" approach caused (where
-        // no centering ran and the native handler picked up full stick
-        // input), while also preventing the double-input that running
-        // both handlers caused.
         bool rmbHeld = RmbHeldNow;
 
         // Don't fight ImGui — if a panel captured the mouse, leave it alone.
@@ -665,13 +656,8 @@ public static unsafe class CameraDynamics
         // Past all the bail-outs — we're in mouselook. Hide the cursor.
         HideOsCursor();
 
-        // Read cursor from the OS directly, NOT io.MousePos. ImGui populates
-        // io.MousePos from WM_MOUSEMOVE messages — an asynchronous queue that
-        // can lag a frame or more behind SetCursorPos. The next-frame stale
-        // read produces a phantom negative delta equal to the user's last
-        // motion (curPos - center), which we'd apply as rotation OPPOSITE
-        // to user input — the visible per-frame "scale back" jitter.
-        // GetCursorPos returns OS-synchronous cursor state with no race.
+        // Read cursor from the OS directly (synchronous) so we don't
+        // race io.MousePos's WM_MOUSEMOVE pump.
         Vector2 curPos;
         if (!GetCursorPos(out POINT pt)) return;
         curPos = new Vector2(pt.X, pt.Y);
@@ -683,26 +669,18 @@ public static unsafe class CameraDynamics
         }
         else if (_mouseLookSkipNextDelta)
         {
-            // Burn the first post-init delta — see field comment.
             _mouseLookPrevPos = curPos;
             _mouseLookSkipNextDelta = false;
         }
         else
         {
             var delta = curPos - _mouseLookPrevPos;
-            // Only apply OUR delta when RMB is NOT held. When held,
-            // FFXIV's native handler is also writing camera angles —
-            // applying ours too would double the input (erratic/fast).
-            // Cursor centering below still runs, so the native handler
-            // sees near-zero mouse delta each frame.
             if (!rmbHeld && (MathF.Abs(delta.X) > 0.01f || MathF.Abs(delta.Y) > 0.01f))
             {
                 float sens = MathF.Max(0.0001f, noWickyXIV.Config.MouseLookSensitivity);
-                float xSign = noWickyXIV.Config.MouseLookInvertX ? +1f : -1f; // default negate: matches FFXIV's RMB-drag direction
+                float xSign = noWickyXIV.Config.MouseLookInvertX ? +1f : -1f;
                 float ySign = noWickyXIV.Config.MouseLookInvertY ? +1f : -1f;
 
-                // FFXIV: positive currentVRotation = looking up. Mouse Y up
-                // = negative delta. So default mapping: mouse-up → look-up.
                 float newH = cam->currentHRotation + delta.X * sens * xSign;
                 while (newH >  MathF.PI) newH -= 2f * MathF.PI;
                 while (newH < -MathF.PI) newH += 2f * MathF.PI;
@@ -717,13 +695,10 @@ public static unsafe class CameraDynamics
             _mouseLookPrevPos = curPos;
         }
 
-        // Cursor wrap (not every-frame recenter). The recenter itself
-        // causes visible jitter because the engine's own input pipeline
-        // sees the SetCursorPos jump as a mouse delta and reacts. Only
-        // SetCursorPos when the cursor is about to leave the screen
-        // (rare during normal rotation). When we DO warp, we warp to
-        // the OPPOSITE edge and compensate _mouseLookPrevPos by the
-        // warp distance so the wrap doesn't generate a phantom delta.
+        // Cursor wrap — only SetCursorPos when the cursor would otherwise
+        // leave the screen. Compensate _mouseLookPrevPos by the warp
+        // vector so the next frame's delta = (newCursorPos - newPrev)
+        // reflects only true user motion since the warp.
         if (noWickyXIV.Config.MouseLookCenterCursor)
         {
             try
@@ -742,16 +717,12 @@ public static unsafe class CameraDynamics
                 if (curPos.Y < minY) warpY = maxY - 1f;
                 else if (curPos.Y > maxY) warpY = minY + 1f;
 
-                bool wrap = warpX != curPos.X || warpY != curPos.Y;
-                if (wrap)
+                if (warpX != curPos.X || warpY != curPos.Y)
                 {
                     int wx = (int)warpX;
                     int wy = (int)warpY;
                     if (SetCursorPos(wx, wy))
                     {
-                        // Compensate prev-pos by the warp vector so the
-                        // next frame's delta = (newCursorPos - newPrev)
-                        // reflects only true user motion since the warp.
                         _mouseLookPrevPos = new Vector2(
                             _mouseLookPrevPos.X + (wx - curPos.X),
                             _mouseLookPrevPos.Y + (wy - curPos.Y));

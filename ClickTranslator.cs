@@ -333,19 +333,33 @@ public static class ClickTranslator
             && !HasPositionalBypassBuff()
             && HasHostileTarget())
         {
-            if (_cyclePhase == CyclePhase.Idle)
-            {
+            // Decide what a click means based on LIVE combo state, not
+            // our cycle's internal _cycleIdx. The slot bound to chord 0
+            // (Shift+2 = Hakaze) MORPHS during the combo window — after
+            // Hakaze lands, Shift+2 fires Jinpu (rear chord 1), not Hakaze.
+            // Naively re-poking _cycleSeq[_cycleIdx] therefore fires the
+            // wrong action when the user's positional is Front/Flank.
+            //
+            // Use StartAutoCycle's combo-aware branches:
+            //   * Combo = Hakaze       → fire chord 1, positional-sampled
+            //   * Combo = Jinpu/Shifu  → fire chord 2 on the locked slot
+            //   * Combo inactive + Idle → fresh chord 0 (Hakaze)
+            //   * Combo inactive + cycle running → no-op (chord 0 is in
+            //     flight, queueing duplicate Shift+2's just stacks more
+            //     Hakaze presses — the visible "multiple Hakaze refires"
+            //     the user reported. TickAutoCycle drives the chord 1
+            //     transition once the GCD rolls and combo opens.)
+            var (comboAction, comboTimer) = GetSamComboState();
+            bool comboActive = comboTimer > 0.1f;
+            bool comboInChain = comboActive
+                && (comboAction == SAM_HAKAZE
+                 || comboAction == SAM_JINPU
+                 || comboAction == SAM_SHIFU);
+
+            if (comboInChain || _cyclePhase == CyclePhase.Idle)
                 StartAutoCycle();
-            }
-            else
-            {
-                // Click during an active cycle = "encourage" — re-poke
-                // the currently-awaited chord so it lands faster if it
-                // missed the queue window. Does NOT restart from chord 0
-                // (that's the old bug — StartAutoCycle would read an
-                // empty combo state mid-flight and re-fire Hakaze).
-                EncourageAutoCycle();
-            }
+            // else: chord 0 in flight, no combo yet — let TickAutoCycle
+            // handle the GCD edge and chord 1 fire on its own.
             return;
         }
 

@@ -171,7 +171,7 @@ public static unsafe class HotbarFader
             string addon  = ManagedAddons[i];
             bool isCascade = IsCascadeBar[i];
 
-            bool hovered  = hoverEnabled && IsCursorOverAddon(addon, cursor);
+            bool hovered  = hoverEnabled && !IsHoverSuppressedInMouselook(addon) && IsCursorOverAddon(addon, cursor);
             bool comboHere = comboActiveOnBar && comboAddon == addon;
             bool availHere = availFlashActive  && availAddon == addon;
             bool overrideActive = hovered || comboHere || availHere;
@@ -198,7 +198,7 @@ public static unsafe class HotbarFader
         // ---- Combo-prompt bar (only when not already managed above) ----
         if (comboBarN > 0 && comboAddon != null && Array.IndexOf(ManagedAddons, comboAddon) < 0)
         {
-            bool hovered = hoverEnabled && IsCursorOverAddon(comboAddon, cursor);
+            bool hovered = hoverEnabled && !IsHoverSuppressedInMouselook(comboAddon) && IsCursorOverAddon(comboAddon, cursor);
             bool overrideActive = hovered || comboActiveOnBar;
             float target = overrideActive ? drawnA : sheathA;
             _comboAlpha += (target - _comboAlpha) * k;
@@ -212,7 +212,7 @@ public static unsafe class HotbarFader
             && Array.IndexOf(ManagedAddons, availAddon) < 0
             && availAddon != comboAddon)
         {
-            bool hovered = hoverEnabled && IsCursorOverAddon(availAddon, cursor);
+            bool hovered = hoverEnabled && !IsHoverSuppressedInMouselook(availAddon) && IsCursorOverAddon(availAddon, cursor);
             bool overrideActive = hovered || availFlashActive;
             float target = overrideActive ? drawnA : sheathA;
             _availAlpha += (target - _availAlpha) * k;
@@ -229,6 +229,17 @@ public static unsafe class HotbarFader
         >= 2 and <= 10     => $"_ActionBar{(hotbarNumber - 1):D2}",
         _                  => null,
     };
+
+    // Hotbars 7 (_ActionBar06) and 10 (_ActionBar09) are the hover-reveal
+    // bars the user assigns to keybind reminders. In FPS mouselook mode
+    // the cursor is hidden but still glides freely over the screen as
+    // the user rotates — that would spuriously reveal these bars (and
+    // tooltips) every time the cursor passed over them. Suppress hover
+    // for these two specifically while mouselook is active so they
+    // stay sheathed unless the user explicitly leaves mouselook.
+    private static bool IsHoverSuppressedInMouselook(string addon)
+        => CameraDynamics.IsMouseLookActive
+        && (addon == "_ActionBar06" || addon == "_ActionBar09");
 
     // True when ActionManager.Combo.Action is non-zero AND that action
     // ID lives on one of the slots of the configured combo bar.
@@ -342,6 +353,7 @@ public static unsafe class HotbarFader
         }
         catch { /* defensive — addon may not be loaded yet on early frames */ }
     }
+
 
     private static double NowSec() => DateTime.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
 

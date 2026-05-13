@@ -333,7 +333,19 @@ public static class ClickTranslator
             && !HasPositionalBypassBuff()
             && HasHostileTarget())
         {
-            StartAutoCycle();
+            if (_cyclePhase == CyclePhase.Idle)
+            {
+                StartAutoCycle();
+            }
+            else
+            {
+                // Click during an active cycle = "encourage" — re-poke
+                // the currently-awaited chord so it lands faster if it
+                // missed the queue window. Does NOT restart from chord 0
+                // (that's the old bug — StartAutoCycle would read an
+                // empty combo state mid-flight and re-fire Hakaze).
+                EncourageAutoCycle();
+            }
             return;
         }
 
@@ -632,6 +644,23 @@ public static class ClickTranslator
         _cyclePosValid = false;
     }
 
+    // "Encourage" — user clicked LMB during an active cycle. Re-poke the
+    // currently-awaited chord (the one TickAutoCycle is waiting on) so it
+    // re-enters the queue if the original send missed the window. We
+    // intentionally do NOT reset _cyclePhase / _cyclePhaseStartS /
+    // _cyclePrevRemaining — TickAutoCycle's GCD-edge detection and
+    // timeouts stay in sync.
+    private static void EncourageAutoCycle()
+    {
+        if (_cyclePhase == CyclePhase.Idle || _cycleSeq == null) return;
+        if (_cycleIdx < 0 || _cycleIdx >= _cycleSeq.Length) return;
+        // Range gate only — facing-away protection is the range itself.
+        if (!IsTargetInMeleeRange()) return;
+
+        SendShiftDigit(_cycleSeq[_cycleIdx], false);
+        _cycleLastSendS = NowSeconds();
+    }
+
     // Drive the cycle one frame. Called from Update() so all game-
     // memory reads (ActionManager.GetRecastTime) are on the main
     // thread. Cancellation on user override is handled separately by
@@ -689,11 +718,11 @@ public static class ClickTranslator
             // Hard timeout — chord still hasn't landed. Bail.
             if (phaseElapsed > CYCLE_REGISTER_TIMEOUT_S) { CancelAutoCycle(); return; }
 
-            // Pause retries while the player is moving or the target is
-            // out of melee range. Sending an action at distance causes
-            // the character to snap-face the target, which is dangerous
-            // during mechanics that require facing away from the enemy.
-            if (IsPlayerMoving() || !IsTargetInMeleeRange()) return;
+            // Pause retries only when the target is out of melee range —
+            // sending an action at distance causes the character to
+            // snap-face the target. Movement on its own is fine; SAM
+            // GCDs can be weaved cleanly while strafing in melee.
+            if (!IsTargetInMeleeRange()) return;
 
             // Resend cadence — when the chord didn't register (player
             // out of melee range, target moved), keep retrying so
@@ -733,8 +762,9 @@ public static class ClickTranslator
         {
             if (remaining > windowSec) return;
 
-            // Don't fire the next chord if out of range or moving.
-            if (!IsTargetInMeleeRange() || IsPlayerMoving()) return;
+            // Don't fire the next chord if out of melee range (snap-face
+            // would be dangerous). Movement alone is fine.
+            if (!IsTargetInMeleeRange()) return;
 
             // Right before firing chord 1 — the moment the queue window
             // opens — re-sample positional and append the tail. Player
@@ -799,9 +829,12 @@ public static class ClickTranslator
             if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return PositionalZone.Rear;
             if ((byte)bn.BattleNpcKind == 2) return PositionalZone.Rear;
 
-            // FFXIV rotation: forward = (sin θ, 0, -cos θ).
-            float ex =  MathF.Sin(bn.Rotation);
-            float ez = -MathF.Cos(bn.Rotation);
+            // FFXIV rotation: forward = (sin θ, 0, cos θ). User-confirmed
+            // at commit b0c0ea7 — the earlier negation produced inverted
+            // zones (yukikaze from rear, gekko from front, kasha
+            // everywhere when the player wasn't exactly on the side).
+            float ex = MathF.Sin(bn.Rotation);
+            float ez = MathF.Cos(bn.Rotation);
             float dx = self.Position.X - bn.Position.X;
             float dz = self.Position.Z - bn.Position.Z;
 

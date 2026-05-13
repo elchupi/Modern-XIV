@@ -99,6 +99,12 @@ public static unsafe class CameraDynamics
     private static extern bool SetCursorPos(int x, int y);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern int ShowCursor(bool bShow);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -597,6 +603,16 @@ public static unsafe class CameraDynamics
         {
             cam->currentHRotation = newH;
             cam->currentVRotation = newV;
+            // Sync UpdateSensitivity's tracker to the final smoothed value
+            // we just wrote. Without this, _sensLastHrot still points at
+            // Sensitivity's raw mid-frame write while cam->H now holds the
+            // lerped value — next frame Sensitivity computes a phantom
+            // delta equal to the lerp gap and amplifies it by mul, which
+            // InputSmoothing then re-lerps. That feedback loop is the
+            // visible per-frame jitter. The engine's RMB-drag accumulates
+            // ON TOP of cam->H, so newH IS the next-frame engine baseline.
+            _sensLastHrot = newH;
+            _sensLastVrot = newV;
         }
 
         _smoothZoomLast = newZoom;
@@ -649,8 +665,16 @@ public static unsafe class CameraDynamics
         // Past all the bail-outs — we're in mouselook. Hide the cursor.
         HideOsCursor();
 
+        // Read cursor from the OS directly, NOT io.MousePos. ImGui populates
+        // io.MousePos from WM_MOUSEMOVE messages — an asynchronous queue that
+        // can lag a frame or more behind SetCursorPos. The next-frame stale
+        // read produces a phantom negative delta equal to the user's last
+        // motion (curPos - center), which we'd apply as rotation OPPOSITE
+        // to user input — the visible per-frame "scale back" jitter.
+        // GetCursorPos returns OS-synchronous cursor state with no race.
         Vector2 curPos;
-        try { curPos = io.MousePos; } catch { return; }
+        if (!GetCursorPos(out POINT pt)) return;
+        curPos = new Vector2(pt.X, pt.Y);
 
         if (!_mouseLookInit)
         {
@@ -693,18 +717,46 @@ public static unsafe class CameraDynamics
             _mouseLookPrevPos = curPos;
         }
 
-        // Recenter cursor for next-frame delta tracking. Sync our tracked
-        // prev-pos to the new center so the next read sees pure user delta
-        // (not the recenter move).
+        // Cursor wrap (not every-frame recenter). The recenter itself
+        // causes visible jitter because the engine's own input pipeline
+        // sees the SetCursorPos jump as a mouse delta and reacts. Only
+        // SetCursorPos when the cursor is about to leave the screen
+        // (rare during normal rotation). When we DO warp, we warp to
+        // the OPPOSITE edge and compensate _mouseLookPrevPos by the
+        // warp distance so the wrap doesn't generate a phantom delta.
         if (noWickyXIV.Config.MouseLookCenterCursor)
         {
             try
             {
                 var vp = ImGui.GetMainViewport();
-                var center = new Vector2(vp.Pos.X + vp.Size.X * 0.5f,
-                                         vp.Pos.Y + vp.Size.Y * 0.5f);
-                if (SetCursorPos((int)center.X, (int)center.Y))
-                    _mouseLookPrevPos = center;
+                const float edgeMargin = 64f;
+                float minX = vp.Pos.X + edgeMargin;
+                float minY = vp.Pos.Y + edgeMargin;
+                float maxX = vp.Pos.X + vp.Size.X - edgeMargin;
+                float maxY = vp.Pos.Y + vp.Size.Y - edgeMargin;
+
+                float warpX = curPos.X;
+                float warpY = curPos.Y;
+                if (curPos.X < minX) warpX = maxX - 1f;
+                else if (curPos.X > maxX) warpX = minX + 1f;
+                if (curPos.Y < minY) warpY = maxY - 1f;
+                else if (curPos.Y > maxY) warpY = minY + 1f;
+
+                bool wrap = warpX != curPos.X || warpY != curPos.Y;
+                if (wrap)
+                {
+                    int wx = (int)warpX;
+                    int wy = (int)warpY;
+                    if (SetCursorPos(wx, wy))
+                    {
+                        // Compensate prev-pos by the warp vector so the
+                        // next frame's delta = (newCursorPos - newPrev)
+                        // reflects only true user motion since the warp.
+                        _mouseLookPrevPos = new Vector2(
+                            _mouseLookPrevPos.X + (wx - curPos.X),
+                            _mouseLookPrevPos.Y + (wy - curPos.Y));
+                    }
+                }
             }
             catch { /* defensive */ }
         }

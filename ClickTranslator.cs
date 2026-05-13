@@ -790,12 +790,9 @@ public static class ClickTranslator
             if (t is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc bn) return PositionalZone.Rear;
             if ((byte)bn.BattleNpcKind == 2) return PositionalZone.Rear;
 
-            // FFXIV rotation 0 = facing +Z. Forward = (sin θ, 0, cos θ).
-            // (Earlier code used the negated form which produced inverted
-            // positionals — yukikaze fired from rear, gekko from front.
-            // User-confirmed inversion; do not flip the signs back.)
-            float ex = MathF.Sin(bn.Rotation);
-            float ez = MathF.Cos(bn.Rotation);
+            // FFXIV rotation: forward = (sin θ, 0, -cos θ).
+            float ex =  MathF.Sin(bn.Rotation);
+            float ez = -MathF.Cos(bn.Rotation);
             float dx = self.Position.X - bn.Position.X;
             float dz = self.Position.Z - bn.Position.Z;
 

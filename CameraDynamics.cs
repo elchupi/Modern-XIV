@@ -1153,14 +1153,6 @@ public static unsafe class CameraDynamics
     // frame — only when the game itself invokes UpdateLookAtHeightOffset.
     private static void UpdatePitchTilt(GameCamera* cam, bool tps, float dt)
     {
-        // No special-casing during preset transitions. PitchTilt's
-        // contribution stays constant (or follows pitch input naturally)
-        // through the lerp window. Earlier "decay to zero over 500 ms"
-        // approach created two visible phases (fast pitch-bias collapse,
-        // then slow position lerp) read by the user as tx → ty
-        // sequencing. With normal operation, the contribution rides on
-        // top of the lerped EffectiveLookAtHeightOffset so the camera
-        // angle moves with the position in lockstep.
         if (noWickyXIV.Config.EnablePitchTilt && tps)
         {
             float pitch = cam->currentVRotation;
@@ -1173,16 +1165,23 @@ public static unsafe class CameraDynamics
             _pitchTiltCurrent = ExpDecay(_pitchTiltCurrent, targetOffset,
                                          noWickyXIV.Config.PitchTiltSmoothRate, dt);
 
-            // Undo previous, apply new — net contribution per frame = current.
+            // Scale by (currentZoom / maxZoom) so the ANGULAR effect of
+            // the lookAtHeightOffset stays constant regardless of zoom.
+            // Without this, zooming in amplifies the apparent pitch
+            // (same world-space offset subtends a larger angle at close
+            // range) → camera arcs on a rail instead of dollying straight.
+            float maxZ = cam->maxZoom;
+            float zoomScale = maxZ > 0.01f ? cam->currentZoom / maxZ : 1f;
+            float scaledOffset = _pitchTiltCurrent * zoomScale;
+
+            // Undo previous, apply new — net contribution per frame = scaled.
             cam->lookAtHeightOffset -= _pitchTiltLastApplied;
-            cam->lookAtHeightOffset += _pitchTiltCurrent;
-            _pitchTiltLastApplied = _pitchTiltCurrent;
+            cam->lookAtHeightOffset += scaledOffset;
+            _pitchTiltLastApplied = scaledOffset;
         }
         else
         {
             // Disabled (or not in TPS): undo any leftover contribution and stop.
-            // This is what guarantees the "camera unsticks" the moment the user
-            // toggles the feature off.
             if (MathF.Abs(_pitchTiltLastApplied) > 0.0001f)
             {
                 cam->lookAtHeightOffset -= _pitchTiltLastApplied;

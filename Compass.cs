@@ -458,14 +458,15 @@ public static unsafe class Compass
         foreach (var f in fates)
         {
             if (f == null) continue;
-            Vector3 wpos = new(f.Position.X, f.Position.Y, f.Position.Z);
             uint icon = (uint)f.IconId;
+            // Skip FATEs without an icon — the previous "draw a yellow
+            // circle as fallback" path made every iconless FATE in the
+            // zone render a circle on the compass once distance gates
+            // were lifted. Better to omit them than spam circles.
+            if (icon == 0) continue;
+            Vector3 wpos = new(f.Position.X, f.Position.Y, f.Position.Z);
             string key = "fate:" + f.FateId;
-            if (icon == 0)
-                DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, 0, null,
-                                  overrideColor: 0xFFFFFF40u);
-            else
-                DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, icon, null);
+            DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, icon, null);
         }
     }
 
@@ -516,14 +517,25 @@ public static unsafe class Compass
                 uint iconId = m.IconId;
                 if (iconId == 0) continue;
 
+                // Skip MarkerType=1 entries — diag confirmed these are
+                // FATE objective pins (icon 60458 at the FATE position),
+                // NOT quest objectives. Letting them through made FATEs
+                // leak onto the compass even when CompassShowFates was
+                // off. DrawFates handles FATEs separately via FateTable
+                // when the toggle is enabled.
+                if (m.MarkerType == 1) continue;
+
                 // Icon ranges in the 71xxx nameplate block:
                 //   71201-71219  MSQ (meteor icon)
                 //   71241-71259  Feature / unlock quest (blue +)
                 //   everything else in 71xxx = side quest
-                //     (yellow !, daily, class, repeatable, etc. — they
-                //      all live in scattered sub-ranges so we lump them
-                //      into one bucket gated by CompassShowSideQuestMarkers)
-                bool isMsq    = iconId >= 71201 && iconId <= 71219;
+                // MSQ icon — user-confirmed via single-icon testing:
+                //   71005  "ready to turn in" marker that appears in
+                //          EventMarkers for the active MSQ at any
+                //          distance, including when the NPC is unloaded
+                //          from ObjectTable.
+                // Other 71xxx ranges fall through to side/unlock buckets.
+                bool isMsq    = iconId == 71005;
                 bool isUnlock = iconId >= 71241 && iconId <= 71259;
                 bool isSide   = iconId >= 71001 && iconId <= 71999 && !isMsq && !isUnlock;
                 if (isMsq    && !cfg.CompassShowMsqMarkers) continue;

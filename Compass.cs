@@ -422,14 +422,11 @@ public static unsafe class Compass
         }
         catch { }
 
-        // Stroke chevron at top-right — same color as tick/center chevron
-        float chevS = 4f;
-        float chevX = x + size * 0.35f;
-        float chevY = center.Y - size * 0.35f;
-        uint chevCol = PackColor(cfg.CompassTickColorR, cfg.CompassTickColorG,
-                                 cfg.CompassTickColorB, cfg.CompassTickColorA * a);
-        dl.AddLine(new Vector2(chevX, chevY + chevS), new Vector2(chevX + chevS, chevY), chevCol, 1.5f);
-        dl.AddLine(new Vector2(chevX + chevS, chevY), new Vector2(chevX + chevS * 2f, chevY + chevS), chevCol, 1.5f);
+        // Altitude indicator at top-right — was previously a hardcoded
+        // UP chevron used purely as target decoration, which read as a
+        // bogus altitude hint. Now driven by real dy so it disappears
+        // when target is at roughly the same elevation.
+        DrawAltitudeArrow(dl, x, center.Y, size, wpos.Y - ppos.Y, a);
     }
 
     private static void DrawParty(ImDrawListPtr dl, Vector2 center, Configuration cfg,
@@ -517,6 +514,7 @@ public static unsafe class Compass
                 var sb = new System.Text.StringBuilder();
                 sb.Append(System.DateTime.Now.ToString("HH:mm:ss.fff")).Append('\n');
                 sb.Append("PlayerPos = (").Append(ppos.X.ToString("F1")).Append(", ")
+                  .Append(ppos.Y.ToString("F2")).Append(", ")
                   .Append(ppos.Z.ToString("F1")).Append(")\n");
                 uint curMap = agent->CurrentMapId;
                 sb.Append("CurrentMapId=").Append(curMap).Append('\n');
@@ -537,9 +535,12 @@ public static unsafe class Compass
                     bool fatePin  = d.MarkerType == 1;
                     string flags  = (wrongMap ? " [wrong-map]" : "")
                                   + (fatePin  ? " [fate-pin]"  : "");
+                    float dyDiag = d.Position.Y - ppos.Y;
                     sb.Append("  [").Append(i).Append("] icon=").Append(ic)
                       .Append(" pos=(").Append(d.Position.X.ToString("F1")).Append(",")
+                      .Append(d.Position.Y.ToString("F2")).Append(",")
                       .Append(d.Position.Z.ToString("F1")).Append(")")
+                      .Append(" dy=").Append(dyDiag.ToString("+0.00;-0.00;0"))
                       .Append(" mtype=").Append(d.MarkerType)
                       .Append(" estate=").Append(d.EventState)
                       .Append(" mapId=").Append(d.MapId)
@@ -562,11 +563,14 @@ public static unsafe class Compass
                         float dx = (float)o.Position.X - ppos.X;
                         float dz = (float)o.Position.Z - ppos.Z;
                         float dist = MathF.Sqrt(dx * dx + dz * dz);
+                        float dyNpc = (float)o.Position.Y - ppos.Y;
                         sb.Append("  npc#").Append(o.GameObjectId)
                           .Append(" name=").Append(o.Name?.TextValue ?? "?")
                           .Append(" icon=").Append(nicon)
                           .Append(" pos=(").Append(o.Position.X.ToString("F1")).Append(",")
+                          .Append(o.Position.Y.ToString("F2")).Append(",")
                           .Append(o.Position.Z.ToString("F1")).Append(")")
+                          .Append(" dy=").Append(dyNpc.ToString("+0.00;-0.00;0"))
                           .Append(" dist=").Append(dist.ToString("F1"))
                           .Append('\n');
                     }
@@ -703,6 +707,7 @@ public static unsafe class Compass
         float size = cfg.CompassIconSize;
         var tl = new Vector2(x - size * 0.5f, center.Y - size * 0.5f);
         var br = new Vector2(x + size * 0.5f, center.Y + size * 0.5f);
+        float dy = wpos.Y - ppos.Y;
 
         if (overrideColor != 0)
         {
@@ -714,6 +719,7 @@ public static unsafe class Compass
                 var p = new Vector2(x - sz.X * 0.5f, center.Y - sz.Y * 0.5f);
                 dl.AddText(p, PackColor(0f, 0f, 0f, a), labelFallback);
             }
+            DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
             return;
         }
 
@@ -725,6 +731,7 @@ public static unsafe class Compass
                 var tex = wrap.GetWrapOrEmpty();
                 uint tint = PackColor(1f, 1f, 1f, a);
                 dl.AddImage(tex.Handle, tl, br, Vector2.Zero, Vector2.One, tint);
+                DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
                 return;
             }
             catch { }
@@ -738,6 +745,45 @@ public static unsafe class Compass
             var sz = ImGui.CalcTextSize(labelFallback);
             var p = new Vector2(x - sz.X * 0.5f, center.Y - sz.Y * 0.5f);
             dl.AddText(p, 0xFF000000u, labelFallback);
+        }
+        DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+    }
+
+    // Up/down chevron when the marker is meaningfully above or below
+    // the player — small thin two-line glyph anchored to the icon's
+    // top-right corner, matching the target-highlight chevron style.
+    // 10y matches FFXIV's native compass. Lower thresholds false-trigger
+    // on flat ground because EventMarker.Position.Y is the floating-icon
+    // anchor above the NPC's head, not the NPC's foot position.
+    private const float AltitudeThreshold = 10f; // yalms
+    private static void DrawAltitudeArrow(ImDrawListPtr dl, float x, float cy,
+                                           float size, float dy, float a)
+    {
+        if (MathF.Abs(dy) < AltitudeThreshold) return;
+
+        float chevS  = 4f;
+        float chevX  = x + size * 0.35f;
+        float chevY  = cy - size * 0.35f;
+        float thick  = 1.5f;
+        uint  col    = PackColor(1f, 1f, 1f, a);
+
+        if (dy > 0f)
+        {
+            // Chevron pointing up (tip on top): /\
+            // Apex sits at (chevX + chevS, chevY); legs splay down-out.
+            dl.AddLine(new Vector2(chevX,             chevY + chevS),
+                       new Vector2(chevX + chevS,     chevY),         col, thick);
+            dl.AddLine(new Vector2(chevX + chevS,     chevY),
+                       new Vector2(chevX + chevS * 2, chevY + chevS), col, thick);
+        }
+        else
+        {
+            // Chevron pointing down (tip on bottom): \/
+            // Apex sits at (chevX + chevS, chevY + chevS); legs splay up-out.
+            dl.AddLine(new Vector2(chevX,             chevY),
+                       new Vector2(chevX + chevS,     chevY + chevS), col, thick);
+            dl.AddLine(new Vector2(chevX + chevS,     chevY + chevS),
+                       new Vector2(chevX + chevS * 2, chevY),         col, thick);
         }
     }
 

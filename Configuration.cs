@@ -1205,7 +1205,11 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float CompassFadeSpeed     = 8f;
     public float CompassIconSize      = 22f;
     public float CompassChevronOffsetY = 0f;
-    public float CompassMaxRangeYalms = 200f;
+    // Effectively "no distance gate" — covers any zone (FFXIV zones top
+    // out well under 5000 yalms). Markers in the same zone always show;
+    // appearance/disappearance is fade-animated by Compass per-marker
+    // state tracking, not by hard distance cutoff.
+    public float CompassMaxRangeYalms = 100000f;
     public float CompassBarColorR     = 0f;
     public float CompassBarColorG     = 0f;
     public float CompassBarColorB     = 0f;

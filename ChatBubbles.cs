@@ -43,6 +43,15 @@ public static class ChatBubbles
         // sender label — we want the conversation's most recent
         // activity reflected in the timestamp, not when it started.
         public DateTime LastMessageAt;
+
+        // Latest map / item link payload captured from any message that
+        // got merged into this bubble. v1 scope: the bubble surfaces ONE
+        // map link and ONE item link — the most recent of each. Click
+        // anywhere on the bubble dispatches them. Multi-link-per-bubble
+        // would require segment-level word-wrap, which we can layer on
+        // later if needed.
+        public Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload MapLink;
+        public Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload    ItemLink;
     }
 
     // Same-sender merge window. Consecutive messages within this many
@@ -303,6 +312,7 @@ public static class ChatBubbles
             var senderText = ExtractSeStringText(message.Sender);
             var bodyText   = ExtractSeStringText(message.Message);
             var senderKey  = ExtractPlayerKey(message.Sender, senderText);
+            var (msgMap, msgItem) = ExtractFirstLinks(message.Message);
 
             // Cache local player name once. The lookup must happen on
             // the framework thread, but we're already in the Update
@@ -344,6 +354,11 @@ public static class ChatBubbles
                         : last.Body + "\n" + bodyText;
                     last.LastMessageT  = now;
                     last.LastMessageAt = DateTime.Now;
+                    // Newest message's link payloads win on merge so the
+                    // bubble's click action reflects the most recent
+                    // content (typical chat behavior).
+                    if (msgMap  != null) last.MapLink  = msgMap;
+                    if (msgItem != null) last.ItemLink = msgItem;
                     return;
                 }
             }
@@ -358,6 +373,8 @@ public static class ChatBubbles
                 ReceivedT     = now,
                 LastMessageT  = now,
                 LastMessageAt = DateTime.Now,
+                MapLink       = msgMap,
+                ItemLink      = msgItem,
             };
             _entries.Add(entry);
             // Cap history.
@@ -567,6 +584,12 @@ public static class ChatBubbles
         // burst doesn't immediately snap back.
         if (_scrollOffsetTarget > maxScroll + 200f)
             _scrollOffsetTarget = maxScroll + 200f;
+
+        // Click-targets for this frame — bubbles that carry a map or item
+        // payload get their rect tracked here. After the draw loop we
+        // hit-test the mouse against them and dispatch on left-click.
+        var clickTargets = new List<(Vector2 min, Vector2 max, Entry entry)>();
+
         for (int i = _entries.Count - 1; i >= 0; i--)
         {
             var e = _entries[i];
@@ -824,6 +847,10 @@ public static class ChatBubbles
             var rectMax = new Vector2(bubbleLeft + bubbleW, bubbleTop + bubbleH);
             dl.AddRectFilled(rectMin, rectMax, fillCol, 8f);
 
+            // Register this bubble as a click target if it carries a link.
+            if (e.MapLink != null || e.ItemLink != null)
+                clickTargets.Add((rectMin, rectMax, e));
+
             // Body text — channel-aware color, body font, line by line.
             var textC = ChannelTextColor(e.Channel, e.FromSelf);
             textC.W *= a;
@@ -887,6 +914,51 @@ public static class ChatBubbles
             }
 
             curY = blockTop - 6f; // 6px gap between bubbles
+        }
+
+        // ---- Bubble click dispatch ----
+        // Hit-test the cursor against each registered click target and
+        // open the link if the user left-clicked. Skipped while FPS
+        // mouselook is active — the OS cursor is hidden and would dispatch
+        // accidentally as it drifts around the screen.
+        if (clickTargets.Count > 0 && !CameraDynamics.IsMouseLookActive)
+        {
+            try
+            {
+                var mp = ImGui.GetIO().MousePos;
+                foreach (var (min, max, entry) in clickTargets)
+                {
+                    if (mp.X < min.X || mp.X >= max.X || mp.Y < min.Y || mp.Y >= max.Y)
+                        continue;
+
+                    // Subtle hover indicator — thin border in the channel
+                    // text color so it's obvious which bubble's link will
+                    // fire. Drawn on the foreground draw list at the same
+                    // rounding as the bubble fill.
+                    var hoverC = ChannelTextColor(entry.Channel, entry.FromSelf);
+                    hoverC.W = 0.85f;
+                    dl.AddRect(min, max, PackRgba(hoverC), 8f, 0, 1.5f);
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+                    if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                    {
+                        try
+                        {
+                            if (entry.MapLink != null)
+                                DalamudApi.GameGui.OpenMapWithMapLink(entry.MapLink);
+                            else if (entry.ItemLink != null)
+                                PrintItemLinkToChat(entry.ItemLink);
+                        }
+                        catch (Exception ex)
+                        {
+                            try { DalamudApi.PluginLog.Warning(
+                                $"[noWickyXIV] ChatBubbles link dispatch failed: {ex.Message}"); } catch { }
+                        }
+                    }
+                    break; // only one bubble at a time
+                }
+            }
+            catch { /* defensive */ }
         }
 
         // No visible scrollbar — wheel scroll is functional via
@@ -1032,6 +1104,76 @@ public static class ChatBubbles
         XivChatType.CrossLinkShell8 => "[CWLS8]",
         _                            => "",
     };
+
+    // Re-emit the clicked item link to the user's chat as a clickable
+    // native link. Dalamud doesn't expose a direct "show item tooltip"
+    // entry point, so the cleanest "make the bubble's item link useful"
+    // path is to echo the link into the standard chat log — from there
+    // the player gets the full native interaction (hover for tooltip,
+    // click for context menu, send to market board, etc.).
+    private static unsafe void PrintItemLinkToChat(
+        Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload payload)
+    {
+        try
+        {
+            // Look up the item name so the link has visible text. Use the
+            // Lumina sheet directly via ItemId (avoids RowRef churn).
+            string name = "Item";
+            try
+            {
+                var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+                var row = sheet?.GetRow(payload.ItemId);
+                if (row.HasValue)
+                {
+                    var n = row.Value.Name.ExtractText();
+                    if (!string.IsNullOrEmpty(n)) name = n;
+                }
+            }
+            catch { }
+
+            // Build the SeString: ItemPayload  TextPayload(name)  end-of-link.
+            var se = new Dalamud.Game.Text.SeStringHandling.SeString(
+                payload,
+                new Dalamud.Game.Text.SeStringHandling.Payloads.UIForegroundPayload(0x0225),
+                new Dalamud.Game.Text.SeStringHandling.Payloads.UIGlowPayload(0x0226),
+                new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload("" + name + ""),
+                Dalamud.Game.Text.SeStringHandling.Payloads.UIGlowPayload.UIGlowOff,
+                Dalamud.Game.Text.SeStringHandling.Payloads.UIForegroundPayload.UIForegroundOff,
+                Dalamud.Game.Text.SeStringHandling.Payloads.RawPayload.LinkTerminator);
+            DalamudApi.ChatGui.Print(new Dalamud.Game.Text.XivChatEntry { Message = se });
+        }
+        catch (Exception ex)
+        {
+            try { DalamudApi.PluginLog.Warning(
+                $"[noWickyXIV] ChatBubbles PrintItemLinkToChat failed: {ex.Message}"); } catch { }
+        }
+    }
+
+    // Extract the FIRST map and item link from a message SeString. Used
+    // to make bubbles clickable — map link click opens the map at the
+    // coordinates; item link click prints the item back to chat via the
+    // game's own SeString so the native item-tooltip handler triggers.
+    private static (Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload map,
+                    Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload   item)
+        ExtractFirstLinks(Dalamud.Game.Text.SeStringHandling.SeString seString)
+    {
+        Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload firstMap = null;
+        Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload    firstItem = null;
+        try
+        {
+            if (seString == null) return (null, null);
+            foreach (var p in seString.Payloads)
+            {
+                if (firstMap == null && p is Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload ml)
+                    firstMap = ml;
+                else if (firstItem == null && p is Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload ip)
+                    firstItem = ip;
+                if (firstMap != null && firstItem != null) break;
+            }
+        }
+        catch { }
+        return (firstMap, firstItem);
+    }
 
     // Stable per-sender identity for the same-sender merge. Walks the
     // sender SeString and returns the FIRST PlayerPayload's PlayerName
@@ -1475,15 +1617,21 @@ public static class ChatBubbles
                 // get the visible text value (resolves item links etc.)
                 string senderText, bodyText, senderKey;
                 Dalamud.Game.Text.SeStringHandling.SeString senderSe = null;
+                Dalamud.Game.Text.SeStringHandling.SeString bodySe   = null;
                 try
                 {
                     senderSe = Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[2]);
                     senderText = ExtractSeStringText(senderSe);
                 }
                 catch { senderText = ""; }
-                try { bodyText   = ExtractSeStringText(Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[3])); }
+                try
+                {
+                    bodySe = Dalamud.Game.Text.SeStringHandling.SeString.Parse(cols[3]);
+                    bodyText = ExtractSeStringText(bodySe);
+                }
                 catch { bodyText = ""; }
                 senderKey = ExtractPlayerKey(senderSe, senderText);
+                var (bfMap, bfItem) = ExtractFirstLinks(bodySe);
                 if (string.IsNullOrEmpty(bodyText)) { skipped++; continue; }
 
                 bool fromSelf = !string.IsNullOrEmpty(selfName)
@@ -1516,6 +1664,8 @@ public static class ChatBubbles
                         last.Body = string.IsNullOrEmpty(last.Body) ? bodyText : last.Body + "\n" + bodyText;
                         last.LastMessageT  = t;
                         last.LastMessageAt = wallClock;
+                        if (bfMap  != null) last.MapLink  = bfMap;
+                        if (bfItem != null) last.ItemLink = bfItem;
                         loaded++;
                         continue;
                     }
@@ -1531,6 +1681,8 @@ public static class ChatBubbles
                     ReceivedT     = t,
                     LastMessageT  = t,
                     LastMessageAt = wallClock,
+                    MapLink       = bfMap,
+                    ItemLink      = bfItem,
                 });
                 loaded++;
             }

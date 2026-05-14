@@ -8,6 +8,7 @@ using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using Hypostasis.Game;
 using GameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
+using AgentMap = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap;
 
 namespace noWickyXIV;
 
@@ -31,6 +32,82 @@ public static unsafe class Compass
     }
 
     private static readonly Dictionary<uint, ISharedImmediateTexture?> _iconCache = new();
+
+    // Per-marker animated state — covers EVERY marker we draw on the
+    // compass (waymarks, party, fates, aetherytes, NPC quest markers).
+    // Keyed by a string namespace + id so the same logical entity keeps
+    // its alpha across frames; fade-in on first sighting, fade-out from
+    // last known position when the marker stops appearing. Eliminates
+    // pop-in/pop-out for all marker classes.
+    private sealed class MarkerState
+    {
+        public float    Alpha;          // 0..1, eased toward 1 while seen, 0 while not
+        public Vector3  LastPos;
+        public uint     IconId;
+        public uint     OverrideColor;
+        public string   LabelFallback;
+    }
+    private static readonly Dictionary<string, MarkerState> _markerStates = new();
+    private static readonly HashSet<string> _markerSeenThisFrame = new();
+    private static float _markerFadeK;   // exp-decay factor cached per frame
+
+    private static void BeginMarkerPass(float dt, Configuration cfg)
+    {
+        float fadeRate = MathF.Max(0.5f, cfg.CompassFadeSpeed);
+        _markerFadeK = 1f - MathF.Exp(-fadeRate * dt);
+        _markerSeenThisFrame.Clear();
+    }
+
+    // Track + fade a marker by key, then defer to DrawIconAtBearing.
+    // Pass-through fields match DrawIconAtBearing exactly; the only
+    // added work is alpha lookup + last-pos record.
+    private static void DrawTrackedMarker(
+        string key,
+        ImDrawListPtr dl, Vector2 center, Configuration cfg,
+        float camYaw, Vector3 ppos, Vector3 wpos,
+        uint iconId, string labelFallback, uint overrideColor = 0)
+    {
+        _markerSeenThisFrame.Add(key);
+        if (!_markerStates.TryGetValue(key, out var ms))
+        {
+            ms = new MarkerState { Alpha = 0f };
+            _markerStates[key] = ms;
+        }
+        ms.LastPos        = wpos;
+        ms.IconId         = iconId;
+        ms.OverrideColor  = overrideColor;
+        ms.LabelFallback  = labelFallback;
+        ms.Alpha         += (1f - ms.Alpha) * _markerFadeK;
+
+        DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId, labelFallback,
+                          overrideColor: overrideColor, alphaMul: ms.Alpha);
+    }
+
+    // After all marker passes have run, draw + fade out any tracked
+    // markers that weren't seen this frame (NPC despawned, fate ended,
+    // party member dropped, etc.). Drop them once they're invisible.
+    private static void EndMarkerPass(ImDrawListPtr dl, Vector2 center, Configuration cfg,
+                                       float camYaw, Vector3 ppos)
+    {
+        if (_markerStates.Count == 0) return;
+        List<string> toRemove = null;
+        foreach (var kv in _markerStates)
+        {
+            if (_markerSeenThisFrame.Contains(kv.Key)) continue;
+            var ms = kv.Value;
+            ms.Alpha += (0f - ms.Alpha) * _markerFadeK;
+            if (ms.Alpha < 0.01f)
+            {
+                (toRemove ??= new List<string>()).Add(kv.Key);
+                continue;
+            }
+            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, ms.LastPos,
+                              ms.IconId, ms.LabelFallback,
+                              overrideColor: ms.OverrideColor, alphaMul: ms.Alpha);
+        }
+        if (toRemove != null)
+            foreach (var k in toRemove) _markerStates.Remove(k);
+    }
 
     public static void Update() { }
 
@@ -92,13 +169,25 @@ public static unsafe class Compass
             // Layer 1: cardinals
             if (cfg.CompassShowCardinals) DrawCardinals(dl, center, cfg, camYaw, bottom);
 
-            // Layer 2: world icons (non-selected only)
+            // Layer 2: world icons (non-selected only). All marker
+            // classes go through DrawTrackedMarker so they fade in on
+            // first appearance and fade out from last known position
+            // when they stop being seen — no pop-in / pop-out anywhere.
+            BeginMarkerPass(dt, cfg);
             if (cfg.CompassShowWaymarks)   DrawWaymarks(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowParty)      DrawParty(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowFates)      DrawFates(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowAetherytes) DrawAetherytes(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowMsqMarkers || cfg.CompassShowSideQuestMarkers || cfg.CompassShowUnlockQuestMarkers)
+            {
+                // Two passes: nearby NPCs (ObjectTable) AND the map agent's
+                // marker list (covers distant quest targets whose NPC isn't
+                // loaded into ObjectTable). DrawTrackedMarker dedupes by key
+                // so a marker present in both sources renders once.
                 DrawNpcMarkers(dl, center, cfg, camYaw, ppos);
+                DrawMapMarkers(dl, center, cfg, camYaw, ppos);
+            }
+            EndMarkerPass(dl, center, cfg, camYaw, ppos);
 
             // Layer 3: target indicators on top of everything (keep drawing during fade-out)
             if (_ftgt.Alpha > 0.01f)
@@ -224,7 +313,8 @@ public static unsafe class Compass
             if (!m.Active) continue;
             Vector3 wpos = new(m.X / 1000f, m.Y / 1000f, m.Z / 1000f);
             uint iconId = (uint)(61241 + i);
-            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId,
+            DrawTrackedMarker("waymark:" + i,
+                              dl, center, cfg, camYaw, ppos, wpos, iconId,
                               labelFallback: i < 4 ? ((char)('A' + i)).ToString()
                                                     : (i - 3).ToString());
         }
@@ -354,7 +444,8 @@ public static unsafe class Compass
             if ((ulong)p.EntityId == selfId) continue;
             var pos = p.Position;
             Vector3 wpos = new(pos.X, pos.Y, pos.Z);
-            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0, "P",
+            DrawTrackedMarker("party:" + p.EntityId,
+                              dl, center, cfg, camYaw, ppos, wpos, 0, "P",
                               overrideColor: 0xFF40FF80u);
         }
     }
@@ -369,11 +460,12 @@ public static unsafe class Compass
             if (f == null) continue;
             Vector3 wpos = new(f.Position.X, f.Position.Y, f.Position.Z);
             uint icon = (uint)f.IconId;
+            string key = "fate:" + f.FateId;
             if (icon == 0)
-                DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, 0, null,
+                DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, 0, null,
                                   overrideColor: 0xFFFFFF40u);
             else
-                DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, icon, null);
+                DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, icon, null);
         }
     }
 
@@ -396,8 +488,58 @@ public static unsafe class Compass
                     icon = 60430u;
             }
             catch { }
-            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, icon, null);
+            DrawTrackedMarker("aether:" + o.GameObjectId,
+                              dl, center, cfg, camYaw, ppos, wpos, icon, null);
         }
+    }
+
+    // Read quest markers from AgentMap.EventMarkers. This is the source
+    // the map UI uses for "event" markers (quest givers, turn-ins,
+    // objectives, leves), independent of whether the NPC is currently
+    // loaded into ObjectTable. ObjectTable-only iteration (DrawNpcMarkers)
+    // misses far-off quest targets because FFXIV streams NPCs in/out
+    // by distance; EventMarkers stays populated as long as the agent
+    // is tracking the quest.
+    private static void DrawMapMarkers(ImDrawListPtr dl, Vector2 center, Configuration cfg,
+                                        float camYaw, Vector3 ppos)
+    {
+        var agent = AgentMap.Instance();
+        if (agent == null) return;
+
+        try
+        {
+            var ev = agent->EventMarkers;
+            int count = ev.Count;
+            for (int i = 0; i < count; i++)
+            {
+                var m = ev[i];
+                uint iconId = m.IconId;
+                if (iconId == 0) continue;
+
+                // Icon ranges in the 71xxx nameplate block:
+                //   71201-71219  MSQ (meteor icon)
+                //   71241-71259  Feature / unlock quest (blue +)
+                //   everything else in 71xxx = side quest
+                //     (yellow !, daily, class, repeatable, etc. — they
+                //      all live in scattered sub-ranges so we lump them
+                //      into one bucket gated by CompassShowSideQuestMarkers)
+                bool isMsq    = iconId >= 71201 && iconId <= 71219;
+                bool isUnlock = iconId >= 71241 && iconId <= 71259;
+                bool isSide   = iconId >= 71001 && iconId <= 71999 && !isMsq && !isUnlock;
+                if (isMsq    && !cfg.CompassShowMsqMarkers) continue;
+                if (isUnlock && !cfg.CompassShowUnlockQuestMarkers) continue;
+                if (isSide   && !cfg.CompassShowSideQuestMarkers) continue;
+                if (!isMsq && !isUnlock && !isSide) continue;
+
+                // MapMarkerData.Position is world-space (X, Y, Z).
+                Vector3 wpos = m.Position;
+                // Stable identity — key by ObjectiveId+iconId so the
+                // marker keeps its fade-in alpha across frames.
+                string key = "em:" + m.ObjectiveId + ":" + iconId;
+                DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, iconId, null);
+            }
+        }
+        catch { /* defensive — AgentMap layout can shift between patches */ }
     }
 
     private static void DrawNpcMarkers(ImDrawListPtr dl, Vector2 center, Configuration cfg,
@@ -418,11 +560,6 @@ public static unsafe class Compass
             if (iconId == 0) continue;
 
             // Quest icon sub-ranges within the 71xxx nameplate block.
-            // Each quest type occupies a 20-wide slot with +0/+1/+2
-            // for available/ongoing/complete states:
-            //   71201-71219  MSQ (meteor icon)
-            //   71221-71239  Yellow side quests
-            //   71241+       Feature/unlock quest (blue +), repeatables, leves, etc.
             bool isMsq    = iconId >= 71201 && iconId <= 71219;
             bool isSideNarrow = iconId >= 71221 && iconId <= 71239;
             bool isUnlock = iconId >= 71001 && iconId <= 71999 && !isMsq && !isSideNarrow;
@@ -432,7 +569,8 @@ public static unsafe class Compass
             if (!isMsq       && !isSideNarrow && !isUnlock) continue;
 
             Vector3 wpos = new(o.Position.X, o.Position.Y, o.Position.Z);
-            DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId, null);
+            DrawTrackedMarker("npc:" + o.GameObjectId,
+                              dl, center, cfg, camYaw, ppos, wpos, iconId, null);
         }
     }
 
@@ -441,7 +579,8 @@ public static unsafe class Compass
     private static void DrawIconAtBearing(ImDrawListPtr dl, Vector2 center, Configuration cfg,
                                            float camYaw, Vector3 ppos, Vector3 wpos,
                                            uint iconId, string? labelFallback,
-                                           uint overrideColor = 0)
+                                           uint overrideColor = 0,
+                                           float alphaMul = 1f)
     {
         float distSq = (wpos.X - ppos.X) * (wpos.X - ppos.X)
                      + (wpos.Z - ppos.Z) * (wpos.Z - ppos.Z);
@@ -453,7 +592,7 @@ public static unsafe class Compass
         rel = DampenProximity(rel, distSq);
         if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return;
 
-        float a = _alpha * edgeAlpha;
+        float a = _alpha * edgeAlpha * alphaMul;
         float size = cfg.CompassIconSize;
         var tl = new Vector2(x - size * 0.5f, center.Y - size * 0.5f);
         var br = new Vector2(x + size * 0.5f, center.Y + size * 0.5f);

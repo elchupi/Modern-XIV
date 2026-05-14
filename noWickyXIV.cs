@@ -38,6 +38,17 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // MountMomentum.Initialize();
         DalamudApi.ClientState.Login += Login;
 
+        // Plugin-reload while already logged in: ClientState.Login won't
+        // fire again, so the Login() handler (which arms the AnimationSwap
+        // race-swap retry loop) would never run and race swaps would
+        // silently no-op until the next /logout. Invoke Login() manually
+        // when we initialize into an already-logged-in session.
+        try
+        {
+            if (DalamudApi.ClientState.IsLoggedIn) Login();
+        }
+        catch { }
+
         // One-shot migration: MouseSensitivityMul values < 0.56 produce
         // jitter/recenter behavior because the delta-replay code fights the
         // game's own per-frame writes. Old saved configs (mine had 0.1) get
@@ -267,6 +278,31 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         // QoL Bar preset. The override carries across sessions so the
         // user doesn't have to re-pick their preset every login.
         PresetManager.RestoreLastActivePreset();
+
+        // Force the active preset's per-preset Dynamics into the live
+        // Configuration so UI checkboxes reflect what the user actually
+        // saved on this preset (e.g. EnableRollTilt, EnableCharacterRoll).
+        // ApplyPreset on login intentionally skips this overwrite, but
+        // the consequence is that the global cfg fields stay at whatever
+        // value happened to be in cfg at last save — which can be a
+        // transient mid-condition-swap value, not the user's intent for
+        // the preset they actually use. The active preset's Dynamics is
+        // the authoritative store, so apply it here once login settles.
+        try
+        {
+            var ap = PresetManager.PresetOverride ?? PresetManager.ActivePreset;
+            if (ap?.Dynamics != null)
+                PresetDynamicsState.ApplyStateToConfig(ap.Dynamics, Config);
+        }
+        catch { }
+
+        // Arm AnimationSwap's race-swap retry loop. Without this, the
+        // first Update() tick can land before the vtable hook has had
+        // a chance to observe a PAP-path resolve (VisualRaceId stays 0)
+        // and the race swap silently registers against the wrong code.
+        // OnLogin clears caches + force-redraws so the hook fires, then
+        // schedules a deferred reapply that retries until ready.
+        try { AnimationSwap.OnLogin(); } catch { }
     }
 
     private static void UpdateDefaultPreset(IFramework framework)

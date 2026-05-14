@@ -518,16 +518,32 @@ public static unsafe class Compass
                 sb.Append(System.DateTime.Now.ToString("HH:mm:ss.fff")).Append('\n');
                 sb.Append("PlayerPos = (").Append(ppos.X.ToString("F1")).Append(", ")
                   .Append(ppos.Z.ToString("F1")).Append(")\n");
+                uint curMap = agent->CurrentMapId;
+                sb.Append("CurrentMapId=").Append(curMap).Append('\n');
                 var evDiag = agent->EventMarkers;
                 sb.Append("EventMarkers count=").Append(evDiag.Count).Append('\n');
                 for (int i = 0; i < evDiag.Count; i++)
                 {
                     var d = evDiag[i];
-                    sb.Append("  [").Append(i).Append("] icon=").Append(d.IconId)
+                    uint ic = d.IconId;
+                    bool dIsMsq    = ic == 71005 || ic == 71201 || ic == 71001 || ic == 71003;
+                    bool dIsUnlock = ic >= 71241 && ic <= 71259;
+                    bool dIsSide   = ic >= 71001 && ic <= 71999 && !dIsMsq && !dIsUnlock;
+                    string clazz = dIsMsq ? "MSQ"
+                                 : dIsUnlock ? "UNLOCK"
+                                 : dIsSide   ? "SIDE"
+                                 : "UNCLASSIFIED";
+                    bool wrongMap = d.MapId != 0 && d.MapId != curMap;
+                    bool fatePin  = d.MarkerType == 1;
+                    string flags  = (wrongMap ? " [wrong-map]" : "")
+                                  + (fatePin  ? " [fate-pin]"  : "");
+                    sb.Append("  [").Append(i).Append("] icon=").Append(ic)
                       .Append(" pos=(").Append(d.Position.X.ToString("F1")).Append(",")
                       .Append(d.Position.Z.ToString("F1")).Append(")")
                       .Append(" mtype=").Append(d.MarkerType)
                       .Append(" estate=").Append(d.EventState)
+                      .Append(" mapId=").Append(d.MapId)
+                      .Append(" -> ").Append(clazz).Append(flags)
                       .Append('\n');
                 }
                 var ot = DalamudApi.ObjectTable;
@@ -597,9 +613,13 @@ public static unsafe class Compass
                 //   71201  comet icon on NPC nameplate (close range).
                 //   71001  EventMarker variant for far-range MSQ —
                 //          testing this run.
+                // 71003 — MSQ "next step" pointer for an in-progress
+                // quest (directional marker to the next objective; not
+                // the green turn-in icon).
                 bool isMsq    = iconId == 71005
                              || iconId == 71201
-                             || iconId == 71001;
+                             || iconId == 71001
+                             || iconId == 71003;
                 bool isUnlock = iconId >= 71241 && iconId <= 71259;
                 bool isSide   = iconId >= 71001 && iconId <= 71999 && !isMsq && !isUnlock;
                 if (isMsq    && !cfg.CompassShowMsqMarkers) continue;

@@ -1075,7 +1075,34 @@ public static unsafe class AnimationSwap
         {
             Interlocked.Increment(ref TotalHookCalls);
 
+            // _localPlayerDrawObj is set at the top of Update() from
+            // go->DrawObject, but during ProcessRedraw's EnableDraw the
+            // game tears down the old DrawObject and constructs a new
+            // one — pap resolves for the new pointer fire synchronously
+            // before Update() runs again to refresh the cache. Re-read
+            // the current DrawObject here so a fresh redraw doesn't lose
+            // the very PAP events that populate VisualRaceId on plugin
+            // reload (when the character was already drawn before our
+            // hook came up). Accept either pointer to stay robust.
             bool isLocalPlayer = drawObject == _localPlayerDrawObj;
+            if (!isLocalPlayer)
+            {
+                try
+                {
+                    var lpRef = DalamudApi.ObjectTable.LocalPlayer;
+                    if (lpRef != null)
+                    {
+                        var goRef = (GameObject*)lpRef.Address;
+                        if (goRef != null && goRef->DrawObject != null
+                            && drawObject == (nint)goRef->DrawObject)
+                        {
+                            isLocalPlayer = true;
+                            _localPlayerDrawObj = drawObject;
+                        }
+                    }
+                }
+                catch { }
+            }
 
             // Log for diagnostics.
             if (_diagPapLog.Count < 200)

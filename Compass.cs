@@ -501,6 +501,7 @@ public static unsafe class Compass
     // misses far-off quest targets because FFXIV streams NPCs in/out
     // by distance; EventMarkers stays populated as long as the agent
     // is tracking the quest.
+    private static double _lastMarkerDumpT;
     private static void DrawMapMarkers(ImDrawListPtr dl, Vector2 center, Configuration cfg,
                                         float camYaw, Vector3 ppos)
     {
@@ -509,6 +510,67 @@ public static unsafe class Compass
 
         try
         {
+            double now = System.DateTime.UtcNow.Ticks / (double)System.TimeSpan.TicksPerSecond;
+            if (now - _lastMarkerDumpT > 2.0)
+            {
+                _lastMarkerDumpT = now;
+                var sb = new System.Text.StringBuilder();
+                sb.Append(System.DateTime.Now.ToString("HH:mm:ss.fff")).Append('\n');
+                sb.Append("PlayerPos = (").Append(ppos.X.ToString("F1")).Append(", ")
+                  .Append(ppos.Z.ToString("F1")).Append(")\n");
+                var evDiag = agent->EventMarkers;
+                sb.Append("EventMarkers count=").Append(evDiag.Count).Append('\n');
+                for (int i = 0; i < evDiag.Count; i++)
+                {
+                    var d = evDiag[i];
+                    sb.Append("  [").Append(i).Append("] icon=").Append(d.IconId)
+                      .Append(" pos=(").Append(d.Position.X.ToString("F1")).Append(",")
+                      .Append(d.Position.Z.ToString("F1")).Append(")")
+                      .Append(" mtype=").Append(d.MarkerType)
+                      .Append(" estate=").Append(d.EventState)
+                      .Append('\n');
+                }
+                var ot = DalamudApi.ObjectTable;
+                if (ot != null)
+                {
+                    sb.Append("=== Nearby NPC nameplate icons ===\n");
+                    foreach (var o in ot)
+                    {
+                        if (o == null) continue;
+                        if (o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc
+                         && o.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc) continue;
+                        var gop = (GameObject*)o.Address;
+                        if (gop == null) continue;
+                        uint nicon = gop->NamePlateIconId;
+                        if (nicon == 0) continue;
+                        float dx = (float)o.Position.X - ppos.X;
+                        float dz = (float)o.Position.Z - ppos.Z;
+                        float dist = MathF.Sqrt(dx * dx + dz * dz);
+                        sb.Append("  npc#").Append(o.GameObjectId)
+                          .Append(" name=").Append(o.Name?.TextValue ?? "?")
+                          .Append(" icon=").Append(nicon)
+                          .Append(" pos=(").Append(o.Position.X.ToString("F1")).Append(",")
+                          .Append(o.Position.Z.ToString("F1")).Append(")")
+                          .Append(" dist=").Append(dist.ToString("F1"))
+                          .Append('\n');
+                    }
+                }
+                string path = System.IO.Path.Combine(
+                    System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop),
+                    "compass_markers.txt");
+                System.IO.File.WriteAllText(path, sb.ToString());
+            }
+        }
+        catch { }
+
+        try
+        {
+            // Filter to the current map only — EventMarkers can hold
+            // entries for distant maps you've been to recently, and
+            // without this gate the compass would surface (and never
+            // fade) MSQ markers for the wrong zone.
+            uint currentMapId = agent->CurrentMapId;
+
             var ev = agent->EventMarkers;
             int count = ev.Count;
             for (int i = 0; i < count; i++)
@@ -516,6 +578,7 @@ public static unsafe class Compass
                 var m = ev[i];
                 uint iconId = m.IconId;
                 if (iconId == 0) continue;
+                if (m.MapId != 0 && m.MapId != currentMapId) continue;
 
                 // Skip MarkerType=1 entries — diag confirmed these are
                 // FATE objective pins (icon 60458 at the FATE position),
@@ -529,13 +592,14 @@ public static unsafe class Compass
                 //   71201-71219  MSQ (meteor icon)
                 //   71241-71259  Feature / unlock quest (blue +)
                 //   everything else in 71xxx = side quest
-                // MSQ icon — user-confirmed via single-icon testing:
-                //   71005  "ready to turn in" marker that appears in
-                //          EventMarkers for the active MSQ at any
-                //          distance, including when the NPC is unloaded
-                //          from ObjectTable.
-                // Other 71xxx ranges fall through to side/unlock buckets.
-                bool isMsq    = iconId == 71005;
+                // MSQ icons under test:
+                //   71005  "ready to turn in" — confirmed.
+                //   71201  comet icon on NPC nameplate (close range).
+                //   71001  EventMarker variant for far-range MSQ —
+                //          testing this run.
+                bool isMsq    = iconId == 71005
+                             || iconId == 71201
+                             || iconId == 71001;
                 bool isUnlock = iconId >= 71241 && iconId <= 71259;
                 bool isSide   = iconId >= 71001 && iconId <= 71999 && !isMsq && !isUnlock;
                 if (isMsq    && !cfg.CompassShowMsqMarkers) continue;
@@ -547,7 +611,14 @@ public static unsafe class Compass
                 Vector3 wpos = m.Position;
                 // Stable identity — key by ObjectiveId+iconId so the
                 // marker keeps its fade-in alpha across frames.
-                string key = "em:" + m.ObjectiveId + ":" + iconId;
+                // Position-based key so a marker that's in BOTH sources
+                // (NPC nameplate via ObjectTable + EventMarker for the
+                // same quest, common at the boundary of NPC streaming
+                // distance) collapses onto a single tracked state — no
+                // visible duplicate or fade-in/fade-out doubling.
+                // Round to ~5-yalm cell so tiny position diffs between
+                // the NPC and its EventMarker (e.g. 0.1 yalm) match.
+                string key = "q:" + ((int)(wpos.X / 5f)) + "_" + ((int)(wpos.Z / 5f));
                 DrawTrackedMarker(key, dl, center, cfg, camYaw, ppos, wpos, iconId, null);
             }
         }
@@ -581,7 +652,11 @@ public static unsafe class Compass
             if (!isMsq       && !isSideNarrow && !isUnlock) continue;
 
             Vector3 wpos = new(o.Position.X, o.Position.Y, o.Position.Z);
-            DrawTrackedMarker("npc:" + o.GameObjectId,
+            // Same position-based key DrawMapMarkers uses, so a quest
+            // whose NPC streams in/out of ObjectTable doesn't briefly
+            // double-render (one entry from NPC nameplate, another from
+            // EventMarker). Shared key = single tracked state.
+            DrawTrackedMarker("q:" + ((int)(wpos.X / 5f)) + "_" + ((int)(wpos.Z / 5f)),
                               dl, center, cfg, camYaw, ppos, wpos, iconId, null);
         }
     }

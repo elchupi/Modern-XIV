@@ -980,17 +980,24 @@ public static unsafe class AnimationSwap
             if (!rule.Enabled) continue;
             if (rule.TerritoryId != 0 && rule.TerritoryId != currentTerritory) continue;
             if (rule.SourceRace != 0 && rule.SourceRace != matchRace) continue;
-            if (rule.TargetRace == 0) continue;
-            // Same race is only valid when opposite gender is on — the
-            // sex difference produces a different model code.
-            if (rule.TargetRace == matchRace && !rule.UseFemaleAnims) continue;
+
+            // TargetRace == 0 ("Any") means "stay on my race". The only
+            // useful case there is a pure gender swap; without opposite
+            // gender it's a no-op (src == tgt). With opposite gender we
+            // resolve the target as matchRace + flipped sex.
+            byte effectiveTargetRace = rule.TargetRace != 0 ? rule.TargetRace : matchRace;
+            if (rule.TargetRace == 0 && !rule.UseFemaleAnims) continue;
+
+            // Same race + same gender produces an identical model code,
+            // which is a no-op swap.
+            if (effectiveTargetRace == matchRace && !rule.UseFemaleAnims) continue;
 
             byte srcTribe = GetDefaultTribe(matchRace);
             srcCode = GetModelCode(matchRace, matchSex, srcTribe);
 
-            byte tgtTribe = GetDefaultTribe(rule.TargetRace);
+            byte tgtTribe = GetDefaultTribe(effectiveTargetRace);
             byte tgtSex = rule.UseFemaleAnims ? (byte)(matchSex == 0 ? 1 : 0) : matchSex;
-            tgtCode = GetModelCode(rule.TargetRace, tgtSex, tgtTribe);
+            tgtCode = GetModelCode(effectiveTargetRace, tgtSex, tgtTribe);
 
             _anySwapActive = true;
             break;
@@ -1261,8 +1268,9 @@ public static unsafe class AnimationSwap
             {
                 var r = noWickyXIV.Config.AnimationSwapRules[i];
                 bool srcMatch = r.SourceRace == 0 || r.SourceRace == matchRace;
-                bool tgtValid = r.TargetRace != 0
-                    && (r.TargetRace != matchRace || r.UseFemaleAnims);
+                byte effTgt = r.TargetRace != 0 ? r.TargetRace : matchRace;
+                bool tgtValid = (r.TargetRace != 0 || r.UseFemaleAnims)
+                    && (effTgt != matchRace || r.UseFemaleAnims);
                 sb.AppendLine($"  [{i}] Enabled={r.Enabled} Src={r.SourceRace}({LookupRaceName(r.SourceRace)}) " +
                               $"Tgt={r.TargetRace}({LookupRaceName(r.TargetRace)}) " +
                               $"OppGender={r.UseFemaleAnims}");

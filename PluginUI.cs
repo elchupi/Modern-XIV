@@ -3150,14 +3150,17 @@ public static class PluginUI
                 }
 
                 // Target race (whose animations to USE).
+                // "Any" is allowed: paired with Opposite Gender it means
+                // "use my own race's opposite-gender animations" — saves
+                // the user from picking their own race to gender-swap.
                 ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
                 if (ImGui.BeginCombo("Use Anims From", tgtName))
                 {
                     EnsureRaceCache();
                     foreach (var (id, name) in _raceCache)
                     {
-                        if (id == 0) continue; // "Any" doesn't make sense as target
-                        if (ImGui.Selectable(name, rule.TargetRace == id))
+                        string label = id == 0 ? "Any (use my race)" : name;
+                        if (ImGui.Selectable(label, rule.TargetRace == id))
                         {
                             rule.TargetRace = id;
                             noWickyXIV.Config.Save();

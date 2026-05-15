@@ -99,11 +99,11 @@ public static class QuickMenu
         float dt    = io.DeltaTime;
         float scale = ImGuiHelpers.GlobalScale;
 
-        float iconBox    = ICON_BOX     * scale;
-        float iconGap    = ICON_GAP     * scale;
+        float iconBox    = noWickyXIV.Config.QuickMenuIconSize * scale;
+        float iconGap    = noWickyXIV.Config.QuickMenuIconGap  * scale;
         float iconIns    = ICON_INSET   * scale;
-        float padX       = PAD_X        * scale;
-        float padY       = PAD_Y        * scale;
+        float padX       = noWickyXIV.Config.QuickMenuPadX     * scale;
+        float padY       = noWickyXIV.Config.QuickMenuPadY     * scale;
         float rounding   = ROUNDING     * scale;
         float border     = BORDER       * scale;
         float stripH     = HIT_STRIP_H  * scale;
@@ -116,44 +116,69 @@ public static class QuickMenu
         float panelW = padX * 2f + n * iconBox + (n - 1) * iconGap;
         float panelH = padY * 2f + iconBox;
 
-        float panelRight = disp.X - marginX;
-        float panelLeft  = panelRight - panelW;
+        // Corner anchor: offsets pulled from config so the user can
+        // place the launcher in any screen corner. Slide direction is
+        // implicit from the chosen vertical edge — top corners drop
+        // in, bottom corners rise.
+        var corner = noWickyXIV.Config.QuickMenuCorner;
+        marginX = noWickyXIV.Config.QuickMenuOffsetX * scale;
+        marginY = noWickyXIV.Config.QuickMenuOffsetY * scale;
+        bool atRight  = corner == ScreenCorner.TopRight    || corner == ScreenCorner.BottomRight;
+        bool atBottom = corner == ScreenCorner.BottomLeft  || corner == ScreenCorner.BottomRight
+                     || corner == ScreenCorner.BottomCenter;
+        bool atCenter = corner == ScreenCorner.TopCenter   || corner == ScreenCorner.BottomCenter;
+        bool atTop    = corner == ScreenCorner.TopLeft     || corner == ScreenCorner.TopRight
+                     || corner == ScreenCorner.TopCenter;
 
-        float restingTop = disp.Y - marginY - panelH;
-        float hiddenTop  = disp.Y;
+        float panelLeft;
+        if (atCenter)
+            panelLeft = (disp.X - panelW) * 0.5f + marginX;
+        else if (atRight)
+            panelLeft = disp.X - marginX - panelW;
+        else
+            panelLeft = marginX;
+        float panelRight = panelLeft + panelW;
+
+        float restingTop = atBottom
+            ? (disp.Y - marginY - panelH)
+            : marginY;
+        float hiddenTop  = atBottom ? disp.Y : -panelH;
         float panelTop   = hiddenTop + (restingTop - hiddenTop) * _revealT;
         float panelBot   = panelTop + panelH;
 
-        // Hit area: extends from above the RESTING panel top (not the
-        // current animated top) down to the screen bottom, and a bit
-        // wider than the panel itself. This keeps the cursor inside
-        // the hover region even when it travels faster than the slide
-        // animation — otherwise overshooting the panel mid-slide drops
-        // the hover and the pill snaps closed before the user can
-        // reach an icon. When the panel is fully hidden, the hit area
-        // shrinks back to a thin strip at the bottom-right corner so
-        // it doesn't block clicks in that screen region all the time.
-        float hitTop;
-        if (_revealT <= 0f)
+        float hitTop, hitBot;
+        if (atBottom)
         {
-            // Fully hidden — just the bottom-right corner strip.
-            hitTop = disp.Y - stripH;
+            hitTop = _revealT <= 0f ? disp.Y - stripH : restingTop - hitPadTop;
+            hitBot = disp.Y;
         }
         else
         {
-            // Any non-zero reveal expands the hit area to cover the
-            // full resting panel plus tolerance, regardless of how
-            // far along the slide animation we are.
-            hitTop = restingTop - hitPadTop;
+            hitTop = 0f;
+            hitBot = _revealT <= 0f ? stripH : (restingTop + panelH + hitPadTop);
         }
         if (hitTop < 0f) hitTop = 0f;
-        float hitH = disp.Y - hitTop;
+        if (hitBot > disp.Y) hitBot = disp.Y;
+        float hitH = MathF.Max(1f, hitBot - hitTop);
 
-        float hitLeft  = _revealT > 0f ? panelLeft - hitPadLeft : panelLeft;
+        float hitLeft, hitRight;
+        if (atCenter)
+        {
+            hitLeft  = _revealT > 0f ? panelLeft - hitPadLeft : panelLeft;
+            hitRight = _revealT > 0f ? panelRight + hitPadLeft : panelRight;
+        }
+        else if (atRight)
+        {
+            hitLeft  = _revealT > 0f ? panelLeft - hitPadLeft : panelLeft;
+            hitRight = disp.X;
+        }
+        else
+        {
+            hitLeft  = 0f;
+            hitRight = _revealT > 0f ? panelRight + hitPadLeft : panelRight;
+        }
         if (hitLeft < 0f) hitLeft = 0f;
-        // Extend the right edge to the screen edge so cursor at the
-        // very corner of the screen still counts as hovered.
-        float hitRight = disp.X;
+        if (hitRight > disp.X) hitRight = disp.X;
         float hitW = hitRight - hitLeft;
         if (hitW < panelW) hitW = panelW;
 
@@ -192,13 +217,15 @@ public static class QuickMenu
         float alpha = _revealT;
         var dl = ImGui.GetForegroundDrawList();
 
-        uint bgCol = PackRgba(0.08f, 0.08f, 0.12f, 0.92f * alpha);
+        var uiBg = noWickyXIV.Config.UiColorBackground;
+        uint bgCol = PackRgba(uiBg.X, uiBg.Y, uiBg.Z, uiBg.W * alpha);
         dl.AddRectFilled(
             new Vector2(panelLeft, panelTop),
             new Vector2(panelRight, panelBot),
             bgCol, rounding);
 
-        uint borderCol = PackRgba(0.95f, 0.75f, 0.20f, 0.7f * alpha);
+        var uiBord = noWickyXIV.Config.UiColorBorder;
+        uint borderCol = PackRgba(uiBord.X, uiBord.Y, uiBord.Z, uiBord.W * alpha);
         dl.AddRect(
             new Vector2(panelLeft, panelTop),
             new Vector2(panelRight, panelBot),
@@ -218,7 +245,8 @@ public static class QuickMenu
 
             if (iconHover)
             {
-                uint hoverBg = PackRgba(0.95f, 0.75f, 0.20f, 0.22f * alpha);
+                var uiHov = noWickyXIV.Config.UiColorHover;
+                uint hoverBg = PackRgba(uiHov.X, uiHov.Y, uiHov.Z, uiHov.W * 0.26f * alpha);
                 dl.AddRectFilled(
                     new Vector2(boxLeft, boxTop),
                     new Vector2(boxRight, boxBot),
@@ -259,7 +287,8 @@ public static class QuickMenu
                 if (wrap != null)
                 {
                     var tex = wrap.GetWrapOrEmpty();
-                    uint tint = PackRgba(1f, 1f, 1f, alpha);
+                    var uiTxt = noWickyXIV.Config.UiColorText;
+                    uint tint = PackRgba(uiTxt.X, uiTxt.Y, uiTxt.Z, uiTxt.W * alpha);
                     dl.AddImage(tex.Handle, tl, br,
                         Vector2.Zero, Vector2.One, tint);
                     return;
@@ -272,12 +301,14 @@ public static class QuickMenu
         // is still distinguishable.
         Vector2 c = (tl + br) * 0.5f;
         float r = MathF.Min(br.X - tl.X, br.Y - tl.Y) * 0.4f;
-        uint discCol = PackRgba(0.35f, 0.35f, 0.45f, 0.85f * alpha);
+        var uiBg2 = noWickyXIV.Config.UiColorBackground;
+        uint discCol = PackRgba(uiBg2.X + 0.1f, uiBg2.Y + 0.1f, uiBg2.Z + 0.15f, 0.85f * alpha);
         dl.AddCircleFilled(c, r, discCol);
         string lbl = (slot + 1).ToString();
         var sz = ImGui.CalcTextSize(lbl);
+        var uiTxt2 = noWickyXIV.Config.UiColorText;
         dl.AddText(new Vector2(c.X - sz.X * 0.5f, c.Y - sz.Y * 0.5f),
-            PackRgba(1f, 1f, 1f, alpha), lbl);
+            PackRgba(uiTxt2.X, uiTxt2.Y, uiTxt2.Z, uiTxt2.W * alpha), lbl);
     }
 
     private static void TryResolveIconPath(int slot)

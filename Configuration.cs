@@ -1,9 +1,23 @@
 ﻿using System.Collections.Generic;
 using System;
 using System.ComponentModel.DataAnnotations;
+using System.Numerics;
 using Dalamud.Configuration;
 
 namespace noWickyXIV;
+
+// Anchor corner for any floating slide-in/out panel (QuickMenu,
+// teleport menu, etc.). Slide-in direction follows the anchor —
+// bottom corners rise from below, top corners drop from above.
+public enum ScreenCorner
+{
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    TopCenter,
+    BottomCenter,
+}
 
 // One Govee device target for LightSync. Auto-populated from
 // /lightsync devices responses; user can tick which ones participate
@@ -51,6 +65,19 @@ public class PlayerNicknameEntry
     public string PlayerName = "";    // "First Last"
     public string WorldName  = "";    // "Excalibur"
     public string Nickname   = "";    // user-assigned display name
+}
+
+// Named style profile — stores the 5 shared UI overlay colors so the
+// user can switch between saved palettes (e.g. "Dark", "FFXIV Gold",
+// "Pastel"). Applying a preset overwrites the live UiColor* fields.
+public class UiStylePreset
+{
+    public string  Name       = "New Style";
+    public Vector4 Background = new(0.26f, 0.28f, 0.31f, 1.00f);
+    public Vector4 Border     = new(0.14f, 0.12f, 0.12f, 0.53f);
+    public Vector4 Accent     = new(0.24f, 0.90f, 0.46f, 1.00f);
+    public Vector4 Text       = new(1.00f, 1.00f, 1.00f, 1.00f);
+    public Vector4 Hover      = new(0.38f, 0.50f, 0.48f, 0.85f);
 }
 
 // Per-slot custom file path for a specific mount's audio pack.
@@ -1326,9 +1353,71 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public int  TeleportMenuHotkey = 0x4D;  // VirtualKey.M  (Shift+M to open)
     public float TeleportMenuX = -1f;       // Saved window position (-1 = center)
     public float TeleportMenuY = -1f;
+    // Hover-corner anchor for the slide-up teleport menu (overrides
+    // the legacy X/Y drag position when anchored).
+    public ScreenCorner TeleportMenuCorner = ScreenCorner.BottomLeft;
+    public float TeleportMenuOffsetX = 16f; // px from the chosen edge
+    public float TeleportMenuOffsetY = 16f;
     public uint FcHouseAetheryteId = 0;     // Captured via "Set" — 0 = not set
     public byte FcHouseSubIndex    = 0;
     public List<RecentTeleportEntry> RecentTeleports = new();
+
+    // Shared UI profile colors. Every custom overlay (teleport menu,
+    // quick menu, MSQ pill) reads these so the look is consistent.
+    // Defaults sourced from the user's tuned teleport-menu palette.
+    public Vector4 UiColorBackground = new(0.26f, 0.28f, 0.31f, 1.00f);
+    public Vector4 UiColorBorder     = new(0.14f, 0.12f, 0.12f, 0.53f);
+    public Vector4 UiColorAccent     = new(0.24f, 0.90f, 0.46f, 1.00f);
+    public Vector4 UiColorText       = new(1.00f, 1.00f, 1.00f, 1.00f);
+    public Vector4 UiColorHover      = new(0.38f, 0.50f, 0.48f, 0.85f);
+    public List<UiStylePreset> UiStylePresets = new();
+
+    // Teleport menu colors (RGBA, 0..1). Edited via the in-plugin
+    // color picker on the Teleport tab; default values reproduce the
+    // original gold-on-navy theme.
+    public Vector4 TpColorBackground     = new(0.06f, 0.06f, 0.10f, 0.94f);
+    public Vector4 TpColorBorder         = new(0.75f, 0.60f, 0.20f, 0.65f);
+    public Vector4 TpColorTitle          = new(1.00f, 0.85f, 0.35f, 1.00f);
+    public Vector4 TpColorSeparator      = new(1.00f, 1.00f, 1.00f, 0.08f);
+    public Vector4 TpColorSearchBg       = new(0.12f, 0.12f, 0.18f, 0.90f);
+    public Vector4 TpColorSearchBorder   = new(0.50f, 0.40f, 0.15f, 0.40f);
+    public Vector4 TpColorSearchText     = new(1f, 1f, 1f, 1f);
+    public Vector4 TpColorSearchHint     = new(0.50f, 0.50f, 0.55f, 0.70f);
+    public Vector4 TpColorText           = new(1.00f, 1.00f, 1.00f, 1.00f);
+    public Vector4 TpColorFcButton       = new(0.55f, 0.35f, 0.12f, 0.85f);
+    public Vector4 TpColorFcButtonHover  = new(0.70f, 0.45f, 0.18f, 0.90f);
+    public Vector4 TpColorFcButtonActive = new(0.85f, 0.55f, 0.22f, 0.95f);
+    public Vector4 TpColorSecondaryButton       = new(0.20f, 0.20f, 0.28f, 0.85f);
+    public Vector4 TpColorSecondaryButtonHover  = new(0.30f, 0.30f, 0.40f, 0.90f);
+    public Vector4 TpColorSecondaryButtonActive = new(0.40f, 0.40f, 0.55f, 0.95f);
+    public Vector4 TpColorSectionLabel   = new(0.80f, 0.70f, 0.35f, 0.60f);
+    public Vector4 TpColorRegionLabel    = new(0.95f, 0.78f, 0.30f, 1.00f);
+    public Vector4 TpColorRowHover       = new(0.75f, 0.60f, 0.20f, 0.30f);
+    public Vector4 TpColorRowActive      = new(0.75f, 0.60f, 0.20f, 0.45f);
+    public Vector4 TpColorRowNavHighlight = new(0.85f, 0.70f, 0.25f, 0.55f);
+    public Vector4 TpColorCostText       = new(0.70f, 0.70f, 0.60f, 0.70f);
+    public Vector4 TpColorScrollbarBg    = new(0.06f, 0.06f, 0.10f, 0.40f);
+    public Vector4 TpColorScrollbarGrab  = new(0.60f, 0.50f, 0.20f, 0.40f);
+    public Vector4 TpColorScrollbarHover = new(0.80f, 0.65f, 0.25f, 0.60f);
+    public Vector4 TpColorScrollbarActive = new(0.95f, 0.75f, 0.30f, 0.80f);
+    public Vector4 TpColorChevron = new(0.80f, 0.65f, 0.25f, 0.80f);
+    public float   TpFadeSize     = 28f;
+    // Typography. FontSizePx is the actual atlas-rasterized pixel
+    // size — the font is rebuilt when this changes, so glyphs stay
+    // crisp (unlike SetWindowFontScale which bilinear-stretches the
+    // base atlas and looks fuzzy). Weight drives a 1-pixel faux-bold
+    // shadow under the title text; 0 = none, 1 = pronounced.
+    public float TpHeadingFontSizePx = 24f;
+    public float TpBodyFontSizePx = 16f;
+    public float TpSearchFontSizePx = 16f;
+    public float TpFontWeight = 0.0f;
+
+    public float TpWidth       = 420f;
+    public float TpPadTop      = 24f;
+    public float TpPadBottom   = 24f;
+    public float TpPadLeft     = 24f;
+    public float TpPadRight    = 24f;
+    public float TpScrollRightPad = 16f;
 
     // ---- Player nicknames ----
     // Right-click a player to assign a nickname. /t Nickname rewrites
@@ -1347,6 +1436,13 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // Slides up from the bottom-right corner on hover; each row fires
     // a single slash command via the Dalamud command dispatcher.
     public bool  EnableQuickMenu        = true;
+    public ScreenCorner QuickMenuCorner = ScreenCorner.BottomRight;
+    public float QuickMenuOffsetX = 16f;
+    public float QuickMenuOffsetY = 16f;
+    public float QuickMenuIconSize = 36f;
+    public float QuickMenuIconGap = 6f;
+    public float QuickMenuPadX = 10f;
+    public float QuickMenuPadY = 7f;
 
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the

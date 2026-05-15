@@ -174,6 +174,7 @@ public static unsafe class Compass
             // first appearance and fade out from last known position
             // when they stop being seen — no pop-in / pop-out anywhere.
             BeginMarkerPass(dt, cfg);
+            _compassClicks.Clear();
             if (cfg.CompassShowWaymarks)   DrawWaymarks(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowParty)      DrawParty(dl, center, cfg, camYaw, ppos);
             if (cfg.CompassShowFates)      DrawFates(dl, center, cfg, camYaw, ppos);
@@ -194,6 +195,410 @@ public static unsafe class Compass
                 DrawTargetOverlay(dl, center, cfg, camYaw, ppos, ref _ftgt, isFocus: true);
             if (_tgt.Alpha > 0.01f)
                 DrawTargetOverlay(dl, center, cfg, camYaw, ppos, ref _tgt, isFocus: false);
+
+            // Layer 4: click dispatch for accessibility actions (teleport
+            // to aetheryte, target party member). Hover shows a hand
+            // cursor + thin outline; left-click fires the registered
+            // action. Skipped while FPS mouselook hides the OS cursor.
+            DispatchCompassClicks(dl);
+        }
+        catch { }
+    }
+
+    // Per-frame list of clickable compass elements. Each entry carries
+    // its own hover renderer so the visual hover state matches whatever
+    // the underlying marker looks like (icon for aetherytes, colored
+    // circle for party members), plus a stable key used to persist
+    // per-target hover-lerp alpha across frames so the size grow eases
+    // in instead of snapping. Cleared at the start of each marker
+    // pass; populated by DrawParty and DrawAetherytes; consumed by
+    // DispatchCompassClicks at the end of the frame.
+    private static readonly List<(string key, Vector2 rectMin, Vector2 rectMax,
+        Action<ImDrawListPtr, float, float> hoverRender, Action action)>
+        _compassClicks = new();
+
+    // Per-clickable hover-lerp state. Keyed by the same string the
+    // _compassClicks entry uses; lerps toward 1 while hovered, 0
+    // otherwise. Re-rendered into the marker via hoverRender so size
+    // and halo intensity ease in instead of popping.
+    private static readonly Dictionary<string, float> _clickHoverAlpha = new();
+    private static readonly HashSet<string> _clickHoverSeenThisFrame = new();
+    // Tracks the key of the click target currently under the cursor so
+    // we only fire the hover SE once per hover-enter transition,
+    // mirroring how the native UI plays the cursor tick when the
+    // highlight first lands on an element.
+    private static string _clickHoverActiveKey = null;
+
+    // Edge-detected left-click. Foreground drawlist hit targets don't
+    // reliably get MouseDown events through ImGui in Dalamud (the OS
+    // click isn't claimed by any ImGui window), so we poll the OS
+    // directly. VK_LBUTTON = 0x01; high bit set = currently down.
+    private static bool _prevMouseDown;
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out CompassPoint lpPoint);
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct CompassPoint { public int X; public int Y; }
+    private const int CompassVkLButton = 0x01;
+    // True while the cursor is inside a hover hitbox this frame.
+    private static bool _compassHoverState;
+
+
+    // Project a world position onto the compass bar and return the icon
+    // rectangle. Returns false when the marker is outside the FOV cone
+    // or the max range — same gating DrawIconAtBearing uses, so the
+    // click hitbox lines up with what's visible.
+    private static bool TryGetCompassIconRect(
+        Configuration cfg, Vector2 center, float camYaw, Vector3 ppos, Vector3 wpos,
+        out Vector2 rectMin, out Vector2 rectMax)
+    {
+        rectMin = rectMax = default;
+        float distSq = (wpos.X - ppos.X) * (wpos.X - ppos.X)
+                     + (wpos.Z - ppos.Z) * (wpos.Z - ppos.Z);
+        float maxR = cfg.CompassMaxRangeYalms;
+        if (distSq > maxR * maxR) return false;
+
+        float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
+        float rel = BearingToRel(worldBearing, camYaw);
+        rel = DampenProximity(rel, distSq);
+        if (!ProjectToBar(rel, cfg, out float x, out float edgeAlpha)) return false;
+        // Require the marker to be at least dimly visible — keeps the
+        // click hitbox in sync with what the player can actually see.
+        if (edgeAlpha < 0.2f) return false;
+
+        float size = cfg.CompassIconSize;
+        rectMin = new Vector2(x - size * 0.5f, center.Y - size * 0.5f);
+        rectMax = new Vector2(x + size * 0.5f, center.Y + size * 0.5f);
+        return true;
+    }
+
+    private static void DispatchCompassClicks(ImDrawListPtr dl)
+    {
+        // Always update hover alphas (even when count==0) so existing
+        // tracked alphas decay cleanly toward 0 instead of getting
+        // stuck at full when their click target disappears.
+        float dtDispatch;
+        try { dtDispatch = ImGui.GetIO().DeltaTime; } catch { dtDispatch = 0.016f; }
+        if (dtDispatch <= 0f) dtDispatch = 0.016f;
+        float hoverK = 1f - MathF.Exp(-12f * dtDispatch); // ~0.08s settle
+
+        // Edge-detect left mouse against the OS directly — ImGui's IO
+        // doesn't reliably report MouseDown/MousePos in a foreground-
+        // drawlist-only context (Dalamud doesn't route the click to any
+        // ImGui window, so io.MouseDown[0] never flips). Win32 polling
+        // gives us ground truth.
+        bool mouseDownNow = (GetAsyncKeyState(CompassVkLButton) & 0x8000) != 0;
+        Vector2 mp = default;
+        if (GetCursorPos(out var cp)) mp = new Vector2(cp.X, cp.Y);
+        bool clickEdge = mouseDownNow && !_prevMouseDown;
+        _prevMouseDown = mouseDownNow;
+
+        bool dispatchActive = !CameraDynamics.IsMouseLookActive;
+
+        _clickHoverSeenThisFrame.Clear();
+
+        if (_compassClicks.Count == 0)
+        {
+            // Decay any leftover hover alphas.
+            DecayHoverAlphas(hoverK);
+            return;
+        }
+
+        Action pendingAction = null;
+        string newActiveKey = null;
+        foreach (var (key, min, max, hoverRender, action) in _compassClicks)
+        {
+            bool inside = dispatchActive
+                && mp.X >= min.X && mp.X < max.X
+                && mp.Y >= min.Y && mp.Y < max.Y;
+
+            if (!_clickHoverAlpha.TryGetValue(key, out float ha)) ha = 0f;
+            ha += ((inside ? 1f : 0f) - ha) * hoverK;
+            _clickHoverAlpha[key] = ha;
+            _clickHoverSeenThisFrame.Add(key);
+
+            if (ha > 0.01f)
+                try { hoverRender?.Invoke(dl, _alpha, ha); } catch { }
+
+            if (inside && pendingAction == null)
+            {
+                newActiveKey = key;
+                if (clickEdge) pendingAction = action;
+            }
+        }
+
+        // Cursor on hover — edge-only writes. SetCursorType fires
+        // the change-event path (and the cursor-tick SE) every call,
+        // so per-frame calls produce SE spam; direct Type writes
+        // don't update the visual because the game's per-frame
+        // cursor logic clobbers them before render. We only have
+        // clean access at the edge transitions.
+        bool wantHover = newActiveKey != null;
+        if (wantHover != _compassHoverState)
+        {
+            try
+            {
+                var stage = FFXIVClientStructs.FFXIV.Component.GUI.AtkStage.Instance();
+                if (stage != null)
+                {
+                    var t = wantHover
+                        ? FFXIVClientStructs.FFXIV.Component.GUI.AtkCursor.CursorType.Clickable
+                        : FFXIVClientStructs.FFXIV.Component.GUI.AtkCursor.CursorType.Arrow;
+                    stage->AtkCursor.SetCursorType(t, true);
+                }
+            }
+            catch { }
+            _compassHoverState = wantHover;
+        }
+
+        // No explicit hover SE: AtkCursor.SetCursorType already plays
+        // the game's cursor tick on the Arrow→Clickable transition,
+        // and that's the same SE we wanted. _clickHoverActiveKey is
+        // still tracked in case future logic needs hover-enter events.
+        _clickHoverActiveKey = newActiveKey;
+
+        // Drop alphas for keys we didn't see this frame so the
+        // dictionary doesn't grow unbounded as markers stream in/out.
+        List<string> toRemove = null;
+        foreach (var kv in _clickHoverAlpha)
+        {
+            if (_clickHoverSeenThisFrame.Contains(kv.Key)) continue;
+            float ha = kv.Value;
+            ha += (0f - ha) * hoverK;
+            if (ha < 0.01f) (toRemove ??= new List<string>()).Add(kv.Key);
+            else _clickHoverAlpha[kv.Key] = ha;
+        }
+        if (toRemove != null) foreach (var k in toRemove) _clickHoverAlpha.Remove(k);
+
+        if (pendingAction != null)
+        {
+            try
+            {
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+                        "compass_teleport.txt"),
+                    $"{DateTime.Now:HH:mm:ss.fff} dispatch fired (edge detected)\n");
+            }
+            catch { }
+            try { pendingAction(); }
+            catch (Exception ex)
+            {
+                try { DalamudApi.PluginLog.Warning(
+                    $"[noWickyXIV] Compass click action threw: {ex.Message}"); } catch { }
+            }
+        }
+    }
+
+    // Hover SE — uses AtkStage's first AtkUnitBase to call
+    // PlaySoundEffect with the cursor tick sound id (1). Defensive
+    // because addons aren't guaranteed to exist on every frame.
+    private static unsafe void PlayCompassHoverSound()
+    {
+        try
+        {
+            var stage = FFXIVClientStructs.FFXIV.Component.GUI.AtkStage.Instance();
+            if (stage == null) return;
+            var mgr = stage->RaptureAtkUnitManager;
+            if (mgr == null) return;
+            var entries = mgr->AllLoadedUnitsList.Entries;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                var unit = entries[i].Value;
+                if (unit == null) continue;
+                unit->PlaySoundEffect(1);
+                return;
+            }
+        }
+        catch { }
+    }
+
+    private static void DecayHoverAlphas(float lerpK)
+    {
+        List<string> toRemove = null;
+        foreach (var kv in _clickHoverAlpha)
+        {
+            float ha = kv.Value;
+            ha += (0f - ha) * lerpK;
+            if (ha < 0.01f) (toRemove ??= new List<string>()).Add(kv.Key);
+            else _clickHoverAlpha[kv.Key] = ha;
+        }
+        if (toRemove != null) foreach (var rk in toRemove) _clickHoverAlpha.Remove(rk);
+    }
+
+    // Shared "selected" render — scale the icon up to 1.4× and surround
+    // it with the four-direction gold halo from DrawTargetOverlay.
+    // Mirrors what FFXIV's native target highlight looks like on the
+    // map / world view, so hovering a compass element reads as
+    // "selected" identically. `hoverLerp` (0..1) lerps the scale and
+    // halo intensity so the size grow eases in instead of snapping.
+    private static void RenderSelectedHalo(ImDrawListPtr dl, float x, float cy,
+                                            float size, uint iconId,
+                                            string circleLabel, uint circleColor,
+                                            float a, float hoverLerp)
+    {
+        if (hoverLerp <= 0f) return;
+        const float kScaleMax = 1.4f;
+        float kScale = 1f + (kScaleMax - 1f) * hoverLerp;
+        float sz = size * kScale;
+        a *= hoverLerp;
+        var tl = new Vector2(x - sz * 0.5f, cy - sz * 0.5f);
+        var br = new Vector2(x + sz * 0.5f, cy + sz * 0.5f);
+
+        if (iconId != 0)
+        {
+            var wrap = GetIcon(iconId);
+            if (wrap != null)
+            {
+                try
+                {
+                    var tex = wrap.GetWrapOrEmpty();
+                    float gs = 3f * kScale;
+                    for (int pass = 0; pass < 2; pass++)
+                    {
+                        float off = pass == 0 ? gs : gs * 0.5f;
+                        uint pt = PackColor(1f, 1f, 0.7f, a * (pass == 0 ? 0.3f : 0.5f));
+                        dl.AddImage(tex.Handle, tl + new Vector2(-off, 0), br + new Vector2(-off, 0), Vector2.Zero, Vector2.One, pt);
+                        dl.AddImage(tex.Handle, tl + new Vector2(off,  0), br + new Vector2(off,  0), Vector2.Zero, Vector2.One, pt);
+                        dl.AddImage(tex.Handle, tl + new Vector2(0, -off), br + new Vector2(0, -off), Vector2.Zero, Vector2.One, pt);
+                        dl.AddImage(tex.Handle, tl + new Vector2(0,  off), br + new Vector2(0,  off), Vector2.Zero, Vector2.One, pt);
+                    }
+                    uint tint = PackColor(1f, 1f, 1f, a);
+                    dl.AddImage(tex.Handle, tl, br, Vector2.Zero, Vector2.One, tint);
+                    return;
+                }
+                catch { }
+            }
+        }
+
+        // Pill path (party member etc.) — scaled, with halo ring on
+        // top and bottom edges. Width tracks the label so a longer
+        // nickname grows the pill horizontally rather than spilling.
+        float labelPxPill = 10f * kScale;
+        float scalePill = labelPxPill / MathF.Max(1f, ImGui.GetFontSize());
+        Vector2 lszPill = string.IsNullOrEmpty(circleLabel)
+            ? Vector2.Zero
+            : ImGui.CalcTextSize(circleLabel) * scalePill;
+
+        float pillH   = sz * 0.8f;
+        float padX    = 6f * kScale;
+        float pillW   = MathF.Max(pillH, lszPill.X + padX * 2f);
+        float rounding = pillH * 0.5f;
+        var pMin = new Vector2(x - pillW * 0.5f, cy - pillH * 0.5f);
+        var pMax = new Vector2(x + pillW * 0.5f, cy + pillH * 0.5f);
+
+        uint haloCol = PackColor(1f, 1f, 0.7f, a * 0.5f);
+        float haloPad = 3f * kScale;
+        dl.AddRect(pMin - new Vector2(haloPad, haloPad),
+                   pMax + new Vector2(haloPad, haloPad),
+                   haloCol, rounding + haloPad, 0, 2f);
+        dl.AddRect(pMin - new Vector2(haloPad * 0.5f, haloPad * 0.5f),
+                   pMax + new Vector2(haloPad * 0.5f, haloPad * 0.5f),
+                   haloCol, rounding + haloPad * 0.5f, 0, 1.5f);
+        uint baseCol = MultiplyAlpha(circleColor, a);
+        dl.AddRectFilled(pMin, pMax, baseCol, rounding);
+        if (!string.IsNullOrEmpty(circleLabel))
+        {
+            var p = new Vector2(x - lszPill.X * 0.5f, cy - lszPill.Y * 0.5f);
+            dl.AddText(ImGui.GetFont(), labelPxPill, p,
+                       PackColor(0f, 0f, 0f, a), circleLabel);
+        }
+    }
+
+    // Teleport via the existing TeleportMenu pipeline so housing /
+    // FC-house sub-indices, recent-teleport tracking, and the cached
+    // attuned-aetheryte list all get respected — same path the custom
+    // teleport menu uses. Falls through silently if the world aetheryte
+    // isn't in the attuned cache (player hasn't attuned to it yet).
+    // Play the FFXIV menu-confirm click sound on any compass action.
+    // Mirrors the SFX the native UI plays when you click a menu item.
+    // Routed through the first loaded AtkUnitBase (any onscreen addon
+    // is fine; the sound is global once dispatched).
+    private static unsafe void PlayCompassClickSound()
+    {
+        try
+        {
+            var stage = FFXIVClientStructs.FFXIV.Component.GUI.AtkStage.Instance();
+            if (stage == null) return;
+            var mgr = stage->RaptureAtkUnitManager;
+            if (mgr == null) return;
+            var entries = mgr->AllLoadedUnitsList.Entries;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                var unit = entries[i].Value;
+                if (unit == null) continue;
+                unit->PlaySoundEffect(8); // 8 = menu confirm / select
+                return;
+            }
+        }
+        catch { }
+    }
+
+    private static void TeleportToAetheryte(uint aetheryteId)
+    {
+        PlayCompassClickSound();
+        string diagPath = null;
+        try
+        {
+            diagPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+                "compass_teleport.txt");
+        }
+        catch { }
+
+        void Log(string s)
+        {
+            if (diagPath == null) return;
+            try { System.IO.File.AppendAllText(diagPath,
+                $"{DateTime.Now:HH:mm:ss.fff} {s}\n"); } catch { }
+        }
+
+        Log($"click aetheryteId={aetheryteId}");
+
+        try
+        {
+            var list = TeleportMenu.GetList();
+            if (list == null) { Log("GetList() returned null"); return; }
+            Log($"list count={list.Count}");
+
+            // Prefer subIndex 0 (the aetheryte itself); fall back to
+            // whatever entry matches when the cache only lists shards.
+            TeleportMenu.TeleportEntry chosen = null;
+            int matchCount = 0;
+            foreach (var e in list)
+            {
+                if (e.AetheryteId != aetheryteId) continue;
+                matchCount++;
+                if (chosen == null || e.SubIndex == 0) chosen = e;
+                if (e.SubIndex == 0) break;
+            }
+            Log($"matches={matchCount} chosen.SubIndex={(chosen?.SubIndex.ToString() ?? "null")}");
+
+            if (chosen == null) { Log("no match — aetheryte not in attuned cache"); return; }
+            bool ok = TeleportMenu.DoTeleport(chosen);
+            Log($"DoTeleport returned {ok}");
+        }
+        catch (Exception ex)
+        {
+            Log($"threw: {ex.Message}");
+            try { DalamudApi.PluginLog.Warning(
+                $"[noWickyXIV] Compass aetheryte teleport failed: {ex.Message}"); } catch { }
+        }
+    }
+
+    // Set the player's hard target by EntityId — same effect as clicking
+    // the party member in the party list.
+    private static void TargetByEntityId(uint entityId)
+    {
+        try
+        {
+            var go = DalamudApi.ObjectTable?.SearchById(entityId);
+            if (go == null) return;
+            var tm = DalamudApi.TargetManager;
+            if (tm == null) return;
+            tm.Target = go;
         }
         catch { }
     }
@@ -427,6 +832,9 @@ public static unsafe class Compass
         // bogus altitude hint. Now driven by real dy so it disappears
         // when target is at roughly the same elevation.
         DrawAltitudeArrow(dl, x, center.Y, size, wpos.Y - ppos.Y, a);
+        // No distance label here — the underlying world-marker pass
+        // (DrawNpcMarkers / DrawParty / etc.) already draws "Ny" for
+        // this entity, and rendering it twice produces a duplicate.
     }
 
     private static void DrawParty(ImDrawListPtr dl, Vector2 center, Configuration cfg,
@@ -435,15 +843,66 @@ public static unsafe class Compass
         var party = DalamudApi.PartyList;
         if (party == null) return;
         ulong selfId = DalamudApi.ObjectTable?.LocalPlayer?.GameObjectId ?? 0UL;
+        ushort selfTerr = 0;
+        try { selfTerr = (ushort)DalamudApi.ClientState.TerritoryType; } catch { }
         foreach (var p in party)
         {
             if (p == null) continue;
             if ((ulong)p.EntityId == selfId) continue;
+
+            // Skip party members in a different territory — their
+            // Position is stale (last-known coords from when they were
+            // here, or all zeros) and rendering them on the compass is
+            // misleading. Territory.RowId == 0 happens for members
+            // whose data hasn't loaded yet; skip those too.
+            uint memberTerr = 0;
+            try { memberTerr = p.Territory.RowId; } catch { }
+            if (memberTerr == 0 || memberTerr != selfTerr) continue;
+
+            // Label: nickname if assigned, otherwise the first letter
+            // of the player's name. Keeps the marker readable on a
+            // crowded compass without spelling out full names.
+            string fullName = p.Name?.TextValue ?? "";
+            string label = PlayerNicknames.GetNickname(fullName);
+            if (string.IsNullOrEmpty(label))
+                label = string.IsNullOrEmpty(fullName) ? "P" : fullName[..1];
+
             var pos = p.Position;
             Vector3 wpos = new(pos.X, pos.Y, pos.Z);
+            // Cyan party color (R=0, G=255, B=255). PackColor is RGBA.
             DrawTrackedMarker("party:" + p.EntityId,
-                              dl, center, cfg, camYaw, ppos, wpos, 0, "P",
-                              overrideColor: 0xFF40FF80u);
+                              dl, center, cfg, camYaw, ppos, wpos, 0, label,
+                              overrideColor: 0xFFFFFF00u);
+
+            // Clickable: hard-target this party member (same as clicking
+            // their entry in the party list).
+            uint entityId = (uint)p.EntityId;
+            string partyLabel = label;
+            if (TryGetCompassIconRect(cfg, center, camYaw, ppos, wpos,
+                                       out var pMin, out var pMax))
+            {
+                float pCx = (pMin.X + pMax.X) * 0.5f;
+                float pCy = (pMin.Y + pMax.Y) * 0.5f;
+                float pSize = cfg.CompassIconSize;
+                // Extend the hitbox to match the pill width — same
+                // math the renderer uses so the click area covers the
+                // whole nickname, not just the icon center square.
+                float pLabelPx = 10f;
+                float pScale = pLabelPx / MathF.Max(1f, ImGui.GetFontSize());
+                Vector2 pSz = string.IsNullOrEmpty(partyLabel)
+                    ? Vector2.Zero
+                    : ImGui.CalcTextSize(partyLabel) * pScale;
+                float pPillH = pSize * 0.8f;
+                float pPadX  = 6f;
+                float pPillW = MathF.Max(pPillH, pSz.X + pPadX * 2f);
+                pMin = new Vector2(pCx - pPillW * 0.5f, pCy - pPillH * 0.5f);
+                pMax = new Vector2(pCx + pPillW * 0.5f, pCy + pPillH * 0.5f);
+                string pKey = "party:" + p.EntityId;
+                _compassClicks.Add((pKey, pMin, pMax,
+                    (drawList, baseAlpha, hoverLerp) => RenderSelectedHalo(
+                        drawList, pCx, pCy, pSize, 0u, partyLabel, 0xFFFFFF00u, baseAlpha, hoverLerp),
+                    () => TargetByEntityId(entityId)));
+            }
         }
     }
 
@@ -488,6 +947,24 @@ public static unsafe class Compass
             catch { }
             DrawTrackedMarker("aether:" + o.GameObjectId,
                               dl, center, cfg, camYaw, ppos, wpos, icon, null);
+
+            // Clickable: teleport to this aetheryte. BaseId on Aetheryte
+            // GameObjects is the Aetheryte sheet row that Telepo expects.
+            uint aetheryteId = o.BaseId;
+            uint aetheryteIcon = icon;
+            if (aetheryteId != 0u &&
+                TryGetCompassIconRect(cfg, center, camYaw, ppos, wpos,
+                                       out var aMin, out var aMax))
+            {
+                float aCx = (aMin.X + aMax.X) * 0.5f;
+                float aCy = (aMin.Y + aMax.Y) * 0.5f;
+                float aSize = cfg.CompassIconSize;
+                string aKey = "aether:" + o.GameObjectId;
+                _compassClicks.Add((aKey, aMin, aMax,
+                    (drawList, baseAlpha, hoverLerp) => RenderSelectedHalo(
+                        drawList, aCx, aCy, aSize, aetheryteIcon, null, 0u, baseAlpha, hoverLerp),
+                    () => TeleportToAetheryte(aetheryteId)));
+            }
         }
     }
 
@@ -708,18 +1185,38 @@ public static unsafe class Compass
         var tl = new Vector2(x - size * 0.5f, center.Y - size * 0.5f);
         var br = new Vector2(x + size * 0.5f, center.Y + size * 0.5f);
         float dy = wpos.Y - ppos.Y;
+        float dist = MathF.Sqrt(distSq);
 
         if (overrideColor != 0)
         {
+            // Pill-shaped container so a multi-character label
+            // (party-member nickname) gets padded horizontal space
+            // instead of crashing into the edge of a fixed-radius
+            // circle. Falls back to a circle visually when the label
+            // is empty or a single letter — pillW caps at pillH then.
             uint col = MultiplyAlpha(overrideColor, a);
-            dl.AddCircleFilled(new Vector2(x, center.Y), size * 0.4f, col, 24);
+            const float labelPx = 10f;
+            float scale = labelPx / MathF.Max(1f, ImGui.GetFontSize());
+            Vector2 sz = string.IsNullOrEmpty(labelFallback)
+                ? Vector2.Zero
+                : ImGui.CalcTextSize(labelFallback) * scale;
+
+            float pillH = size * 0.8f;
+            float padX  = 6f;
+            float pillW = MathF.Max(pillH, sz.X + padX * 2f);
+            float rounding = pillH * 0.5f;
+            var pMin = new Vector2(x - pillW * 0.5f, center.Y - pillH * 0.5f);
+            var pMax = new Vector2(x + pillW * 0.5f, center.Y + pillH * 0.5f);
+            dl.AddRectFilled(pMin, pMax, col, rounding);
+
             if (!string.IsNullOrEmpty(labelFallback))
             {
-                var sz = ImGui.CalcTextSize(labelFallback);
                 var p = new Vector2(x - sz.X * 0.5f, center.Y - sz.Y * 0.5f);
-                dl.AddText(p, PackColor(0f, 0f, 0f, a), labelFallback);
+                dl.AddText(ImGui.GetFont(), labelPx, p,
+                           PackColor(0f, 0f, 0f, a), labelFallback);
             }
             DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+            DrawDistanceLabel(dl, x, center.Y, size, dist, a);
             return;
         }
 
@@ -732,6 +1229,7 @@ public static unsafe class Compass
                 uint tint = PackColor(1f, 1f, 1f, a);
                 dl.AddImage(tex.Handle, tl, br, Vector2.Zero, Vector2.One, tint);
                 DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+                DrawDistanceLabel(dl, x, center.Y, size, dist, a);
                 return;
             }
             catch { }
@@ -747,25 +1245,68 @@ public static unsafe class Compass
             dl.AddText(p, 0xFF000000u, labelFallback);
         }
         DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+        DrawDistanceLabel(dl, x, center.Y, size, dist, a);
+    }
+
+    // Small distance readout sitting just above the icon. Shows yalms
+    // as an integer with a "y" suffix; centered horizontally on the
+    // icon. Renders with a 1px black drop shadow so it stays legible
+    // against any compass background. Fades through a band so the
+    // label doesn't pop when the player walks onto the marker — it
+    // eases out between 1.5y and 0.5y instead of cutting at 0y.
+    private static void DrawDistanceLabel(ImDrawListPtr dl, float x, float cy,
+                                           float size, float dist, float a)
+    {
+        if (a < 0.05f) return;
+        // Hide the readout for anything ≤30y — close-range markers
+        // are already obvious from the icon position; the number only
+        // adds value at meaningful travel distances. Fade through a
+        // 30–35y band so it eases in/out instead of popping.
+        const float distFadeFull  = 35f;
+        const float distFadeStart = 30f;
+        float t = MathF.Min(1f, MathF.Max(0f,
+            (dist - distFadeStart) / (distFadeFull - distFadeStart)));
+        float distFade = t * t * (3f - 2f * t);
+        if (distFade < 0.02f) return;
+
+        int rounded = (int)MathF.Round(dist);
+        if (rounded <= 30) return; // never display "≤30y"
+        string label = $"{rounded}y";
+        var sz = ImGui.CalcTextSize(label);
+        // 2px gap between text baseline and icon top.
+        float ty = cy - size * 0.5f - sz.Y - 2f;
+        float tx = x - sz.X * 0.5f;
+        float ea = a * distFade;
+        uint shadow = PackColor(0f, 0f, 0f, ea * 0.7f);
+        uint col    = PackColor(1f, 1f, 1f, ea);
+        dl.AddText(new Vector2(tx + 1f, ty + 1f), shadow, label);
+        dl.AddText(new Vector2(tx,      ty),      col,    label);
     }
 
     // Up/down chevron when the marker is meaningfully above or below
     // the player — small thin two-line glyph anchored to the icon's
     // top-right corner, matching the target-highlight chevron style.
-    // 10y matches FFXIV's native compass. Lower thresholds false-trigger
-    // on flat ground because EventMarker.Position.Y is the floating-icon
-    // anchor above the NPC's head, not the NPC's foot position.
-    private const float AltitudeThreshold = 10f; // yalms
+    // 10y matches FFXIV's native compass. We fade through a band around
+    // the threshold (8–14y) instead of snapping so the chevron eases
+    // in/out as the player climbs/descends, rather than popping.
+    private const float AltitudeFadeStart = 8f;  // chevron starts fading in
+    private const float AltitudeFadeFull  = 14f; // fully visible at/above
     private static void DrawAltitudeArrow(ImDrawListPtr dl, float x, float cy,
                                            float size, float dy, float a)
     {
-        if (MathF.Abs(dy) < AltitudeThreshold) return;
+        float adY = MathF.Abs(dy);
+        if (adY < AltitudeFadeStart) return;
+        float t = MathF.Min(1f,
+            (adY - AltitudeFadeStart) / (AltitudeFadeFull - AltitudeFadeStart));
+        // Smoothstep — softer than linear at the edges of the band.
+        float alt = t * t * (3f - 2f * t);
+        if (alt < 0.02f) return;
 
         float chevS  = 4f;
         float chevX  = x + size * 0.35f;
         float chevY  = cy - size * 0.35f;
         float thick  = 1.5f;
-        uint  col    = PackColor(1f, 1f, 1f, a);
+        uint  col    = PackColor(1f, 1f, 1f, a * alt);
 
         if (dy > 0f)
         {
@@ -809,11 +1350,38 @@ public static unsafe class Compass
         float u = MathF.Abs(t);
         float fadeStart = 1f - MathF.Max(0.001f, cfg.CompassEdgeFadePct * 2f);
         if (clamped)
-            edgeAlpha = 0.35f;
+        {
+            // Marker has drifted past the FOV cone — it's pinned at the
+            // nearest edge of the rail but should fade out as it goes
+            // deeper behind the player, then fade back in from the
+            // opposite edge as it returns. Without this the icon hard-
+            // jumps from one rail edge to the other when the bearing
+            // wraps through π, producing the "pop & swap" the user
+            // sees while spinning the camera.
+            float behindT = MathF.Min(1f,
+                (MathF.Abs(rel) - halfFov) / MathF.Max(0.001f, MathF.PI - halfFov));
+            // Smoothstep so the fade eases in/out rather than reading
+            // as a linear ramp.
+            float behindFade = behindT * behindT * (3f - 2f * behindT);
+            edgeAlpha = 0.35f * (1f - behindFade);
+        }
         else if (u < fadeStart)
             edgeAlpha = 1f;
         else
-            edgeAlpha = MathF.Max(0f, 1f - (u - fadeStart) / (1f - fadeStart));
+        {
+            // In-bar edge fade — eases from 1 (at fadeStart) toward
+            // the clamped-edge floor (0.35) when u reaches 1, NOT
+            // toward 0. The clamped branch picks up from 0.35 and
+            // fades further behind the player. Without this floor the
+            // alpha dropped to ~0 right inside the rail edge and then
+            // jumped back up to 0.35 the instant the marker was
+            // clamped, producing the "double draw / re-fade" the user
+            // sees when a marker is sweeping in from past-edge back
+            // onto the rail.
+            const float clampedEdgeAlpha = 0.35f;
+            float t2 = (u - fadeStart) / (1f - fadeStart);
+            edgeAlpha = 1f - t2 * (1f - clampedEdgeAlpha);
+        }
         return edgeAlpha > 0f;
     }
 

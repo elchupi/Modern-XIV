@@ -247,7 +247,8 @@ public static unsafe class MsqTeleport
         var dl = ImGui.GetForegroundDrawList();
 
         // ── Background pill ──
-        uint bgCol = PackRgba(0.08f, 0.08f, 0.12f, 0.92f * alpha);
+        var uiBg = noWickyXIV.Config.UiColorBackground;
+        uint bgCol = PackRgba(uiBg.X, uiBg.Y, uiBg.Z, uiBg.W * alpha);
         dl.AddRectFilled(
             new Vector2(posX, posY),
             new Vector2(posX + pw, posY + ph),
@@ -265,7 +266,8 @@ public static unsafe class MsqTeleport
         {
             borderAlpha = 0.7f * alpha;
         }
-        uint borderCol = PackRgba(0.95f, 0.75f, 0.20f, borderAlpha);
+        var uiAccent = noWickyXIV.Config.UiColorAccent;
+        uint borderCol = PackRgba(uiAccent.X, uiAccent.Y, uiAccent.Z, borderAlpha);
         dl.AddRect(
             new Vector2(posX, posY),
             new Vector2(posX + pw, posY + ph),
@@ -284,7 +286,8 @@ public static unsafe class MsqTeleport
         else
             label = _questName.Length > 0 ? $"MSQ: {_questName}" : "No active MSQ";
 
-        uint textCol = PackRgba(1f, 1f, 1f, alpha);
+        var uiTxt = noWickyXIV.Config.UiColorText;
+        uint textCol = PackRgba(uiTxt.X, uiTxt.Y, uiTxt.Z, uiTxt.W * alpha);
         var textSize = ImGui.CalcTextSize(label);
         float tx = posX + (pw - textSize.X) * 0.5f;
         float ty = posY + (ph - textSize.Y) * 0.5f;
@@ -303,9 +306,9 @@ public static unsafe class MsqTeleport
             float badgeY = posY + ph - badgeH * 0.5f;  // straddles the bottom edge
 
             float badgeAlpha = _newFadeT * alpha;
-            uint badgeBg   = PackRgba(0.85f, 0.30f, 0.10f, 0.95f * badgeAlpha);
-            uint badgeBord = PackRgba(1f, 0.6f, 0.2f, 0.8f * badgeAlpha);
-            uint badgeText = PackRgba(1f, 1f, 1f, badgeAlpha);
+            uint badgeBg   = PackRgba(uiAccent.X * 0.9f, uiAccent.Y * 0.33f, uiAccent.Z * 0.2f, 0.95f * badgeAlpha);
+            uint badgeBord = PackRgba(uiAccent.X, uiAccent.Y * 0.67f, uiAccent.Z * 0.43f, 0.8f * badgeAlpha);
+            uint badgeText = PackRgba(uiTxt.X, uiTxt.Y, uiTxt.Z, uiTxt.W * badgeAlpha);
 
             dl.AddRectFilled(
                 new Vector2(badgeX, badgeY),
@@ -329,11 +332,11 @@ public static unsafe class MsqTeleport
             // Background circle.
             bool homeHover = homeHovered;
             float homeBgA = homeHover ? 0.95f : 0.85f;
-            uint homeBg = PackRgba(0.08f, 0.08f, 0.12f, homeBgA * alpha);
+            uint homeBg = PackRgba(uiBg.X, uiBg.Y, uiBg.Z, homeBgA * alpha);
             dl.AddCircleFilled(new Vector2(cx, cy), r, homeBg, 24);
 
             // Border circle.
-            uint homeBorder = PackRgba(0.95f, 0.75f, 0.20f, 0.7f * alpha);
+            uint homeBorder = PackRgba(uiAccent.X, uiAccent.Y, uiAccent.Z, 0.7f * alpha);
             dl.AddCircle(new Vector2(cx, cy), r, homeBorder, 24, 1.5f * scale);
 
             // House icon — geometric: triangle roof + rectangle body.
@@ -345,7 +348,7 @@ public static unsafe class MsqTeleport
             float bodyBot   = cy + iconScale * 0.75f;
             float bodyHalfW = iconScale * 0.6f;
 
-            uint iconCol = PackRgba(1f, 1f, 1f, alpha);
+            uint iconCol = PackRgba(uiTxt.X, uiTxt.Y, uiTxt.Z, uiTxt.W * alpha);
 
             // Roof triangle.
             dl.AddTriangleFilled(
@@ -363,7 +366,7 @@ public static unsafe class MsqTeleport
             // Door cutout (dark rect in lower center of body).
             float doorHalfW = bodyHalfW * 0.35f;
             float doorTop   = roofBaseY + (bodyBot - roofBaseY) * 0.35f;
-            uint doorCol = PackRgba(0.08f, 0.08f, 0.12f, homeBgA * alpha);
+            uint doorCol = PackRgba(uiBg.X, uiBg.Y, uiBg.Z, homeBgA * alpha);
             dl.AddRectFilled(
                 new Vector2(iconX - doorHalfW, doorTop),
                 new Vector2(iconX + doorHalfW, bodyBot),

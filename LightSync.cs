@@ -1544,10 +1544,7 @@ public static class LightSync
     {
         if (!HasCreds()) return false;
         if (string.IsNullOrEmpty(noWickyXIV.Config.LightSyncDeviceMac))
-        {
-            Print("no device MAC set — run /lightsync devices and set one");
             return false;
-        }
         return true;
     }
 

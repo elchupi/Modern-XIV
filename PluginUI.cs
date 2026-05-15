@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.Utility;
 
 namespace noWickyXIV;
@@ -100,6 +102,38 @@ public static class PluginUI
             {
                 if (ImGui.BeginChild("##misc_scroll"))
                     DrawMiscTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Style"))
+            {
+                if (ImGui.BeginChild("##style_scroll"))
+                    DrawStyleTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Quick Menu"))
+            {
+                if (ImGui.BeginChild("##quickmenu_scroll"))
+                    DrawQuickMenuTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Chat"))
+            {
+                if (ImGui.BeginChild("##chat_scroll"))
+                    DrawChatTab();
+                ImGui.EndChild();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Teleport"))
+            {
+                if (ImGui.BeginChild("##teleport_scroll"))
+                    DrawTeleportTab();
                 ImGui.EndChild();
                 ImGui.EndTabItem();
             }
@@ -1798,41 +1832,6 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Quick menu launcher (bottom-right slide-up pill).
-        if (ImGuiEx.BeginGroupBox("Quick menu (bottom-right launcher)"))
-        {
-            ConfigCheckbox("Enable##QuickMenu", ref noWickyXIV.Config.EnableQuickMenu);
-            ImGui.TextDisabled(
-                "Floating pill at the bottom-right of the screen. Hover\n" +
-                "the corner to slide it up; click an icon to fire its\n" +
-                "slash command. Icons match the ones shown in /xlplugins:\n" +
-                "  Dalamud logo  → /xlplugins\n" +
-                "  this plugin   → /nowickyxiv\n" +
-                "  Glamourer     → /glamourer\n" +
-                "  Penumbra      → /penumbra\n" +
-                "  VFXEditor     → /vfxedit\n" +
-                "Third-party icons download once from each plugin's\n" +
-                "manifest IconUrl and are cached locally.");
-
-            if (ImGui.Button("Re-resolve icons##QuickMenu"))
-                QuickMenu.ReresolveAllIcons();
-            ImGui.SameLine();
-            ImGui.TextDisabled("(use after installing a missing plugin)");
-
-            ImGuiEx.EndGroupBox();
-        }
-
-        // Custom teleport menu — replaces the native Teleport window.
-        if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
-        {
-            ConfigCheckbox("Enable##CustomTeleportMenu", ref noWickyXIV.Config.EnableCustomTeleportMenu);
-            ImGui.TextDisabled(
-                "Replaces the game's native Teleport window with a custom\n" +
-                "searchable list. Includes FC house shortcut, recently\n" +
-                "visited tracking, and region-grouped aetherytes.");
-            ImGuiEx.EndGroupBox();
-        }
-
         // Cutscene letterbox removal.
         if (ImGuiEx.BeginGroupBox("Cutscene letterbox"))
         {
@@ -1984,98 +1983,6 @@ public static class PluginUI
             ImGui.Separator();
             ConfigCheckbox("Hide native chat entirely##ChatHideNative", ref noWickyXIV.Config.ChatHideNative);
             ImGui.TextDisabled("Clears the ChatLog root visibility bit. The input field still works (Enter focuses it natively). Pair with the bubble overlay below.");
-            ImGuiEx.EndGroupBox();
-        }
-
-        // Chat bubbles overlay (v1: read-only).
-        if (ImGuiEx.BeginGroupBox("Chat bubbles overlay (read-only)"))
-        {
-            ConfigCheckbox("Enable##ChatBubbles", ref noWickyXIV.Config.EnableChatBubbles);
-            ImGui.TextDisabled("Renders incoming chat lines as alternating left/right bubbles with the sender label below each one. Sending chat is still done through the native input (Enter).");
-            ConfigSliderFloat("Anchor X (px)##ChatBubbles",  ref noWickyXIV.Config.ChatBubblesX,            0f,    3840f, 960f, "%.0f");
-            ConfigSliderFloat("Anchor Y (px, bottom)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesY,    0f,    2160f, 700f, "%.0f");
-            ConfigSliderFloat("Column width (px)##ChatBubbles",  ref noWickyXIV.Config.ChatBubblesColumnWidth, 200f,  1400f, 700f, "%.0f");
-            ConfigSliderFloat("Bubble max width (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesMaxWidth, 100f, 800f, 360f, "%.0f");
-            ConfigSliderFloat("Max age (s)##ChatBubbles",   ref noWickyXIV.Config.ChatBubblesMaxAgeSeconds,   5f,    300f, 30f, "%.0f");
-            ConfigSliderFloat("Max column height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesMaxColumnHeight, 200f, 2000f, 600f, "%.0f");
-            ImGui.TextDisabled("Caps the visible bubble stack height. Older messages above this band are masked by the soft top-fade gradient and eventually skip drawing.");
-            ConfigSliderFloat("Top-fade height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesTopFadeHeight, 0f, 400f, 100f, "%.0f");
-            ImGui.TextDisabled("Soft gradient band at the top of the column — bubbles whose top edge sits inside it fade toward 0 alpha so old messages disappear gradually.");
-            ConfigSliderFloat("Hover-reveal height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesHoverRevealHeight, 100f, 2160f, 800f, "%.0f");
-            ImGui.TextDisabled("Hovering inside the column rect reveals every buffered message until you mouse out.");
-            ConfigSliderFloat("Hover hold (s)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesHoverHoldSeconds, 0f, 5f, 1.5f, "%.1f");
-            ImGui.Separator();
-            ConfigCheckbox("Show typing indicators (rtyping)##ChatBubbles", ref noWickyXIV.Config.EnableTypingIndicators);
-            ImGui.TextDisabled("When the rtyping plugin is installed and connected, ghost bubbles for currently-typing OTHER players appear at the bottom of the column with smooth fade. Self is excluded — you already see your text in the typing prompt.");
-            ConfigSliderFloat("Typing band height (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesTypingReserveHeight, 0f, 200f, 30f, "%.0f");
-            ImGui.TextDisabled("Reserved bottom band so real bubbles don't shift when the indicator fades in/out.");
-            ImGui.Separator();
-            ConfigCheckbox("Backfill chat history on plugin load##ChatBubbles", ref noWickyXIV.Config.ChatBubblesBackfillOnLoad);
-            ImGui.TextDisabled("Reads RaptureLogModule.LogMessageData on Initialize to seed the buffer with prior messages so the overlay isn't blank. Format is undocumented and may break on patch days — flip off if that happens.");
-            ConfigCheckbox("Show channel tag above bubbles##ChatBubbles", ref noWickyXIV.Config.ChatBubblesShowChannelTag);
-            ImGui.TextDisabled("Renders a small bracketed tag like [PARTY], [FC], [TELL], [LS3] above each bubble in the channel's color. /say is always unmarked since it's the baseline.");
-
-            ImGui.Separator();
-            ConfigCheckbox("Play typing emote##ChatTypingEmote", ref noWickyXIV.Config.EnableTypingEmote);
-            ImGui.TextDisabled("Fires the configured slash command once when the chat input gains focus. Default /tomescroll loops on its own. Set the cancel command to fire something on focus-lost, or leave empty to let movement break the pose naturally.");
-            string cmd = noWickyXIV.Config.ChatTypingEmoteCommand ?? "";
-            if (ImGui.InputText("Emote command##ChatTypingEmote", ref cmd, 64))
-            {
-                noWickyXIV.Config.ChatTypingEmoteCommand = cmd;
-                noWickyXIV.Config.Save();
-            }
-            string cancelCmd = noWickyXIV.Config.ChatTypingEmoteCancelCommand ?? "";
-            if (ImGui.InputText("Cancel command (optional)##ChatTypingEmote", ref cancelCmd, 64))
-            {
-                noWickyXIV.Config.ChatTypingEmoteCancelCommand = cancelCmd;
-                noWickyXIV.Config.Save();
-            }
-            ConfigSliderFloat("Re-fire interval (s)##ChatTypingEmote", ref noWickyXIV.Config.ChatTypingEmoteRetriggerSeconds, 0.5f, 10f, 2.0f, "%.1f");
-            ImGui.TextDisabled("How often the emote re-fires while typing. Restores the loop if it gets interrupted (chat prompt close+reopen, brief movement, engine cancel).");
-            ImGui.TextDisabled("Self bubble color");
-            ConfigSliderFloat("Self R##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfR, 0f, 1f, 0.20f, "%.2f");
-            ConfigSliderFloat("Self G##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfG, 0f, 1f, 0.55f, "%.2f");
-            ConfigSliderFloat("Self B##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfB, 0f, 1f, 0.95f, "%.2f");
-            ConfigSliderFloat("Self alpha##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSelfAlpha, 0f, 1f, 0.85f, "%.2f");
-            ImGui.TextDisabled("Other bubble color");
-            ConfigSliderFloat("Other R##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherR, 0f, 1f, 0.18f, "%.2f");
-            ConfigSliderFloat("Other G##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherG, 0f, 1f, 0.18f, "%.2f");
-            ConfigSliderFloat("Other B##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherB, 0f, 1f, 0.22f, "%.2f");
-            ConfigSliderFloat("Other alpha##ChatBubbles", ref noWickyXIV.Config.ChatBubblesOtherAlpha, 0f, 1f, 0.85f, "%.2f");
-            ImGui.Separator();
-            DrawFontPicker("Font##ChatBubblesFont", ref noWickyXIV.Config.ChatBubblesFontPath);
-            ConfigSliderFloat("Body font size (px)##ChatBubbles",   ref noWickyXIV.Config.ChatBubblesFontSize,       8f, 72f, 16f, "%.0f");
-            ConfigSliderFloat("Sender font size (px)##ChatBubbles", ref noWickyXIV.Config.ChatBubblesSenderFontSize, 6f, 48f, 12f, "%.0f");
-            ImGuiEx.EndGroupBox();
-        }
-
-        // Typing prompt overlay (shown while the engine has chat input focused).
-        if (ImGuiEx.BeginGroupBox("Typing prompt overlay"))
-        {
-            ConfigCheckbox("Enable##ChatPrompt", ref noWickyXIV.Config.EnableChatPrompt);
-            ImGui.TextDisabled("Centered ImGui box that mirrors the engine's chat input buffer while you're typing. Useful when the native chat is hidden.");
-            ConfigSliderFloat("X (center, px)##ChatPrompt", ref noWickyXIV.Config.ChatPromptX, 0f, 3840f, 960f, "%.0f");
-            ConfigSliderFloat("Y (center, px)##ChatPrompt", ref noWickyXIV.Config.ChatPromptY, 0f, 2160f, 540f, "%.0f");
-            ConfigSliderFloat("Width (px)##ChatPrompt",     ref noWickyXIV.Config.ChatPromptWidth,    100f, 1600f, 600f, "%.0f");
-            ConfigSliderFloat("Font size (px)##ChatPrompt", ref noWickyXIV.Config.ChatPromptFontSize,  10f, 96f,  22f,  "%.0f");
-            ImGui.TextDisabled("Background");
-            ConfigSliderFloat("Bg R##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgR, 0f, 1f, 0.05f, "%.2f");
-            ConfigSliderFloat("Bg G##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgG, 0f, 1f, 0.05f, "%.2f");
-            ConfigSliderFloat("Bg B##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgB, 0f, 1f, 0.07f, "%.2f");
-            ConfigSliderFloat("Bg alpha##ChatPrompt", ref noWickyXIV.Config.ChatPromptBgAlpha, 0f, 1f, 0.85f, "%.2f");
-            ImGui.TextDisabled("Text");
-            ConfigSliderFloat("Text R##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextR, 0f, 1f, 1f, "%.2f");
-            ConfigSliderFloat("Text G##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextG, 0f, 1f, 1f, "%.2f");
-            ConfigSliderFloat("Text B##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextB, 0f, 1f, 1f, "%.2f");
-            ConfigSliderFloat("Text alpha##ChatPrompt", ref noWickyXIV.Config.ChatPromptTextAlpha, 0f, 1f, 1f, "%.2f");
-            ImGuiEx.EndGroupBox();
-        }
-
-        // Combat-event diagnostics for verifying NormalHit/CritHit/IncomingDamage bit positions.
-        if (ImGuiEx.BeginGroupBox("Diagnostics"))
-        {
-            ConfigCheckbox("Log combat hit details##CombatDiag", ref noWickyXIV.Config.LogCombatHitDiagnostics);
-            ImGui.TextDisabled("Logs every damage effect entry (type, Param0/Param1, action id, crit/dh decision).\nLeave off in normal play — it spams the log fast.");
             ImGuiEx.EndGroupBox();
         }
 
@@ -3682,6 +3589,18 @@ public static class PluginUI
     private static bool   _tpWasOpen;              // edge-detect open→close
     private static bool   _tpFocusSearch;          // auto-focus search on open
 
+    // Atlas-rebuilt font for the teleport menu. SetWindowFontScale
+    // stretches the base bitmap font and looks blurry at non-1× ratios;
+    // rebuilding the atlas at the configured pixel size keeps glyphs
+    // crisp regardless of the user's chosen size.
+    private static Dalamud.Interface.ManagedFontAtlas.IFontHandle _tpHeadingFont;
+    private static Dalamud.Interface.ManagedFontAtlas.IFontHandle _tpBodyFont;
+    private static Dalamud.Interface.ManagedFontAtlas.IFontHandle _tpSearchFont;
+    private static float _tpHeadingFontLoadedSize = -1f;
+    private static float _tpBodyFontLoadedSize = -1f;
+    private static float _tpSearchFontLoadedSize = -1f;
+    private static readonly HashSet<string> _tpCollapsedRegions = new();
+
     // Keyboard navigation state.
     private static int  _tpNavIdx = -1;            // -1 = no selection (search focused)
     private static bool _tpNavActive;              // true once user presses ↓ (search defocused)
@@ -3689,35 +3608,89 @@ public static class PluginUI
     private static int  _tpDrawNavI;               // per-frame counter incremented during draw
     private static bool _tpNavScrollTo;            // scroll the selected item into view
     private static TeleportMenu.TeleportEntry _tpNavSelectedEntry; // captured during draw for confirm
-    private static bool _tpKeyDownPrev, _tpKeyUpPrev, _tpKeyFPrev, _tpKeyEnterPrev; // edge-detect for raw keys
-    private static string _tpLastSearch = "";       // detect typing → cancel nav
+    private static bool _tpKeyDownPrev, _tpKeyUpPrev, _tpKeyFPrev, _tpKeyEnterPrev;
+    private static float _tpKeyDownHeld, _tpKeyUpHeld;
+    private static float _tpScrollY, _tpScrollMaxY;
+    private static float _tpFadeTop, _tpFadeBot, _tpFadePx;
+    private static readonly Dictionary<int, float> _tpRowHoverT = new();
+    private static string _tpLastSearch = "";
 
     // Layout constants.
-    private const float TP_WIDTH     = 420f;
+    private const float TP_WIDTH_DEFAULT = 420f;
     private const float TP_HEIGHT    = 580f;
     private const float TP_ROUNDING  = 12f;
-    private const float TP_PAD       = 14f;
     private const float TP_BORDER    = 1.5f;
     private const float TP_FADE_RATE = 8f;         // exp-lerp 1/s
+    // Per-side padding + scroll gap come from Config — exposed in
+    // the Teleport tab so the user can tune them without code.
 
     public static void DrawTeleportMenu()
     {
         if (!noWickyXIV.Config.EnableCustomTeleportMenu) return;
 
-        bool wantOpen = TeleportMenu.IsWindowOpen;
+        var cfg = noWickyXIV.Config;
+        var io  = ImGui.GetIO();
+        float dt    = io.DeltaTime;
+        float scale = ImGuiHelpers.GlobalScale;
+        float pw    = cfg.TpWidth * scale;
+        float ph    = TP_HEIGHT * scale;
+        float padT  = cfg.TpPadTop    * scale;
+        float padB  = cfg.TpPadBottom * scale;
+        float padL  = cfg.TpPadLeft   * scale;
+        float padR  = cfg.TpPadRight  * scale;
+        float rounding = TP_ROUNDING * scale;
+        var disp = io.DisplaySize;
 
-        // ── Fade animation ────────────────────────────────────
-        var io = ImGui.GetIO();
-        float dt = io.DeltaTime;
+        // Build (or rebuild on size change) the menu's font handle.
+        EnsureTeleportFont();
+
+        // ── Corner anchor ─────────────────────────────────────
+        var corner = cfg.TeleportMenuCorner;
+        bool atRight  = corner == ScreenCorner.TopRight    || corner == ScreenCorner.BottomRight;
+        bool atBottom = corner == ScreenCorner.BottomLeft  || corner == ScreenCorner.BottomRight;
+        float marginX = cfg.TeleportMenuOffsetX * scale;
+        float marginY = cfg.TeleportMenuOffsetY * scale;
+
+        float restingX = atRight ? (disp.X - marginX - pw) : marginX;
+        float restingY = atBottom ? (disp.Y - marginY - ph) : marginY;
+        float hiddenY  = atBottom ? disp.Y : -ph;
+
+        // ── Hover-trigger hit area ────────────────────────────
+        // Spans the panel footprint plus its margin so cursoring
+        // anywhere from the screen edge up to where the panel rests
+        // counts as a hover. Separate invisible window to avoid
+        // intercepting clicks elsewhere on screen.
+        float hitTop, hitBot;
+        if (atBottom) { hitTop = restingY - 12f * scale; hitBot = disp.Y; }
+        else          { hitTop = 0f;                     hitBot = restingY + ph + 12f * scale; }
+        if (hitTop < 0f) hitTop = 0f;
+        if (hitBot > disp.Y) hitBot = disp.Y;
+
+        float hitLeft  = atRight ? (restingX - 12f * scale) : 0f;
+        float hitRight = atRight ? disp.X                   : (restingX + pw + 12f * scale);
+        if (hitLeft < 0f) hitLeft = 0f;
+        if (hitRight > disp.X) hitRight = disp.X;
+
+        // Raw mouse-pos hit-test. The original implementation used a
+        // second invisible Begin/End for hit detection; nesting two
+        // back-to-back Begin calls around the styled teleport window
+        // turned out to corrupt ImGui's style stack and crash inside
+        // cimgui's PopStyleColor. A raw bounds check works fine.
+        var mp = io.MousePos;
+        bool hovered = mp.X >= hitLeft && mp.X < hitRight
+                    && mp.Y >= hitTop  && mp.Y < hitBot;
+
+        bool toggleOpen = TeleportMenu.IsWindowOpen;
+        bool inCombat = false;
+        try { inCombat = DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]; } catch { }
+        bool wantOpen = (hovered && !inCombat) || toggleOpen;
+
         float target = wantOpen ? 1f : 0f;
         float k = 1f - MathF.Exp(-TP_FADE_RATE * dt);
         _tpFadeT += (target - _tpFadeT) * k;
-
-        // Snap thresholds.
         if (_tpFadeT < 0.01f && !wantOpen) _tpFadeT = 0f;
         if (_tpFadeT > 0.99f && wantOpen)  _tpFadeT = 1f;
 
-        // Edge: just opened → reset search, request focus, reset nav.
         if (wantOpen && !_tpWasOpen)
         {
             _teleportSearch = "";
@@ -3727,34 +3700,20 @@ public static class PluginUI
         }
         _tpWasOpen = wantOpen;
 
-        // Nothing to draw while fully hidden.
         if (_tpFadeT <= 0f) return;
 
         float alpha = _tpFadeT;
-        float scale = ImGuiHelpers.GlobalScale;
-        float pw = TP_WIDTH * scale;
-        float ph = TP_HEIGHT * scale;
-        float pad = TP_PAD * scale;
-        float rounding = TP_ROUNDING * scale;
-
-        // Use saved position if available, otherwise center on screen.
-        var disp = io.DisplaySize;
-        var cfg = noWickyXIV.Config;
-        float posX = cfg.TeleportMenuX >= 0 ? cfg.TeleportMenuX : (disp.X - pw) * 0.5f;
-        float posY = cfg.TeleportMenuY >= 0 ? cfg.TeleportMenuY : (disp.Y - ph) * 0.5f;
-
-        // Slight slide-up on open (pill-style reveal).
-        float slideOffset = (1f - alpha) * 18f * scale;
-
-        // During fade-in, force position (slide animation from saved pos).
-        // Once fully open, let the user drag freely.
+        // Slide AND fade together: position lerps between hidden (off-
+        // screen) and resting along with the alpha. Same exp-lerp t,
+        // so opening and closing move + fade at exactly the same rate.
+        float posX = restingX;
+        float posY = hiddenY + (restingY - hiddenY) * _tpFadeT;
         bool fadingIn = wantOpen && _tpFadeT < 1f;
-        if (fadingIn)
-            ImGui.SetNextWindowPos(new Vector2(posX, posY + slideOffset));
+        ImGui.SetNextWindowPos(new Vector2(posX, posY));
 
         // ── ImGui window (transparent, no decoration) ─────────
-        ImGui.SetNextWindowSize(new Vector2(pw, ph), ImGuiCond.Appearing);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(pad, pad));
+        ImGui.SetNextWindowSize(new Vector2(pw, ph), ImGuiCond.Always);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, rounding);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, new Vector2(1f, 1f));
@@ -3769,18 +3728,19 @@ public static class PluginUI
         ImGui.SetNextWindowBgAlpha(0f);
         ImGui.Begin("##noWickyTeleport", flags);
 
-        // Get actual window position (respects user dragging).
+        // Push the user-size font atlas. Falls back to default when
+        // the build hasn't resolved yet.
+        bool tpFontPushed = false;
+        if (_tpBodyFont != null && _tpBodyFont.Available)
+        {
+            _tpBodyFont.Push();
+            tpFontPushed = true;
+        }
+
+        // Anchored — read back the actual window pos for draw-list math.
         var wp = ImGui.GetWindowPos();
         posX = wp.X;
         posY = wp.Y;
-
-        // Persist position when user drags (only when fully open, not during fade).
-        if (!fadingIn && (cfg.TeleportMenuX != posX || cfg.TeleportMenuY != posY))
-        {
-            cfg.TeleportMenuX = posX;
-            cfg.TeleportMenuY = posY;
-            cfg.SaveDebounced();
-        }
 
         // ── Draw background + border via draw list ────────────
         var dl = ImGui.GetWindowDrawList();
@@ -3788,66 +3748,107 @@ public static class PluginUI
         var max = new Vector2(posX + pw, posY + ph);
 
         // Background.
-        uint bgCol = TpPackRgba(0.06f, 0.06f, 0.10f, 0.94f * alpha);
-        dl.AddRectFilled(min, max, bgCol, rounding);
+        dl.AddRectFilled(min, max, TpCol(cfg.TpColorBackground, alpha), rounding);
 
         // Border.
-        uint borderCol = TpPackRgba(0.75f, 0.60f, 0.20f, 0.65f * alpha);
-        dl.AddRect(min, max, borderCol, rounding, ImDrawFlags.None, TP_BORDER * scale);
+        dl.AddRect(min, max, TpCol(cfg.TpColorBorder, alpha), rounding,
+                   ImDrawFlags.None, TP_BORDER * scale);
 
-        // ── Title bar (centered) ──────────────────────────────
+        // Position content manually (WindowPadding is 0).
+        ImGui.SetCursorPos(new Vector2(padL, padT));
+
+        // ── Title bar — location left, icon buttons right ─────
         {
-            var titleText = "Teleport";
-            var titleW = ImGui.CalcTextSize(titleText).X;
-            ImGui.SetCursorPosX((pw - titleW) * 0.5f);
-            ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(1f, 0.85f, 0.35f, alpha));
-            ImGui.TextUnformatted(titleText);
+            string placeName = GetCurrentPlaceName();
+            bool headPushed = _tpHeadingFont != null && _tpHeadingFont.Available;
+            if (headPushed) _tpHeadingFont.Push();
+
+            ImGui.PushStyleColor(ImGuiCol.Text, TpCol(cfg.TpColorTitle, alpha));
+            ImGui.TextUnformatted(placeName);
             ImGui.PopStyleColor();
+            float titleH = ImGui.GetItemRectSize().Y;
+
+            if (headPushed) _tpHeadingFont.Pop();
+
+            float iconSz = MathF.Max(titleH, 22f * scale);
+            float iconGap = 4f * scale;
+            float iconsX = pw - padR;
+
+            // Share icon (rightmost) — draw list arrow-out-of-box
+            iconsX -= iconSz;
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(iconsX);
+            ImGui.PushStyleColor(ImGuiCol.Button, 0u);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpCol(cfg.TpColorRowHover, alpha));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  TpCol(cfg.TpColorRowActive, alpha));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, Vector2.Zero);
+            bool shareClicked = ImGui.Button("##tpShareIcon", new Vector2(iconSz, iconSz));
+            var shareRect = ImGui.GetItemRectMin();
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(3);
+            {
+                float cx = shareRect.X + iconSz * 0.5f;
+                float cy = shareRect.Y + iconSz * 0.5f;
+                float r = iconSz * 0.28f;
+                uint ic = TpCol(cfg.TpColorTitle, alpha);
+                float t = 1.5f * scale;
+                dl.AddLine(new Vector2(cx - r, cy + r), new Vector2(cx + r, cy - r), ic, t);
+                dl.AddLine(new Vector2(cx + r, cy - r), new Vector2(cx, cy - r), ic, t);
+                dl.AddLine(new Vector2(cx + r, cy - r), new Vector2(cx + r, cy), ic, t);
+            }
+            if (shareClicked) TeleportMenu.ShareCurrentLocation();
+
+            // FC House icon (left of share) — only when set
+            bool hasFc = noWickyXIV.Config.FcHouseAetheryteId != 0;
+            if (hasFc)
+            {
+                iconsX -= iconSz + iconGap;
+                ImGui.SameLine();
+                ImGui.SetCursorPosX(iconsX);
+                ImGui.PushStyleColor(ImGuiCol.Button, 0u);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpCol(cfg.TpColorRowHover, alpha));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive,  TpCol(cfg.TpColorRowActive, alpha));
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f * scale);
+                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, Vector2.Zero);
+                bool fcClicked = ImGui.Button("##tpFcIcon", new Vector2(iconSz, iconSz));
+                var fcRect = ImGui.GetItemRectMin();
+                ImGui.PopStyleVar(2);
+                ImGui.PopStyleColor(3);
+                {
+                    float cx = fcRect.X + iconSz * 0.5f;
+                    float cy = fcRect.Y + iconSz * 0.5f;
+                    float r = iconSz * 0.3f;
+                    uint ic = TpCol(cfg.TpColorTitle, alpha);
+                    float t = 1.5f * scale;
+                    dl.AddTriangle(
+                        new Vector2(cx, cy - r),
+                        new Vector2(cx - r, cy),
+                        new Vector2(cx + r, cy), ic, t);
+                    dl.AddRect(
+                        new Vector2(cx - r * 0.65f, cy),
+                        new Vector2(cx + r * 0.65f, cy + r * 0.7f), ic, 0f, ImDrawFlags.None, t);
+                }
+                if (fcClicked) TeleportMenu.TeleportToFcHouse();
+            }
         }
 
+        ImGui.SetCursorPosX(padL);
         ImGui.Spacing();
-
-        // Thin separator line under title.
-        {
-            float sepY = ImGui.GetCursorScreenPos().Y;
-            uint sepCol = TpPackRgba(1f, 1f, 1f, 0.08f * alpha);
-            dl.AddLine(
-                new Vector2(posX + pad, sepY),
-                new Vector2(posX + pw - pad, sepY),
-                sepCol, 1f * scale);
-            ImGui.Dummy(new Vector2(0, 4f * scale));
-        }
-
-        // ── Search box ────────────────────────────────────────
-        ImGui.PushStyleColor(ImGuiCol.FrameBg, TpPackRgba(0.12f, 0.12f, 0.18f, 0.9f * alpha));
-        ImGui.PushStyleColor(ImGuiCol.Border, TpPackRgba(0.5f, 0.4f, 0.15f, 0.4f * alpha));
-        ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(1f, 1f, 1f, alpha));
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 8f * scale);
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(10f * scale, 6f * scale));
-        ImGui.SetNextItemWidth(pw - pad * 2f);
-
-        if (_tpFocusSearch && !_tpNavActive)
-        {
-            ImGui.SetKeyboardFocusHere();
-            _tpFocusSearch = false;
-        }
-        ImGui.InputTextWithHint("##TpSearch", "Search aetherytes...", ref _teleportSearch, 128);
-        ImGui.PopStyleVar(3);
-        ImGui.PopStyleColor(3);
 
         var filter = _teleportSearch.Trim();
 
-        // ── Keyboard navigation (↑↓ = move, Shift+F = confirm) ──
-        // Uses raw Win32 GetAsyncKeyState with edge-detect because
-        // ImGui.IsKeyPressed is eaten by the active InputText widget.
+        // ── Keyboard navigation (↑↓ with repeat, Shift+F / Enter = confirm) ──
         _tpDrawNavI = 0;
         _tpNavSelectedEntry = null;
 
-        bool downNow = VkDown(0x28); // VK_DOWN
-        bool upNow   = VkDown(0x26); // VK_UP
-        bool fNow    = VkDown(0x46); // VK_F
-        bool enterNow = VkDown(0x0D); // VK_RETURN
+        const float REPEAT_DELAY = 0.35f;
+        const float REPEAT_RATE  = 0.06f;
+
+        bool downNow = VkDown(0x28);
+        bool upNow   = VkDown(0x26);
+        bool fNow    = VkDown(0x46);
+        bool enterNow = VkDown(0x0D);
         bool downEdge = downNow && !_tpKeyDownPrev;
         bool upEdge   = upNow   && !_tpKeyUpPrev;
         bool fEdge    = fNow    && !_tpKeyFPrev;
@@ -3857,15 +3858,39 @@ public static class PluginUI
         _tpKeyFPrev    = fNow;
         _tpKeyEnterPrev = enterNow;
 
+        bool downFire = downEdge;
+        bool upFire   = upEdge;
+        if (downNow && !downEdge)
+        {
+            _tpKeyDownHeld += dt;
+            if (_tpKeyDownHeld >= REPEAT_DELAY)
+            {
+                _tpKeyDownHeld -= REPEAT_RATE;
+                downFire = true;
+            }
+        }
+        else if (!downNow) _tpKeyDownHeld = 0f;
+
+        if (upNow && !upEdge)
+        {
+            _tpKeyUpHeld += dt;
+            if (_tpKeyUpHeld >= REPEAT_DELAY)
+            {
+                _tpKeyUpHeld -= REPEAT_RATE;
+                upFire = true;
+            }
+        }
+        else if (!upNow) _tpKeyUpHeld = 0f;
+
         if (wantOpen)
         {
-            if (downEdge)
+            if (downFire)
             {
                 _tpNavIdx = Math.Min(_tpNavIdx + 1, Math.Max(_tpNavCount - 1, 0));
                 _tpNavActive = true;
                 _tpNavScrollTo = true;
             }
-            if (upEdge)
+            if (upFire)
             {
                 if (_tpNavIdx > 0)
                 {
@@ -3874,14 +3899,11 @@ public static class PluginUI
                 }
                 else if (_tpNavIdx == 0)
                 {
-                    // Up from first item → back to search box.
                     _tpNavIdx = -1;
                     _tpNavActive = false;
                     _tpFocusSearch = true;
                 }
             }
-
-            // Typing in search cancels nav mode (user went back to filtering).
             if (_tpNavActive && _teleportSearch != _tpLastSearch)
             {
                 _tpNavActive = false;
@@ -3891,71 +3913,31 @@ public static class PluginUI
             _tpLastSearch = _teleportSearch;
         }
 
+        // Search bar at the top when top-anchored.
+        if (!atBottom)
+        {
+            ImGui.SetCursorPosX(padL);
+            DrawTpSearchBar(pw, padL, padR, alpha, scale);
+        }
+
         ImGui.Dummy(new Vector2(0, 6f * scale));
 
         // ── Scrollable body ───────────────────────────────────
-        float remainH = (posY + ph - pad) - ImGui.GetCursorScreenPos().Y;
+        float searchRowH = atBottom ? (30f * scale + 6f * scale) : 0f;
+        float remainH = (posY + ph - padB) - ImGui.GetCursorScreenPos().Y - searchRowH;
+        if (remainH < 60f * scale) remainH = 60f * scale;
         ImGui.PushStyleColor(ImGuiCol.ChildBg, 0u);
-        ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, TpPackRgba(0.06f, 0.06f, 0.10f, 0.4f * alpha));
-        ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, TpPackRgba(0.6f, 0.5f, 0.2f, 0.4f * alpha));
-        ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, TpPackRgba(0.8f, 0.65f, 0.25f, 0.6f * alpha));
-        ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, TpPackRgba(0.95f, 0.75f, 0.3f, 0.8f * alpha));
+        var bodyFlags = ImGuiWindowFlags.NoScrollbar;
+        ImGui.SetCursorPosX(padL);
+        var bodyOriginScreen = ImGui.GetCursorScreenPos();
+        float bodyW = pw - padL - padR;
+        _tpFadeTop = bodyOriginScreen.Y;
+        _tpFadeBot = bodyOriginScreen.Y + remainH;
+        _tpFadePx  = cfg.TpFadeSize * scale;
 
-        if (ImGui.BeginChild("##TpBody", new Vector2(pw - pad * 2f, remainH), false))
+        if (ImGui.BeginChild("##TpBody", new Vector2(bodyW, remainH), false, bodyFlags))
         {
-            // Style for rows.
-            ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(1f, 1f, 1f, alpha));
-            ImGui.PushStyleColor(ImGuiCol.Header, TpPackRgba(0.75f, 0.6f, 0.2f, 0.15f * alpha));
-            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, TpPackRgba(0.75f, 0.6f, 0.2f, 0.30f * alpha));
-            ImGui.PushStyleColor(ImGuiCol.HeaderActive, TpPackRgba(0.75f, 0.6f, 0.2f, 0.45f * alpha));
-
-            // ── FC House shortcut ─────────────────────────────
-            if (string.IsNullOrEmpty(filter) || MatchesFilter("Free Company Estate Hall", filter))
-            {
-                bool hasSaved = noWickyXIV.Config.FcHouseAetheryteId != 0;
-                bool capturing = TeleportMenu.CapturingFcHouse;
-                string fcLabel = capturing
-                    ? "Waiting for teleport...##fchouse"
-                    : hasSaved
-                        ? "FC House##fchouse"
-                        : "FC House (not set)##fchouse";
-
-                // FC button takes most of the width; "Set" button on the right.
-                float setW = ImGui.CalcTextSize("Set").X + 16f * scale;
-                float fcW = ImGui.GetContentRegionAvail().X - setW - 6f * scale;
-
-                bool fcNav = _tpDrawNavI == _tpNavIdx;
-                var fcBtnCol = fcNav
-                    ? TpPackRgba(0.75f, 0.55f, 0.22f, 0.95f * alpha)
-                    : TpPackRgba(0.55f, 0.35f, 0.12f, 0.85f * alpha);
-                ImGui.PushStyleColor(ImGuiCol.Button, fcBtnCol);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpPackRgba(0.70f, 0.45f, 0.18f, 0.90f * alpha));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, TpPackRgba(0.85f, 0.55f, 0.22f, 0.95f * alpha));
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f * scale);
-                if (ImGui.Button(fcLabel, new Vector2(fcW, 30 * scale)))
-                    TeleportMenu.TeleportToFcHouse();
-                if (fcNav && _tpNavScrollTo) { ImGui.SetScrollHereY(); _tpNavScrollTo = false; }
-                _tpDrawNavI++;
-                ImGui.PopStyleVar();
-                ImGui.PopStyleColor(3);
-
-                ImGui.SameLine();
-
-                // "Set" button — starts capture mode.
-                ImGui.PushStyleColor(ImGuiCol.Button, TpPackRgba(0.25f, 0.25f, 0.35f, 0.8f * alpha));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpPackRgba(0.35f, 0.35f, 0.50f, 0.9f * alpha));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, TpPackRgba(0.45f, 0.45f, 0.60f, 0.95f * alpha));
-                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f * scale);
-                if (ImGui.Button(capturing ? "...##fcSet" : "Set##fcSet", new Vector2(setW, 30 * scale)))
-                {
-                    if (!capturing)
-                        TeleportMenu.StartFcCapture();
-                }
-                ImGui.PopStyleVar();
-                ImGui.PopStyleColor(3);
-
-                ImGui.Dummy(new Vector2(0, 2f * scale));
-            }
+            var cdl = ImGui.GetWindowDrawList();
 
             // ── Housing entries (personal, apartment, FC) ─────
             var housing = TeleportMenu.GetHousingEntries();
@@ -3965,7 +3947,7 @@ public static class PluginUI
                 {
                     if (!string.IsNullOrEmpty(filter) && !MatchesFilter(h.AetheryteName, filter) && !MatchesFilter(h.AreaName, filter))
                         continue;
-                    DrawTeleportRow(h, alpha, scale);
+                    DrawTeleportRow(h, alpha * TpFade(), scale);
                 }
             }
 
@@ -3976,9 +3958,9 @@ public static class PluginUI
                 if (recents.Count > 0)
                 {
                     ImGui.Dummy(new Vector2(0, 2f * scale));
-                    DrawTpSectionSep(dl, alpha, scale, "Recently Visited");
+                    DrawTpSectionSep(cdl, alpha * TpFade(), scale, "Recently Visited");
                     foreach (var r in recents)
-                        DrawTeleportRow(r, alpha, scale);
+                        DrawTeleportRow(r, alpha * TpFade(), scale);
                 }
             }
 
@@ -3990,9 +3972,9 @@ public static class PluginUI
                 if (favs != null && favs.Count > 0)
                 {
                     ImGui.Dummy(new Vector2(0, 2f * scale));
-                    DrawTpSectionSep(dl, alpha, scale, "Favorites");
+                    DrawTpSectionSep(cdl, alpha * TpFade(), scale, "Favorites");
                     foreach (var f in favs)
-                        DrawTeleportRow(f, alpha, scale);
+                        DrawTeleportRow(f, alpha * TpFade(), scale);
                 }
             }
 
@@ -4001,7 +3983,7 @@ public static class PluginUI
             if (grouped != null)
             {
                 ImGui.Dummy(new Vector2(0, 2f * scale));
-                DrawTpSectionSep(dl, alpha, scale, "All Aetherytes");
+                DrawTpSectionSep(cdl, alpha * TpFade(), scale, "All Aetherytes");
 
                 foreach (var (region, entries) in grouped)
                 {
@@ -4011,37 +3993,35 @@ public static class PluginUI
 
                     if (visible.Count == 0) continue;
 
-                    // Default open on first appearance; user can collapse.
-                    // Search forces all open so matches are visible.
-                    // Keyboard nav forces open when the selection is inside this group.
                     bool searching = !string.IsNullOrEmpty(filter);
                     bool navInGroup = _tpNavActive && _tpNavIdx >= _tpDrawNavI && _tpNavIdx < _tpDrawNavI + visible.Count;
-                    if (searching || navInGroup)
-                        ImGui.SetNextItemOpen(true);
-                    else
-                        ImGui.SetNextItemOpen(true, (ImGuiCond)8); // Appearing
-
-                    ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(0.95f, 0.78f, 0.30f, alpha));
-                    bool open = ImGui.CollapsingHeader(region);
-                    ImGui.PopStyleColor();
+                    bool forceOpen = searching || navInGroup;
+                    bool open = DrawTpRegionHeader(cdl, region, alpha * TpFade(), scale, forceOpen);
 
                     if (open)
                     {
                         foreach (var entry in visible)
-                            DrawTeleportRow(entry, alpha, scale);
+                            DrawTeleportRow(entry, alpha * TpFade(), scale);
                     }
                     else
                     {
-                        // Keep nav indices stable even when collapsed.
                         _tpDrawNavI += visible.Count;
                     }
                 }
             }
 
-            ImGui.PopStyleColor(4); // row styles
+            _tpScrollY    = ImGui.GetScrollY();
+            _tpScrollMaxY = ImGui.GetScrollMaxY();
         }
         ImGui.EndChild();
-        ImGui.PopStyleColor(5); // scrollbar + child bg
+        ImGui.PopStyleColor(1); // child bg
+
+        // Search bar at the bottom when bottom-anchored.
+        if (atBottom)
+        {
+            ImGui.SetCursorPosX(padL);
+            DrawTpSearchBar(pw, padL, padR, alpha, scale);
+        }
 
         // Finalize nav count for next frame's clamping.
         _tpNavCount = _tpDrawNavI;
@@ -4049,14 +4029,10 @@ public static class PluginUI
         // Shift+F or Enter confirms the keyboard-selected entry.
         bool confirm = _tpNavActive && _tpNavIdx >= 0
             && ((VkDown(0x10) && fEdge) || enterEdge);
-        if (confirm)
-        {
-            if (_tpNavSelectedEntry != null)
-                TeleportMenu.DoTeleport(_tpNavSelectedEntry);
-            else if (_tpNavIdx == 0 && noWickyXIV.Config.FcHouseAetheryteId != 0)
-                TeleportMenu.TeleportToFcHouse();
-        }
+        if (confirm && _tpNavSelectedEntry != null)
+            TeleportMenu.DoTeleport(_tpNavSelectedEntry);
 
+        if (tpFontPushed) _tpBodyFont?.Pop();
         ImGui.End();
         ImGui.PopStyleColor(); // WindowBg
         ImGui.PopStyleVar(4);  // WindowPadding, BorderSize, Rounding, MinSize
@@ -4066,25 +4042,83 @@ public static class PluginUI
             TeleportMenu.OnWindowClosed();
     }
 
+    private static void DrawTpSearchBar(float pw, float padL, float padR, float alpha, float scale)
+    {
+        var cfg = noWickyXIV.Config;
+        bool searchFontPushed = _tpSearchFont != null && _tpSearchFont.Available;
+        if (searchFontPushed) _tpSearchFont.Push();
+        ImGui.PushStyleColor(ImGuiCol.FrameBg, TpCol(cfg.TpColorSearchBg, alpha));
+        ImGui.PushStyleColor(ImGuiCol.Border, TpCol(cfg.TpColorSearchBorder, alpha));
+        ImGui.PushStyleColor(ImGuiCol.Text, TpCol(cfg.TpColorSearchText, alpha));
+        ImGui.PushStyleColor(ImGuiCol.TextDisabled, TpCol(cfg.TpColorSearchHint, alpha));
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 8f * scale);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(10f * scale, 6f * scale));
+        ImGui.SetNextItemWidth(pw - padL - padR);
+        if (_tpFocusSearch && !_tpNavActive)
+        {
+            ImGui.SetKeyboardFocusHere();
+            _tpFocusSearch = false;
+        }
+        ImGui.InputTextWithHint("##TpSearch", "Search aetherytes...", ref _teleportSearch, 128);
+        ImGui.PopStyleVar(3);
+        ImGui.PopStyleColor(4);
+        if (searchFontPushed) _tpSearchFont.Pop();
+    }
+
     private static void DrawTeleportRow(TeleportMenu.TeleportEntry entry, float alpha, float scale)
     {
         bool navSel = _tpDrawNavI == _tpNavIdx;
+        var rowCfg = noWickyXIV.Config;
+        int rowKey = (int)(entry.AetheryteId * 256 + entry.SubIndex);
+        float dt = ImGui.GetIO().DeltaTime;
 
-        ImGui.PushID((int)(entry.AetheryteId * 256 + entry.SubIndex));
+        ImGui.PushID(rowKey);
 
-        float availW = ImGui.GetContentRegionAvail().X;
+        float availW = ImGui.GetContentRegionAvail().X
+            - rowCfg.TpScrollRightPad * scale;
+        float rowH = ImGui.GetFrameHeight();
+        var screenPos = ImGui.GetCursorScreenPos();
+
+        // Invisible button for click + hover detection.
+        ImGui.PushStyleColor(ImGuiCol.Button, 0u);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0u);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0u);
+        bool clicked = ImGui.InvisibleButton($"##tpRow", new Vector2(availW, rowH));
+        ImGui.PopStyleColor(3);
+        bool hovered = ImGui.IsItemHovered();
+
+        if (clicked) TeleportMenu.DoTeleport(entry);
+
+        // Lerp hover.
+        _tpRowHoverT.TryGetValue(rowKey, out float ht);
+        float target = (hovered || navSel) ? 1f : 0f;
+        float k = 1f - MathF.Exp(-12f * dt);
+        ht += (target - ht) * k;
+        if (ht < 0.005f) ht = 0f;
+        _tpRowHoverT[rowKey] = ht;
+
+        // Draw hover/nav highlight.
+        if (ht > 0f)
+        {
+            var hc = navSel ? rowCfg.TpColorRowNavHighlight : rowCfg.TpColorRowHover;
+            uint hlCol = TpCol(new Vector4(hc.X, hc.Y, hc.Z, hc.W * ht), alpha);
+            var cdl = ImGui.GetWindowDrawList();
+            cdl.AddRectFilled(screenPos,
+                new Vector2(screenPos.X + availW, screenPos.Y + rowH),
+                hlCol, 4f * scale);
+        }
+
+        // Draw row text on top.
+        var textPos = new Vector2(screenPos.X + 6f * scale, screenPos.Y + (rowH - ImGui.GetFontSize()) * 0.5f);
+        ImGui.GetWindowDrawList().AddText(textPos,
+            TpCol(rowCfg.TpColorText, alpha), entry.AetheryteName);
+
         string costText = $"{entry.GilCost} gil";
         float costW = ImGui.CalcTextSize(costText).X;
-
-        // Bright highlight for keyboard-selected row.
-        if (navSel)
-            ImGui.PushStyleColor(ImGuiCol.Header, TpPackRgba(0.85f, 0.70f, 0.25f, 0.55f * alpha));
-
-        if (ImGui.Selectable($"  {entry.AetheryteName}##tp", navSel))
-            TeleportMenu.DoTeleport(entry);
-
-        if (navSel)
-            ImGui.PopStyleColor();
+        var costPos = new Vector2(screenPos.X + availW - costW, textPos.Y);
+        ImGui.GetWindowDrawList().AddText(costPos,
+            TpCol(rowCfg.TpColorCostText, alpha), costText);
 
         if (navSel)
         {
@@ -4092,29 +4126,110 @@ public static class PluginUI
             if (_tpNavScrollTo) { ImGui.SetScrollHereY(); _tpNavScrollTo = false; }
         }
 
-        // Right-aligned cost on the same line.
-        ImGui.SameLine(availW - costW);
-        ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(0.7f, 0.7f, 0.6f, 0.7f * alpha));
-        ImGui.TextUnformatted(costText);
-        ImGui.PopStyleColor();
-
         ImGui.PopID();
         _tpDrawNavI++;
     }
 
-    /// <summary>Draws a labeled thin line separator for a section.</summary>
+    /// <summary>Draws a labeled section heading (same pattern as region headers).</summary>
     private static void DrawTpSectionSep(ImDrawListPtr dl, float alpha, float scale, string label)
     {
-        float y = ImGui.GetCursorScreenPos().Y + 2f * scale;
-        float x0 = ImGui.GetCursorScreenPos().X;
-        float x1 = x0 + ImGui.GetContentRegionAvail().X;
-        uint lineCol = TpPackRgba(1f, 1f, 1f, 0.06f * alpha);
-        dl.AddLine(new Vector2(x0, y), new Vector2(x1, y), lineCol, 1f * scale);
-        ImGui.Dummy(new Vector2(0, 6f * scale));
-        ImGui.PushStyleColor(ImGuiCol.Text, TpPackRgba(0.8f, 0.7f, 0.35f, 0.6f * alpha));
-        ImGui.TextUnformatted(label);
-        ImGui.PopStyleColor();
+        var cfg = noWickyXIV.Config;
+        float scrollPad = cfg.TpScrollRightPad * scale;
+        float availW = ImGui.GetContentRegionAvail().X - scrollPad;
+
+        bool headPushed = _tpHeadingFont != null && _tpHeadingFont.Available;
+        if (headPushed) _tpHeadingFont.Push();
+
+        float textH = ImGui.GetFontSize();
+        float rowH = textH + 6f * scale;
+        var screenPos = ImGui.GetCursorScreenPos();
+
+        ImGui.InvisibleButton($"##tpSec_{label}", new Vector2(availW, rowH));
+
+        float textY = screenPos.Y + (rowH - textH) * 0.5f;
+        dl.AddText(new Vector2(screenPos.X + 4f * scale, textY),
+            TpCol(cfg.TpColorSectionLabel, alpha), label);
+
+        if (headPushed) _tpHeadingFont.Pop();
         ImGui.Dummy(new Vector2(0, 2f * scale));
+    }
+
+    private static bool DrawTpRegionHeader(ImDrawListPtr dl, string region, float alpha, float scale, bool forceOpen)
+    {
+        var cfg = noWickyXIV.Config;
+        bool collapsed = !forceOpen && _tpCollapsedRegions.Contains(region);
+        float scrollPad = cfg.TpScrollRightPad * scale;
+        float availW = ImGui.GetContentRegionAvail().X - scrollPad;
+
+        bool headPushed = _tpHeadingFont != null && _tpHeadingFont.Available;
+        if (headPushed) _tpHeadingFont.Push();
+
+        float textH = ImGui.GetFontSize();
+        float rowH = textH + 6f * scale;
+        var screenPos = ImGui.GetCursorScreenPos();
+
+        if (ImGui.InvisibleButton($"##tpRgn_{region}", new Vector2(availW, rowH)))
+        {
+            if (!forceOpen)
+            {
+                if (collapsed) _tpCollapsedRegions.Remove(region);
+                else _tpCollapsedRegions.Add(region);
+                collapsed = !collapsed;
+            }
+        }
+        bool hovered = ImGui.IsItemHovered();
+
+        int rgnKey = region.GetHashCode();
+        _tpRowHoverT.TryGetValue(rgnKey, out float rht);
+        float rTarget = hovered ? 1f : 0f;
+        float rK = 1f - MathF.Exp(-12f * ImGui.GetIO().DeltaTime);
+        rht += (rTarget - rht) * rK;
+        if (rht < 0.005f) rht = 0f;
+        _tpRowHoverT[rgnKey] = rht;
+
+        if (rht > 0f)
+        {
+            var hc = cfg.TpColorRowHover;
+            dl.AddRectFilled(screenPos,
+                new Vector2(screenPos.X + availW, screenPos.Y + rowH),
+                TpCol(new Vector4(hc.X, hc.Y, hc.Z, hc.W * rht), alpha), 4f * scale);
+        }
+
+        float textY = screenPos.Y + (rowH - textH) * 0.5f;
+        dl.AddText(new Vector2(screenPos.X + 4f * scale, textY),
+            TpCol(cfg.TpColorRegionLabel, alpha), region);
+
+        float chevSize = 7f * scale;
+        float chevX = screenPos.X + availW - chevSize * 1.5f - 6f * scale;
+        float chevY = screenPos.Y + rowH * 0.5f;
+        uint chevCol = TpCol(cfg.TpColorChevron, alpha);
+        float thick = 1.5f * scale;
+
+        if (collapsed)
+        {
+            dl.AddLine(
+                new Vector2(chevX, chevY - chevSize * 0.5f),
+                new Vector2(chevX + chevSize * 0.6f, chevY),
+                chevCol, thick);
+            dl.AddLine(
+                new Vector2(chevX + chevSize * 0.6f, chevY),
+                new Vector2(chevX, chevY + chevSize * 0.5f),
+                chevCol, thick);
+        }
+        else
+        {
+            dl.AddLine(
+                new Vector2(chevX - chevSize * 0.15f, chevY - chevSize * 0.3f),
+                new Vector2(chevX + chevSize * 0.35f, chevY + chevSize * 0.3f),
+                chevCol, thick);
+            dl.AddLine(
+                new Vector2(chevX + chevSize * 0.35f, chevY + chevSize * 0.3f),
+                new Vector2(chevX + chevSize * 0.85f, chevY - chevSize * 0.3f),
+                chevCol, thick);
+        }
+
+        if (headPushed) _tpHeadingFont.Pop();
+        return !collapsed;
     }
 
     private static bool MatchesFilter(string text, string filter)
@@ -4130,5 +4245,560 @@ public static class PluginUI
         byte bb = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, b)) * 255f);
         byte ba = (byte)MathF.Round(MathF.Max(0f, MathF.Min(1f, a)) * 255f);
         return ((uint)ba << 24) | ((uint)bb << 16) | ((uint)bg << 8) | br;
+    }
+
+    // Pack a config color (RGBA Vector4) with the window's fade-in
+    // alpha multiplier so every styled element fades together.
+    private static uint TpCol(Vector4 c, float alpha)
+        => TpPackRgba(c.X, c.Y, c.Z, c.W * alpha);
+
+    private static float TpFade()
+    {
+        if (_tpFadePx <= 0f) return 1f;
+        float y = ImGui.GetCursorScreenPos().Y;
+        float f = 1f;
+        if (_tpScrollY > 1f && y < _tpFadeTop + _tpFadePx)
+            f = MathF.Max(0f, (y - _tpFadeTop) / _tpFadePx);
+        if (_tpScrollMaxY > 1f && _tpScrollY < _tpScrollMaxY - 1f)
+        {
+            float distBot = _tpFadeBot - y;
+            if (distBot < _tpFadePx)
+                f = MathF.Min(f, MathF.Max(0f, distBot / _tpFadePx));
+        }
+        return f;
+    }
+
+    // Resolve the player's current zone name for the menu title.
+    // Reads TerritoryType.PlaceName from the Lumina sheet; falls back
+    // to a generic "??" if anything's not loaded yet.
+    private static string GetCurrentPlaceName()
+    {
+        try
+        {
+            uint terrId = DalamudApi.ClientState.TerritoryType;
+            if (terrId == 0) return "??";
+            var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>();
+            var row = sheet?.GetRowOrDefault(terrId);
+            if (row != null)
+            {
+                var name = row.Value.PlaceName.Value.Name.ExtractText();
+                if (!string.IsNullOrEmpty(name)) return name;
+            }
+        }
+        catch { }
+        return "??";
+    }
+
+    // Build / rebuild the teleport menu's font atlas entry whenever
+    // the configured size changes. Quantized to whole pixels so a
+    // slider drag doesn't queue a rebuild per frame.
+    private static void EnsureTeleportFont()
+    {
+        var atlas = DalamudApi.PluginInterface.UiBuilder.FontAtlas;
+
+        float headPx = MathF.Max(8f, MathF.Round(noWickyXIV.Config.TpHeadingFontSizePx));
+        if (_tpHeadingFont == null || headPx != _tpHeadingFontLoadedSize)
+        {
+            try { _tpHeadingFont?.Dispose(); } catch { }
+            _tpHeadingFont = null;
+            _tpHeadingFontLoadedSize = headPx;
+            try
+            {
+                _tpHeadingFont = atlas.NewDelegateFontHandle(e =>
+                    e.OnPreBuild(tk => { try { tk.AddDalamudDefaultFont(headPx); } catch { } }));
+            }
+            catch { _tpHeadingFont = null; }
+        }
+
+        float bodyPx = MathF.Max(8f, MathF.Round(noWickyXIV.Config.TpBodyFontSizePx));
+        if (_tpBodyFont == null || bodyPx != _tpBodyFontLoadedSize)
+        {
+            try { _tpBodyFont?.Dispose(); } catch { }
+            _tpBodyFont = null;
+            _tpBodyFontLoadedSize = bodyPx;
+            try
+            {
+                _tpBodyFont = atlas.NewDelegateFontHandle(e =>
+                    e.OnPreBuild(tk => { try { tk.AddDalamudDefaultFont(bodyPx); } catch { } }));
+            }
+            catch { _tpBodyFont = null; }
+        }
+
+        float searchPx = MathF.Max(8f, MathF.Round(noWickyXIV.Config.TpSearchFontSizePx));
+        if (_tpSearchFont == null || searchPx != _tpSearchFontLoadedSize)
+        {
+            try { _tpSearchFont?.Dispose(); } catch { }
+            _tpSearchFont = null;
+            _tpSearchFontLoadedSize = searchPx;
+            try
+            {
+                _tpSearchFont = atlas.NewDelegateFontHandle(e =>
+                    e.OnPreBuild(tk => { try { tk.AddDalamudDefaultFont(searchPx); } catch { } }));
+            }
+            catch { _tpSearchFont = null; }
+        }
+    }
+
+    // Dedicated tab for the custom teleport menu. Two-column layout:
+    private static void ChatColorPicker(string label, ref float r, ref float g, ref float b, ref float a)
+    {
+        var c = new Vector4(r, g, b, a);
+        const ImGuiColorEditFlags flags =
+              ImGuiColorEditFlags.NoInputs
+            | ImGuiColorEditFlags.AlphaBar
+            | ImGuiColorEditFlags.AlphaPreviewHalf
+            | ImGuiColorEditFlags.DisplayHex;
+        if (ImGui.ColorEdit4(label, ref c, flags))
+        {
+            r = c.X; g = c.Y; b = c.Z; a = c.W;
+            noWickyXIV.Config.SaveDebounced();
+        }
+    }
+
+    private static int _styleRenameIndex = -1;
+    private static string _styleRenameBuf = "";
+
+    private static void DrawStyleTab()
+    {
+        var cfg = noWickyXIV.Config;
+
+        if (ImGuiEx.BeginGroupBox("Active colors"))
+        {
+            ImGui.TextDisabled(
+                "Shared color palette applied to Quick Menu, MSQ Teleport,\n" +
+                "and other overlay panels. Changes take effect immediately.");
+            TpColorPicker("Background##UiProfile", ref cfg.UiColorBackground);
+            TpColorPicker("Border##UiProfile",     ref cfg.UiColorBorder);
+            TpColorPicker("Accent##UiProfile",     ref cfg.UiColorAccent);
+            TpColorPicker("Text##UiProfile",       ref cfg.UiColorText);
+            TpColorPicker("Hover##UiProfile",      ref cfg.UiColorHover);
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Style presets"))
+        {
+            if (ImGui.Button("+ Save current as preset"))
+            {
+                var p = new UiStylePreset
+                {
+                    Name       = $"Style {cfg.UiStylePresets.Count + 1}",
+                    Background = cfg.UiColorBackground,
+                    Border     = cfg.UiColorBorder,
+                    Accent     = cfg.UiColorAccent,
+                    Text       = cfg.UiColorText,
+                    Hover      = cfg.UiColorHover,
+                };
+                cfg.UiStylePresets.Add(p);
+                cfg.SaveDebounced();
+            }
+
+            int removeIdx = -1;
+            for (int i = 0; i < cfg.UiStylePresets.Count; i++)
+            {
+                var p = cfg.UiStylePresets[i];
+                ImGui.PushID(i);
+                ImGui.Separator();
+
+                if (_styleRenameIndex == i)
+                {
+                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+                    if (ImGui.InputText("##rename", ref _styleRenameBuf, 64,
+                            ImGuiInputTextFlags.EnterReturnsTrue))
+                    {
+                        p.Name = _styleRenameBuf;
+                        _styleRenameIndex = -1;
+                        cfg.SaveDebounced();
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button("OK"))
+                    {
+                        p.Name = _styleRenameBuf;
+                        _styleRenameIndex = -1;
+                        cfg.SaveDebounced();
+                    }
+                }
+                else
+                {
+                    ImGui.Text(p.Name);
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Rename"))
+                    {
+                        _styleRenameIndex = i;
+                        _styleRenameBuf = p.Name;
+                    }
+                }
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Apply"))
+                {
+                    cfg.UiColorBackground = p.Background;
+                    cfg.UiColorBorder     = p.Border;
+                    cfg.UiColorAccent     = p.Accent;
+                    cfg.UiColorText       = p.Text;
+                    cfg.UiColorHover      = p.Hover;
+                    cfg.SaveDebounced();
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Update"))
+                {
+                    p.Background = cfg.UiColorBackground;
+                    p.Border     = cfg.UiColorBorder;
+                    p.Accent     = cfg.UiColorAccent;
+                    p.Text       = cfg.UiColorText;
+                    p.Hover      = cfg.UiColorHover;
+                    cfg.SaveDebounced();
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Delete"))
+                    removeIdx = i;
+
+                TpColorPicker("Bg##sp",     ref p.Background);
+                ImGui.SameLine();
+                TpColorPicker("Border##sp", ref p.Border);
+                ImGui.SameLine();
+                TpColorPicker("Accent##sp", ref p.Accent);
+                ImGui.SameLine();
+                TpColorPicker("Text##sp",   ref p.Text);
+                ImGui.SameLine();
+                TpColorPicker("Hover##sp",  ref p.Hover);
+
+                ImGui.PopID();
+            }
+
+            if (removeIdx >= 0)
+            {
+                cfg.UiStylePresets.RemoveAt(removeIdx);
+                if (_styleRenameIndex == removeIdx) _styleRenameIndex = -1;
+                else if (_styleRenameIndex > removeIdx) _styleRenameIndex--;
+                cfg.SaveDebounced();
+            }
+
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    private static void DrawQuickMenuTab()
+    {
+        if (ImGuiEx.BeginGroupBox("Quick menu launcher"))
+        {
+            ConfigCheckbox("Enable##QuickMenu", ref noWickyXIV.Config.EnableQuickMenu);
+            DrawScreenCornerCombo("Anchor##QuickMenuCorner",
+                ref noWickyXIV.Config.QuickMenuCorner);
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset X (px)##QuickMenuOffsetX",
+                    ref noWickyXIV.Config.QuickMenuOffsetX, 0f, 200f, "%.0f"))
+                noWickyXIV.Config.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset Y (px)##QuickMenuOffsetY",
+                    ref noWickyXIV.Config.QuickMenuOffsetY, 0f, 200f, "%.0f"))
+                noWickyXIV.Config.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Icon size (px)##QmIconSize",
+                    ref noWickyXIV.Config.QuickMenuIconSize, 16f, 64f, "%.0f"))
+                noWickyXIV.Config.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Icon gap (px)##QmIconGap",
+                    ref noWickyXIV.Config.QuickMenuIconGap, 0f, 20f, "%.0f"))
+                noWickyXIV.Config.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Pad X (px)##QmPadX",
+                    ref noWickyXIV.Config.QuickMenuPadX, 2f, 24f, "%.0f"))
+                noWickyXIV.Config.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Pad Y (px)##QmPadY",
+                    ref noWickyXIV.Config.QuickMenuPadY, 2f, 24f, "%.0f"))
+                noWickyXIV.Config.SaveDebounced();
+            ImGui.TextDisabled(
+                "Floating pill anchored to the chosen screen corner.\n" +
+                "Hover the corner to slide it in; click an icon to fire\n" +
+                "its slash command. Icons match the ones in /xlplugins:\n" +
+                "  Dalamud logo  → /xlplugins\n" +
+                "  this plugin   → /nowickyxiv\n" +
+                "  Glamourer     → /glamourer\n" +
+                "  Penumbra      → /penumbra\n" +
+                "  VFXEditor     → /vfxedit\n" +
+                "Third-party icons download once from each plugin's\n" +
+                "manifest IconUrl and are cached locally.");
+
+            if (ImGui.Button("Re-resolve icons##QuickMenu"))
+                QuickMenu.ReresolveAllIcons();
+            ImGui.SameLine();
+            ImGui.TextDisabled("(use after installing a missing plugin)");
+
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    private static void DrawChatTab()
+    {
+        var cfg = noWickyXIV.Config;
+
+        if (ImGuiEx.BeginGroupBox("Chat bubbles"))
+        {
+            ConfigCheckbox("Enable##ChatBubbles", ref cfg.EnableChatBubbles);
+            ConfigSliderFloat("Anchor X (px)##ChatBubbles",  ref cfg.ChatBubblesX,            0f,    3840f, 960f, "%.0f");
+            ConfigSliderFloat("Anchor Y (px, bottom)##ChatBubbles", ref cfg.ChatBubblesY,    0f,    2160f, 700f, "%.0f");
+            ConfigSliderFloat("Column width (px)##ChatBubbles",  ref cfg.ChatBubblesColumnWidth, 200f,  1400f, 700f, "%.0f");
+            ConfigSliderFloat("Bubble max width (px)##ChatBubbles", ref cfg.ChatBubblesMaxWidth, 100f, 800f, 360f, "%.0f");
+            ConfigSliderFloat("Max age (s)##ChatBubbles",   ref cfg.ChatBubblesMaxAgeSeconds,   5f,    300f, 30f, "%.0f");
+            ConfigSliderFloat("Max column height (px)##ChatBubbles", ref cfg.ChatBubblesMaxColumnHeight, 200f, 2000f, 600f, "%.0f");
+            ConfigSliderFloat("Top-fade height (px)##ChatBubbles", ref cfg.ChatBubblesTopFadeHeight, 0f, 400f, 100f, "%.0f");
+            ConfigSliderFloat("Hover-reveal height (px)##ChatBubbles", ref cfg.ChatBubblesHoverRevealHeight, 100f, 2160f, 800f, "%.0f");
+            ConfigSliderFloat("Hover hold (s)##ChatBubbles", ref cfg.ChatBubblesHoverHoldSeconds, 0f, 5f, 1.5f, "%.1f");
+            ImGui.Separator();
+            ConfigCheckbox("Show typing indicators (rtyping)##ChatBubbles", ref cfg.EnableTypingIndicators);
+            ConfigSliderFloat("Typing band height (px)##ChatBubbles", ref cfg.ChatBubblesTypingReserveHeight, 0f, 200f, 30f, "%.0f");
+            ImGui.Separator();
+            ConfigCheckbox("Backfill chat history on load##ChatBubbles", ref cfg.ChatBubblesBackfillOnLoad);
+            ConfigCheckbox("Show channel tag##ChatBubbles", ref cfg.ChatBubblesShowChannelTag);
+            ImGui.Separator();
+            ChatColorPicker("Self bubble##ChatBubbles",
+                ref cfg.ChatBubblesSelfR, ref cfg.ChatBubblesSelfG,
+                ref cfg.ChatBubblesSelfB, ref cfg.ChatBubblesSelfAlpha);
+            ChatColorPicker("Other bubble##ChatBubbles",
+                ref cfg.ChatBubblesOtherR, ref cfg.ChatBubblesOtherG,
+                ref cfg.ChatBubblesOtherB, ref cfg.ChatBubblesOtherAlpha);
+            ImGui.Separator();
+            DrawFontPicker("Font##ChatBubblesFont", ref cfg.ChatBubblesFontPath);
+            ConfigSliderFloat("Body font size (px)##ChatBubbles",   ref cfg.ChatBubblesFontSize,       8f, 72f, 16f, "%.0f");
+            ConfigSliderFloat("Sender font size (px)##ChatBubbles", ref cfg.ChatBubblesSenderFontSize, 6f, 48f, 12f, "%.0f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Typing emote"))
+        {
+            ConfigCheckbox("Play typing emote##ChatTypingEmote", ref cfg.EnableTypingEmote);
+            string cmd = cfg.ChatTypingEmoteCommand ?? "";
+            if (ImGui.InputText("Emote command##ChatTypingEmote", ref cmd, 64))
+            {
+                cfg.ChatTypingEmoteCommand = cmd;
+                cfg.Save();
+            }
+            string cancelCmd = cfg.ChatTypingEmoteCancelCommand ?? "";
+            if (ImGui.InputText("Cancel command##ChatTypingEmote", ref cancelCmd, 64))
+            {
+                cfg.ChatTypingEmoteCancelCommand = cancelCmd;
+                cfg.Save();
+            }
+            ConfigSliderFloat("Re-fire interval (s)##ChatTypingEmote", ref cfg.ChatTypingEmoteRetriggerSeconds, 0.5f, 10f, 2.0f, "%.1f");
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Typing prompt"))
+        {
+            ConfigCheckbox("Enable##ChatPrompt", ref cfg.EnableChatPrompt);
+            ConfigSliderFloat("X (center, px)##ChatPrompt", ref cfg.ChatPromptX, 0f, 3840f, 960f, "%.0f");
+            ConfigSliderFloat("Y (center, px)##ChatPrompt", ref cfg.ChatPromptY, 0f, 2160f, 540f, "%.0f");
+            ConfigSliderFloat("Width (px)##ChatPrompt",     ref cfg.ChatPromptWidth,    100f, 1600f, 600f, "%.0f");
+            ConfigSliderFloat("Font size (px)##ChatPrompt", ref cfg.ChatPromptFontSize,  10f, 96f,  22f,  "%.0f");
+            ChatColorPicker("Background##ChatPrompt",
+                ref cfg.ChatPromptBgR, ref cfg.ChatPromptBgG,
+                ref cfg.ChatPromptBgB, ref cfg.ChatPromptBgAlpha);
+            ChatColorPicker("Text##ChatPrompt",
+                ref cfg.ChatPromptTextR, ref cfg.ChatPromptTextG,
+                ref cfg.ChatPromptTextB, ref cfg.ChatPromptTextAlpha);
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Diagnostics"))
+        {
+            ConfigCheckbox("Log combat hit details##CombatDiag", ref cfg.LogCombatHitDiagnostics);
+            ImGuiEx.EndGroupBox();
+        }
+    }
+
+    private static void DrawTeleportTab()
+    {
+        var cfg = noWickyXIV.Config;
+        float fullW = ImGui.GetContentRegionAvail().X;
+        // Left column: behavior + font controls.
+        float colGap = 12f * ImGuiHelpers.GlobalScale;
+        float leftW  = MathF.Min(360f * ImGuiHelpers.GlobalScale, (fullW - colGap) * 0.42f);
+        float rightW = fullW - leftW - colGap;
+
+        if (ImGui.BeginChild("##TpTabLeft", new Vector2(leftW, 0), false))
+        {
+            if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
+            {
+                ConfigCheckbox("Enable##CustomTeleportMenu",
+                    ref cfg.EnableCustomTeleportMenu);
+                ImGui.TextDisabled(
+                    "Replaces the game's native Teleport window with a\n" +
+                    "custom searchable list. Hover the chosen corner of\n" +
+                    "the screen to slide it in; FC house shortcut,\n" +
+                    "recently visited, and region-grouped aetherytes.");
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Placement"))
+            {
+                DrawScreenCornerCombo("Anchor##TpCorner", ref cfg.TeleportMenuCorner);
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Offset X (px)##TpOffsetX",
+                        ref cfg.TeleportMenuOffsetX, 0f, 200f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Offset Y (px)##TpOffsetY",
+                        ref cfg.TeleportMenuOffsetY, 0f, 200f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Typography"))
+            {
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Heading / region (px)##TpHeadingSize",
+                        ref cfg.TpHeadingFontSizePx, 8f, 48f, "%.0f"))
+                    cfg.SaveDebounced();
+
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Aetheryte rows (px)##TpBodySize",
+                        ref cfg.TpBodyFontSizePx, 8f, 36f, "%.0f"))
+                    cfg.SaveDebounced();
+
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Search bar (px)##TpSearchSize",
+                        ref cfg.TpSearchFontSizePx, 8f, 36f, "%.0f"))
+                    cfg.SaveDebounced();
+
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Weight##TpFontWeight",
+                        ref cfg.TpFontWeight, 0f, 1f, "%.2f"))
+                    cfg.SaveDebounced();
+
+                TpColorPicker("Font color##TpFontColor", ref cfg.TpColorText);
+                ImGuiEx.EndGroupBox();
+            }
+
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Width##TpWidth",
+                    ref cfg.TpWidth, 200f, 800f, "%.0f"))
+                cfg.SaveDebounced();
+
+            if (ImGuiEx.BeginGroupBox("Padding"))
+            {
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Top##TpPadTop",
+                        ref cfg.TpPadTop, 0f, 48f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Bottom##TpPadBottom",
+                        ref cfg.TpPadBottom, 0f, 48f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Left##TpPadLeft",
+                        ref cfg.TpPadLeft, 0f, 48f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Right##TpPadRight",
+                        ref cfg.TpPadRight, 0f, 48f, "%.0f"))
+                    cfg.SaveDebounced();
+
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Scrollbar gap##TpScrollRightPad",
+                        ref cfg.TpScrollRightPad, 0f, 32f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGuiEx.EndGroupBox();
+            }
+        }
+        ImGui.EndChild();
+
+        ImGui.SameLine(0, colGap);
+
+        if (ImGui.BeginChild("##TpTabRight", new Vector2(rightW, 0), false))
+        {
+            // Section labels avoid restating context in every label.
+            if (ImGuiEx.BeginGroupBox("Container"))
+            {
+                TpColorPicker("Background",     ref cfg.TpColorBackground);
+                TpColorPicker("Border",         ref cfg.TpColorBorder);
+                TpColorPicker("Title",          ref cfg.TpColorTitle);
+                TpColorPicker("Separator",      ref cfg.TpColorSeparator);
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Search & buttons"))
+            {
+                TpColorPicker("Search bg",      ref cfg.TpColorSearchBg);
+                TpColorPicker("Search border",  ref cfg.TpColorSearchBorder);
+                TpColorPicker("Search text",    ref cfg.TpColorSearchText);
+                TpColorPicker("Search hint",    ref cfg.TpColorSearchHint);
+                TpColorPicker("FC idle",        ref cfg.TpColorFcButton);
+                TpColorPicker("FC hover",       ref cfg.TpColorFcButtonHover);
+                TpColorPicker("FC active",      ref cfg.TpColorFcButtonActive);
+                TpColorPicker("Secondary idle",   ref cfg.TpColorSecondaryButton);
+                TpColorPicker("Secondary hover",  ref cfg.TpColorSecondaryButtonHover);
+                TpColorPicker("Secondary active", ref cfg.TpColorSecondaryButtonActive);
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Rows & sections"))
+            {
+                TpColorPicker("Section label",  ref cfg.TpColorSectionLabel);
+                TpColorPicker("Region label",   ref cfg.TpColorRegionLabel);
+                TpColorPicker("Row hover",      ref cfg.TpColorRowHover);
+                TpColorPicker("Row active",     ref cfg.TpColorRowActive);
+                TpColorPicker("Nav highlight",  ref cfg.TpColorRowNavHighlight);
+                TpColorPicker("Cost text",      ref cfg.TpColorCostText);
+                TpColorPicker("Chevron",        ref cfg.TpColorChevron);
+                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+                if (ImGui.SliderFloat("Fade size##TpFadeSize",
+                        ref cfg.TpFadeSize, 0f, 80f, "%.0f"))
+                    cfg.SaveDebounced();
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Scrollbar"))
+            {
+                TpColorPicker("Track",          ref cfg.TpColorScrollbarBg);
+                TpColorPicker("Grab",           ref cfg.TpColorScrollbarGrab);
+                TpColorPicker("Grab hover",     ref cfg.TpColorScrollbarHover);
+                TpColorPicker("Grab active",    ref cfg.TpColorScrollbarActive);
+                ImGuiEx.EndGroupBox();
+            }
+        }
+        ImGui.EndChild();
+    }
+
+    // Compact combo for picking a screen corner anchor (used by the
+    // teleport menu + QuickMenu placement settings).
+    private static void DrawScreenCornerCombo(string label, ref ScreenCorner value)
+    {
+        string Display(ScreenCorner c) => c switch
+        {
+            ScreenCorner.TopLeft      => "Top-left",
+            ScreenCorner.TopRight     => "Top-right",
+            ScreenCorner.BottomLeft   => "Bottom-left",
+            ScreenCorner.BottomRight  => "Bottom-right",
+            ScreenCorner.TopCenter    => "Top-center",
+            ScreenCorner.BottomCenter => "Bottom-center",
+            _ => c.ToString(),
+        };
+        ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+        if (ImGui.BeginCombo(label, Display(value)))
+        {
+            foreach (ScreenCorner c in Enum.GetValues<ScreenCorner>())
+            {
+                if (ImGui.Selectable(Display(c), value == c))
+                {
+                    value = c;
+                    noWickyXIV.Config.SaveDebounced();
+                }
+            }
+            ImGui.EndCombo();
+        }
+    }
+
+    // Swatch-button color picker (no inline sliders — the popup
+    // palette has the alpha bar + hex input). Saves config on edit.
+    private static void TpColorPicker(string label, ref Vector4 color)
+    {
+        const ImGuiColorEditFlags flags =
+              ImGuiColorEditFlags.NoInputs
+            | ImGuiColorEditFlags.AlphaBar
+            | ImGuiColorEditFlags.AlphaPreviewHalf
+            | ImGuiColorEditFlags.DisplayHex;
+        if (ImGui.ColorEdit4($"{label}##TpColorPicker", ref color, flags))
+            noWickyXIV.Config.SaveDebounced();
     }
 }

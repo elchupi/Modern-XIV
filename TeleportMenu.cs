@@ -297,6 +297,11 @@ public static unsafe class TeleportMenu
     {
         if (entry == null) return false;
 
+        // Click confirm SE — same menu-confirm tick the native UI plays
+        // when you click a menu item. Fires on the click side; the
+        // teleport-cast SE the game plays afterward is unaffected.
+        PlayMenuConfirmSound();
+
         try
         {
             var telepo = Telepo.Instance();
@@ -322,6 +327,26 @@ public static unsafe class TeleportMenu
             DalamudApi.LogInfo($"[TeleportMenu] Teleport failed: {ex.Message}");
             return false;
         }
+    }
+
+    private static unsafe void PlayMenuConfirmSound()
+    {
+        try
+        {
+            var stage = FFXIVClientStructs.FFXIV.Component.GUI.AtkStage.Instance();
+            if (stage == null) return;
+            var mgr = stage->RaptureAtkUnitManager;
+            if (mgr == null) return;
+            var entries = mgr->AllLoadedUnitsList.Entries;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                var unit = entries[i].Value;
+                if (unit == null) continue;
+                unit->PlaySoundEffect(8);
+                return;
+            }
+        }
+        catch { }
     }
 
     /// <summary>Teleport to FC house using saved config values.</summary>
@@ -413,6 +438,46 @@ public static unsafe class TeleportMenu
         catch (Exception ex)
         {
             DalamudApi.PrintError($"Failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Set a flag at the player's position and send the clickable map link to chat.</summary>
+    public static unsafe void ShareCurrentLocation()
+    {
+        try
+        {
+            var player = DalamudApi.ObjectTable?.LocalPlayer;
+            if (player == null) return;
+
+            uint terrId = DalamudApi.ClientState.TerritoryType;
+            if (terrId == 0) return;
+
+            var terrSheet = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
+            var terrRow = terrSheet?.GetRowOrDefault(terrId);
+            if (terrRow == null) return;
+
+            uint mapId = terrRow.Value.Map.RowId;
+            var mapSheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>();
+            var mapRow = mapSheet?.GetRowOrDefault(mapId);
+            if (mapRow == null) return;
+
+            float sizeFactor = mapRow.Value.SizeFactor;
+            int offsetX = mapRow.Value.OffsetX;
+            int offsetY = mapRow.Value.OffsetY;
+
+            float sc = sizeFactor / 100.0f;
+            float mapX = 41.0f / sc * ((player.Position.X + offsetX) * sc + 1024.0f) / 2048.0f + 1.0f;
+            float mapZ = 41.0f / sc * ((player.Position.Z + offsetY) * sc + 1024.0f) / 2048.0f + 1.0f;
+
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap.Instance();
+            if (agent != null)
+                agent->SetFlagMapMarker(terrId, mapId, mapX, mapZ);
+
+            ChatSend.Send("<flag>");
+        }
+        catch (Exception ex)
+        {
+            DalamudApi.LogInfo($"[TeleportMenu] ShareLocation failed: {ex.Message}");
         }
     }
 

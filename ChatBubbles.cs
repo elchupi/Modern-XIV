@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -52,6 +52,11 @@ public static class ChatBubbles
         // later if needed.
         public Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload MapLink;
         public Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload    ItemLink;
+
+        // Per-bubble hover alpha — exp-lerps toward 1 while the cursor
+        // is over the bubble, back to 0 otherwise. Drives the channel-
+        // colored outline so it fades in/out instead of popping.
+        public float HoverAlpha;
     }
 
     // Same-sender merge window. Consecutive messages within this many
@@ -156,6 +161,25 @@ public static class ChatBubbles
     // once we've actually attempted backfill so we don't repeat.
     private static bool   _backfillAttempted;
     private static double _backfillRunAt;
+
+    // Win32 mouse polling for bubble click dispatch. Foreground draw-
+    // list hit targets don't reliably receive ImGui MouseClicked events
+    // in Dalamud, so we poll the OS directly and edge-detect via
+    // _prevMouseDown. VK_LBUTTON = 0x01; high bit = currently pressed.
+    private static bool _prevMouseDown;
+    private const int VkLButton = 0x01;
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out CbPoint lpPoint);
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct CbPoint { public int X; public int Y; }
+    // Edge-tracked hover state. Calling SetCursorType every frame
+    // races with the game's per-frame cursor reset and fires the
+    // cursor-tick SE non-stop, so we only invoke it on enter / exit.
+    private static bool _bubbleHoverState;
+    private static bool _bubbleHoverInsideAny;
 
     public static void Initialize()
     {
@@ -916,49 +940,94 @@ public static class ChatBubbles
             curY = blockTop - 6f; // 6px gap between bubbles
         }
 
-        // ---- Bubble click dispatch ----
-        // Hit-test the cursor against each registered click target and
-        // open the link if the user left-clicked. Skipped while FPS
-        // mouselook is active — the OS cursor is hidden and would dispatch
-        // accidentally as it drifts around the screen.
-        if (clickTargets.Count > 0 && !CameraDynamics.IsMouseLookActive)
+        // ---- Bubble hover + click dispatch ----
+        // Per-bubble hover alpha exp-lerps toward 1 while the cursor is
+        // inside the bubble, back to 0 otherwise. The channel-colored
+        // outline is drawn for every bubble with HoverAlpha > 0 so the
+        // fade-out keeps rendering after the cursor leaves. Click
+        // detection uses Win32 polling (GetAsyncKeyState + GetCursorPos)
+        // because Dalamud's ImGui doesn't reliably surface MouseClicked
+        // on foreground-drawlist hit targets when no ImGui window owns
+        // the click — same pattern the compass uses. Skipped while FPS
+        // mouselook is active — the OS cursor is hidden and would fire
+        // accidentally as it drifts around screen.
+        bool dispatchActive = !CameraDynamics.IsMouseLookActive;
+        Vector2 mousePos = default;
+        if (GetCursorPos(out var cp))
+            mousePos = new Vector2(cp.X, cp.Y);
+        else
+            dispatchActive = false;
+
+        bool mouseDownNow = (GetAsyncKeyState(VkLButton) & 0x8000) != 0;
+        bool clickEdge = mouseDownNow && !_prevMouseDown;
+        _prevMouseDown = mouseDownNow;
+
+        float dtHover;
+        try { dtHover = ImGui.GetIO().DeltaTime; } catch { dtHover = 0.016f; }
+        if (dtHover <= 0f) dtHover = 0.016f;
+        float hoverK = 1f - MathF.Exp(-12f * dtHover); // ~0.08s to settle
+
+        Entry clickEntry = null;
+        foreach (var (min, max, entry) in clickTargets)
+        {
+            bool inside = dispatchActive
+                && mousePos.X >= min.X && mousePos.X < max.X
+                && mousePos.Y >= min.Y && mousePos.Y < max.Y;
+
+            entry.HoverAlpha += ((inside ? 1f : 0f) - entry.HoverAlpha) * hoverK;
+
+            if (entry.HoverAlpha > 0.01f)
+            {
+                var hoverC = ChannelTextColor(entry.Channel, entry.FromSelf);
+                hoverC.W = 0.85f * entry.HoverAlpha;
+                dl.AddRect(min, max, PackRgba(hoverC), 8f, 0, 1.5f);
+            }
+
+            if (inside)
+            {
+                if (!_bubbleHoverInsideAny) _bubbleHoverInsideAny = true;
+                if (clickEntry == null && clickEdge)
+                    clickEntry = entry;
+            }
+        }
+
+        // Cursor on hover — edge-only writes (see Compass.cs for
+        // the long version; per-frame SetCursorType spams SE and
+        // per-frame direct Type writes get clobbered by the game's
+        // own cursor logic, so we only have a clean window on edges).
+        bool wantHover = _bubbleHoverInsideAny;
+        if (wantHover != _bubbleHoverState)
         {
             try
             {
-                var mp = ImGui.GetIO().MousePos;
-                foreach (var (min, max, entry) in clickTargets)
+                var stage = FFXIVClientStructs.FFXIV.Component.GUI.AtkStage.Instance();
+                if (stage != null)
                 {
-                    if (mp.X < min.X || mp.X >= max.X || mp.Y < min.Y || mp.Y >= max.Y)
-                        continue;
-
-                    // Subtle hover indicator — thin border in the channel
-                    // text color so it's obvious which bubble's link will
-                    // fire. Drawn on the foreground draw list at the same
-                    // rounding as the bubble fill.
-                    var hoverC = ChannelTextColor(entry.Channel, entry.FromSelf);
-                    hoverC.W = 0.85f;
-                    dl.AddRect(min, max, PackRgba(hoverC), 8f, 0, 1.5f);
-                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-
-                    if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-                    {
-                        try
-                        {
-                            if (entry.MapLink != null)
-                                DalamudApi.GameGui.OpenMapWithMapLink(entry.MapLink);
-                            else if (entry.ItemLink != null)
-                                PrintItemLinkToChat(entry.ItemLink);
-                        }
-                        catch (Exception ex)
-                        {
-                            try { DalamudApi.PluginLog.Warning(
-                                $"[noWickyXIV] ChatBubbles link dispatch failed: {ex.Message}"); } catch { }
-                        }
-                    }
-                    break; // only one bubble at a time
+                    var t = wantHover
+                        ? FFXIVClientStructs.FFXIV.Component.GUI.AtkCursor.CursorType.Clickable
+                        : FFXIVClientStructs.FFXIV.Component.GUI.AtkCursor.CursorType.Arrow;
+                    stage->AtkCursor.SetCursorType(t, true);
                 }
             }
-            catch { /* defensive */ }
+            catch { }
+            _bubbleHoverState = wantHover;
+        }
+        _bubbleHoverInsideAny = false;
+
+        if (clickEntry != null)
+        {
+            try
+            {
+                if (clickEntry.MapLink != null)
+                    OpenMapLink(clickEntry.MapLink);
+                else if (clickEntry.ItemLink != null)
+                    OpenItemLink(clickEntry.ItemLink);
+            }
+            catch (Exception ex)
+            {
+                try { DalamudApi.PluginLog.Warning(
+                    $"[noWickyXIV] ChatBubbles link dispatch failed: {ex.Message}"); } catch { }
+            }
         }
 
         // No visible scrollbar — wheel scroll is functional via
@@ -1111,41 +1180,94 @@ public static class ChatBubbles
     // path is to echo the link into the standard chat log — from there
     // the player gets the full native interaction (hover for tooltip,
     // click for context menu, send to market board, etc.).
-    private static unsafe void PrintItemLinkToChat(
-        Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload payload)
+    // Map link click flow. Three things to try, in order of reliability:
+    //   1. AgentMap.OpenMapByMapLink(MapLinkInfo*) — the exact entry
+    //      point FFXIV's own chat link click invokes, but it needs a
+    //      MapLinkInfo struct we'd have to construct via interop.
+    //   2. AgentMap.OpenMap + SetFlagMapMarker — works when the agent
+    //      is in a good state; can silently no-op if the signature
+    //      bound at compile-time doesn't match the runtime function.
+    //   3. IGameGui.OpenMapWithMapLink — Dalamud-side path that builds
+    //      a SeString and calls AtkModule.OpenMapWithMapLink. Was
+    //      observed setting the flag but not opening the window on
+    //      first invocation.
+    // Run #2 + #3 + log payload state so we can see which path needs
+    // more work; either is sufficient if it lands.
+    private static unsafe void OpenMapLink(
+        Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload ml)
     {
+        if (ml == null) return;
+
+        uint terrId = 0u, mapId = 0u;
+        try { terrId = ml.TerritoryType.RowId; } catch { }
+        try { mapId  = ml.Map.RowId; } catch { }
+
+        // File diag — written to Desktop\chat_maplink.txt so we can see
+        // the click reached us without trawling xllog.
         try
         {
-            // Look up the item name so the link has visible text. Use the
-            // Lumina sheet directly via ItemId (avoids RowRef churn).
-            string name = "Item";
-            try
-            {
-                var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-                var row = sheet?.GetRow(payload.ItemId);
-                if (row.HasValue)
-                {
-                    var n = row.Value.Name.ExtractText();
-                    if (!string.IsNullOrEmpty(n)) name = n;
-                }
-            }
-            catch { }
+            string path = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+                "chat_maplink.txt");
+            string line = $"{DateTime.Now:HH:mm:ss.fff} terr={terrId} map={mapId} " +
+                          $"raw=({ml.RawX},{ml.RawY}) coords=({ml.XCoord:F1},{ml.YCoord:F1}) " +
+                          $"placeName=\"{ml.PlaceName ?? ""}\"\n";
+            System.IO.File.AppendAllText(path, line);
+        }
+        catch { }
 
-            // Build the SeString: ItemPayload  TextPayload(name)  end-of-link.
-            var se = new Dalamud.Game.Text.SeStringHandling.SeString(
-                payload,
-                new Dalamud.Game.Text.SeStringHandling.Payloads.UIForegroundPayload(0x0225),
-                new Dalamud.Game.Text.SeStringHandling.Payloads.UIGlowPayload(0x0226),
-                new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload("" + name + ""),
-                Dalamud.Game.Text.SeStringHandling.Payloads.UIGlowPayload.UIGlowOff,
-                Dalamud.Game.Text.SeStringHandling.Payloads.UIForegroundPayload.UIForegroundOff,
-                Dalamud.Game.Text.SeStringHandling.Payloads.RawPayload.LinkTerminator);
-            DalamudApi.ChatGui.Print(new Dalamud.Game.Text.XivChatEntry { Message = se });
+        bool flagged = false;
+        try
+        {
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap.Instance();
+            if (agent != null && terrId != 0u && mapId != 0u)
+            {
+                agent->SetFlagMapMarker(terrId, mapId, ml.RawX / 1000f, ml.RawY / 1000f);
+                agent->OpenMap(mapId, terrId);
+                flagged = true;
+            }
         }
         catch (Exception ex)
         {
             try { DalamudApi.PluginLog.Warning(
-                $"[noWickyXIV] ChatBubbles PrintItemLinkToChat failed: {ex.Message}"); } catch { }
+                $"[noWickyXIV] OpenMapLink AgentMap path threw: {ex.Message}"); } catch { }
+        }
+
+        // Always also fire Dalamud's API — if the AgentMap call no-oped
+        // silently the GameGui path may still pop the window.
+        try
+        {
+            DalamudApi.GameGui.OpenMapWithMapLink(ml);
+            try { DalamudApi.PluginLog.Info(
+                $"[noWickyXIV] OpenMapLink: GameGui dispatched (agentFlagged={flagged})"); } catch { }
+        }
+        catch (Exception ex)
+        {
+            try { DalamudApi.PluginLog.Warning(
+                $"[noWickyXIV] OpenMapLink GameGui path threw: {ex.Message}"); } catch { }
+        }
+    }
+
+    private static void OpenItemLink(
+        Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload payload)
+    {
+        try
+        {
+            string name = null;
+            try
+            {
+                var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+                var row = sheet?.GetRow(payload.ItemId);
+                if (row.HasValue) name = row.Value.Name.ExtractText();
+            }
+            catch { }
+            if (string.IsNullOrEmpty(name)) return;
+            ChatSend.Send($"/itemsearch {name}");
+        }
+        catch (Exception ex)
+        {
+            try { DalamudApi.PluginLog.Warning(
+                $"[noWickyXIV] ChatBubbles OpenItemLink failed: {ex.Message}"); } catch { }
         }
     }
 
@@ -1228,12 +1350,6 @@ public static class ChatBubbles
         bool hasMapLink = false;
         bool hasItemLink = false;
         var sb = new System.Text.StringBuilder();
-        // Sender SeString from chat events typically encodes the
-        // player as a PlayerPayload (full name "First Last") followed
-        // by a TextPayload with the shortened display form
-        // (e.g. "First L."). Both got appended → "First LastFirst L.".
-        // Track when we just emitted a PlayerPayload's name and skip
-        // the next text payload if it's a prefix-match of that name.
         string lastPlayerName = null;
         try
         {
@@ -1241,40 +1357,11 @@ public static class ChatBubbles
             {
                 switch (p)
                 {
-                    case Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload ml:
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.MapLinkPayload _:
                         hasMapLink = true;
-                        // MapLinkPayload exposes structured fields —
-                        // use them directly so we get the place name
-                        // + coords regardless of which surrounding
-                        // payloads exist.
-                        try
-                        {
-                            var pn = ml.PlaceName ?? "";
-                            var coord = ml.CoordinateString ?? "";
-                            if (!string.IsNullOrEmpty(pn) || !string.IsNullOrEmpty(coord))
-                                sb.Append($"{pn} {coord}".Trim()).Append(' ');
-                        }
-                        catch { }
                         break;
-                    case Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload ip:
+                    case Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload _:
                         hasItemLink = true;
-                        try
-                        {
-                            // Look up the item name from the Lumina
-                            // Item sheet directly via ItemId — avoids
-                            // RowRef API churn between Dalamud
-                            // versions and works with both regular
-                            // and HQ item IDs.
-                            var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-                            var row = sheet?.GetRow(ip.ItemId);
-                            if (row.HasValue)
-                            {
-                                var name = row.Value.Name.ExtractText() ?? "";
-                                if (!string.IsNullOrEmpty(name))
-                                    sb.Append(name).Append(' ');
-                            }
-                        }
-                        catch { }
                         break;
                     case Dalamud.Game.Text.SeStringHandling.Payloads.IconPayload _:
                         // Skip — game-icon glyph in private-use area.
@@ -1295,11 +1382,6 @@ public static class ChatBubbles
                         try
                         {
                             var t = tp.Text ?? "";
-                            // Skip the duplicate shorthand display name
-                            // FFXIV emits right after a PlayerPayload
-                            // (e.g. "Zykov R." after "Zykov Romanov").
-                            // Heuristic: starts with the same first
-                            // word as the PlayerPayload AND is short.
                             if (lastPlayerName != null
                                 && IsShorthandOf(t, lastPlayerName))
                             {

@@ -73,11 +73,161 @@ public class PlayerNicknameEntry
 public class UiStylePreset
 {
     public string  Name       = "New Style";
+
+    // ── Global UI palette ─────────────────────────────────────
     public Vector4 Background = new(0.26f, 0.28f, 0.31f, 1.00f);
     public Vector4 Border     = new(0.14f, 0.12f, 0.12f, 0.53f);
     public Vector4 Accent     = new(0.24f, 0.90f, 0.46f, 1.00f);
     public Vector4 Text       = new(1.00f, 1.00f, 1.00f, 1.00f);
     public Vector4 Hover      = new(0.38f, 0.50f, 0.48f, 0.85f);
+
+    // ── Teleport menu ─────────────────────────────────────────
+    public Vector4 TpBackground     = new(0.06f, 0.06f, 0.10f, 0.94f);
+    public Vector4 TpBorder         = new(0.75f, 0.60f, 0.20f, 0.65f);
+    public Vector4 TpTitle          = new(1.00f, 0.85f, 0.35f, 1.00f);
+    public Vector4 TpSeparator      = new(1.00f, 1.00f, 1.00f, 0.08f);
+    public Vector4 TpSearchBg       = new(0.12f, 0.12f, 0.18f, 0.90f);
+    public Vector4 TpSearchBorder   = new(0.50f, 0.40f, 0.15f, 0.40f);
+    public Vector4 TpSearchText     = new(1f, 1f, 1f, 1f);
+    public Vector4 TpSearchHint     = new(0.50f, 0.50f, 0.55f, 0.70f);
+    public Vector4 TpText           = new(1.00f, 1.00f, 1.00f, 1.00f);
+    public Vector4 TpFcButton       = new(0.55f, 0.35f, 0.12f, 0.85f);
+    public Vector4 TpFcButtonHover  = new(0.70f, 0.45f, 0.18f, 0.90f);
+    public Vector4 TpFcButtonActive = new(0.85f, 0.55f, 0.22f, 0.95f);
+    public Vector4 TpSecondaryButton       = new(0.20f, 0.20f, 0.28f, 0.85f);
+    public Vector4 TpSecondaryButtonHover  = new(0.30f, 0.30f, 0.40f, 0.90f);
+    public Vector4 TpSecondaryButtonActive = new(0.40f, 0.40f, 0.55f, 0.95f);
+    public Vector4 TpSectionLabel   = new(0.80f, 0.70f, 0.35f, 0.60f);
+    public Vector4 TpRegionLabel    = new(0.95f, 0.78f, 0.30f, 1.00f);
+    public Vector4 TpRowHover       = new(0.75f, 0.60f, 0.20f, 0.30f);
+    public Vector4 TpRowActive      = new(0.75f, 0.60f, 0.20f, 0.45f);
+    public Vector4 TpRowNavHighlight = new(0.85f, 0.70f, 0.25f, 0.55f);
+    public Vector4 TpCostText       = new(0.70f, 0.70f, 0.60f, 0.70f);
+    public Vector4 TpScrollbarBg    = new(0.06f, 0.06f, 0.10f, 0.40f);
+    public Vector4 TpScrollbarGrab  = new(0.60f, 0.50f, 0.20f, 0.40f);
+    public Vector4 TpScrollbarHover = new(0.80f, 0.65f, 0.25f, 0.60f);
+    public Vector4 TpScrollbarActive = new(0.95f, 0.75f, 0.30f, 0.80f);
+    public Vector4 TpChevron        = new(0.80f, 0.65f, 0.25f, 0.80f);
+
+    // ── Compass ───────────────────────────────────────────────
+    public Vector4 CompassBarColor   = new(0f, 0f, 0f, 0.45f);
+    public Vector4 CompassTickColor  = new(1f, 1f, 1f, 0.85f);
+    public Vector4 CompassPartyPill  = new(0f, 1f, 1f, 1f);
+    public Vector4 CompassPartyText  = new(0f, 0f, 0f, 1f);
+
+    // ── Chat bubbles ──────────────────────────────────────────
+    public Vector4 ChatSelfBubble  = new(0.20f, 0.55f, 0.95f, 0.85f);
+    public Vector4 ChatOtherBubble = new(0.18f, 0.18f, 0.22f, 0.85f);
+
+    /// <summary>Snapshot every color from the live Configuration.</summary>
+    public void CaptureFrom(Configuration cfg)
+    {
+        // Global
+        Background = cfg.UiColorBackground;
+        Border     = cfg.UiColorBorder;
+        Accent     = cfg.UiColorAccent;
+        Text       = cfg.UiColorText;
+        Hover      = cfg.UiColorHover;
+
+        // Teleport
+        TpBackground     = cfg.TpColorBackground;
+        TpBorder         = cfg.TpColorBorder;
+        TpTitle          = cfg.TpColorTitle;
+        TpSeparator      = cfg.TpColorSeparator;
+        TpSearchBg       = cfg.TpColorSearchBg;
+        TpSearchBorder   = cfg.TpColorSearchBorder;
+        TpSearchText     = cfg.TpColorSearchText;
+        TpSearchHint     = cfg.TpColorSearchHint;
+        TpText           = cfg.TpColorText;
+        TpFcButton       = cfg.TpColorFcButton;
+        TpFcButtonHover  = cfg.TpColorFcButtonHover;
+        TpFcButtonActive = cfg.TpColorFcButtonActive;
+        TpSecondaryButton       = cfg.TpColorSecondaryButton;
+        TpSecondaryButtonHover  = cfg.TpColorSecondaryButtonHover;
+        TpSecondaryButtonActive = cfg.TpColorSecondaryButtonActive;
+        TpSectionLabel   = cfg.TpColorSectionLabel;
+        TpRegionLabel    = cfg.TpColorRegionLabel;
+        TpRowHover       = cfg.TpColorRowHover;
+        TpRowActive      = cfg.TpColorRowActive;
+        TpRowNavHighlight = cfg.TpColorRowNavHighlight;
+        TpCostText       = cfg.TpColorCostText;
+        TpScrollbarBg    = cfg.TpColorScrollbarBg;
+        TpScrollbarGrab  = cfg.TpColorScrollbarGrab;
+        TpScrollbarHover = cfg.TpColorScrollbarHover;
+        TpScrollbarActive = cfg.TpColorScrollbarActive;
+        TpChevron        = cfg.TpColorChevron;
+
+        // Compass
+        CompassBarColor  = new(cfg.CompassBarColorR, cfg.CompassBarColorG, cfg.CompassBarColorB, cfg.CompassBarColorA);
+        CompassTickColor = new(cfg.CompassTickColorR, cfg.CompassTickColorG, cfg.CompassTickColorB, cfg.CompassTickColorA);
+        CompassPartyPill = cfg.CompassPartyPillColor;
+        CompassPartyText = cfg.CompassPartyTextColor;
+
+        // Chat bubbles
+        ChatSelfBubble  = new(cfg.ChatBubblesSelfR, cfg.ChatBubblesSelfG, cfg.ChatBubblesSelfB, cfg.ChatBubblesSelfAlpha);
+        ChatOtherBubble = new(cfg.ChatBubblesOtherR, cfg.ChatBubblesOtherG, cfg.ChatBubblesOtherB, cfg.ChatBubblesOtherAlpha);
+    }
+
+    /// <summary>Write every color back to the live Configuration.</summary>
+    public void ApplyTo(Configuration cfg)
+    {
+        // Global
+        cfg.UiColorBackground = Background;
+        cfg.UiColorBorder     = Border;
+        cfg.UiColorAccent     = Accent;
+        cfg.UiColorText       = Text;
+        cfg.UiColorHover      = Hover;
+
+        // Teleport
+        cfg.TpColorBackground     = TpBackground;
+        cfg.TpColorBorder         = TpBorder;
+        cfg.TpColorTitle          = TpTitle;
+        cfg.TpColorSeparator      = TpSeparator;
+        cfg.TpColorSearchBg       = TpSearchBg;
+        cfg.TpColorSearchBorder   = TpSearchBorder;
+        cfg.TpColorSearchText     = TpSearchText;
+        cfg.TpColorSearchHint     = TpSearchHint;
+        cfg.TpColorText           = TpText;
+        cfg.TpColorFcButton       = TpFcButton;
+        cfg.TpColorFcButtonHover  = TpFcButtonHover;
+        cfg.TpColorFcButtonActive = TpFcButtonActive;
+        cfg.TpColorSecondaryButton       = TpSecondaryButton;
+        cfg.TpColorSecondaryButtonHover  = TpSecondaryButtonHover;
+        cfg.TpColorSecondaryButtonActive = TpSecondaryButtonActive;
+        cfg.TpColorSectionLabel   = TpSectionLabel;
+        cfg.TpColorRegionLabel    = TpRegionLabel;
+        cfg.TpColorRowHover       = TpRowHover;
+        cfg.TpColorRowActive      = TpRowActive;
+        cfg.TpColorRowNavHighlight = TpRowNavHighlight;
+        cfg.TpColorCostText       = TpCostText;
+        cfg.TpColorScrollbarBg    = TpScrollbarBg;
+        cfg.TpColorScrollbarGrab  = TpScrollbarGrab;
+        cfg.TpColorScrollbarHover = TpScrollbarHover;
+        cfg.TpColorScrollbarActive = TpScrollbarActive;
+        cfg.TpColorChevron        = TpChevron;
+
+        // Compass
+        cfg.CompassBarColorR  = CompassBarColor.X;
+        cfg.CompassBarColorG  = CompassBarColor.Y;
+        cfg.CompassBarColorB  = CompassBarColor.Z;
+        cfg.CompassBarColorA  = CompassBarColor.W;
+        cfg.CompassTickColorR = CompassTickColor.X;
+        cfg.CompassTickColorG = CompassTickColor.Y;
+        cfg.CompassTickColorB = CompassTickColor.Z;
+        cfg.CompassTickColorA = CompassTickColor.W;
+        cfg.CompassPartyPillColor = CompassPartyPill;
+        cfg.CompassPartyTextColor = CompassPartyText;
+
+        // Chat bubbles
+        cfg.ChatBubblesSelfR      = ChatSelfBubble.X;
+        cfg.ChatBubblesSelfG      = ChatSelfBubble.Y;
+        cfg.ChatBubblesSelfB      = ChatSelfBubble.Z;
+        cfg.ChatBubblesSelfAlpha  = ChatSelfBubble.W;
+        cfg.ChatBubblesOtherR     = ChatOtherBubble.X;
+        cfg.ChatBubblesOtherG     = ChatOtherBubble.Y;
+        cfg.ChatBubblesOtherB     = ChatOtherBubble.Z;
+        cfg.ChatBubblesOtherAlpha = ChatOtherBubble.W;
+    }
 }
 
 // Per-slot custom file path for a specific mount's audio pack.

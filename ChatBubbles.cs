@@ -1253,16 +1253,32 @@ public static class ChatBubbles
     {
         try
         {
+            uint rawId = payload.ItemId;
+            bool isHq = rawId > 1000000;
+            if (isHq) rawId -= 1000000;
+
             string name = null;
             try
             {
                 var sheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
-                var row = sheet?.GetRow(payload.ItemId);
+                var row = sheet?.GetRow(rawId);
                 if (row.HasValue) name = row.Value.Name.ExtractText();
             }
             catch { }
             if (string.IsNullOrEmpty(name)) return;
-            ChatSend.Send($"/itemsearch {name}");
+
+            var seStr = new Dalamud.Game.Text.SeStringHandling.SeString(new System.Collections.Generic.List<Dalamud.Game.Text.SeStringHandling.Payload>
+            {
+                payload,
+                new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(
+                    (isHq ? " " : "") + name),
+                Dalamud.Game.Text.SeStringHandling.Payloads.RawPayload.LinkTerminator,
+            });
+            DalamudApi.ChatGui.Print(new Dalamud.Game.Text.XivChatEntry
+            {
+                Message = seStr,
+                Type = Dalamud.Game.Text.XivChatType.Echo,
+            });
         }
         catch (Exception ex)
         {

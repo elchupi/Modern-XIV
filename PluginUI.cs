@@ -106,14 +106,6 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Style"))
-            {
-                if (ImGui.BeginChild("##style_scroll"))
-                    DrawStyleTab();
-                ImGui.EndChild();
-                ImGui.EndTabItem();
-            }
-
             if (ImGui.BeginTabItem("Quick Menu"))
             {
                 if (ImGui.BeginChild("##quickmenu_scroll"))
@@ -296,7 +288,14 @@ public static class PluginUI
 
         ImGuiEx.SetItemTooltip("You can CTRL + Left Click sliders to input values manually.");
 
-        ImGui.BeginChild("CammyPresetList", new Vector2(250 * ImGuiHelpers.GlobalScale, 0), true);
+        // ── Left column: camera presets + style profiles ────────
+        float leftW = 250 * ImGuiHelpers.GlobalScale;
+        ImGui.BeginChild("PresetLeftColumn", new Vector2(leftW, 0), false);
+
+        // Camera presets list — takes ~60 % of available height.
+        float camListH = ImGui.GetContentRegionAvail().Y * 0.6f;
+        ImGui.TextDisabled("Camera Presets");
+        ImGui.BeginChild("CammyPresetList", new Vector2(0, camListH), true);
 
         for (int i = 0; i < noWickyXIV.Config.Presets.Count; i++)
         {
@@ -323,6 +322,12 @@ public static class PluginUI
         }
 
         ImGui.EndChild();
+
+        // ── Style profiles ───────────────────────────────────────
+        ImGui.Spacing();
+        DrawStyleProfilesPanel();
+
+        ImGui.EndChild(); // end left column
 
         if (!hasSelectedPreset) return;
 
@@ -4360,124 +4365,209 @@ public static class PluginUI
 
     private static int _styleRenameIndex = -1;
     private static string _styleRenameBuf = "";
+    private static int _selectedStyleProfile = -1;
 
-    private static void DrawStyleTab()
+    /// <summary>
+    /// Style-profiles panel drawn in the left column of the Presets
+    /// tab, underneath the camera-preset list. Dropdown selects a
+    /// saved profile; collapsible groups expose every color the plugin
+    /// uses across teleport menu, compass, chat bubbles, and the
+    /// shared UI palette.
+    /// </summary>
+    private static void DrawStyleProfilesPanel()
     {
         var cfg = noWickyXIV.Config;
 
-        if (ImGuiEx.BeginGroupBox("Active colors"))
+        ImGui.TextDisabled("Style Profiles");
+
+        ImGui.BeginChild("StyleProfilesPanel", ImGui.GetContentRegionAvail(), true);
+
+        // ── Profile dropdown ──────────────────────────────────────
+        var profiles = cfg.UiStylePresets;
+        string previewLabel = (_selectedStyleProfile >= 0 && _selectedStyleProfile < profiles.Count)
+            ? profiles[_selectedStyleProfile].Name
+            : "(none)";
+
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+        if (ImGui.BeginCombo("##StyleProfileCombo", previewLabel))
         {
-            ImGui.TextDisabled(
-                "Shared color palette applied to Quick Menu, MSQ Teleport,\n" +
-                "and other overlay panels. Changes take effect immediately.");
-            TpColorPicker("Background##UiProfile", ref cfg.UiColorBackground);
-            TpColorPicker("Border##UiProfile",     ref cfg.UiColorBorder);
-            TpColorPicker("Accent##UiProfile",     ref cfg.UiColorAccent);
-            TpColorPicker("Text##UiProfile",       ref cfg.UiColorText);
-            TpColorPicker("Hover##UiProfile",      ref cfg.UiColorHover);
-            ImGuiEx.EndGroupBox();
-        }
-
-        if (ImGuiEx.BeginGroupBox("Style presets"))
-        {
-            if (ImGui.Button("+ Save current as preset"))
+            for (int i = 0; i < profiles.Count; i++)
             {
-                var p = new UiStylePreset
+                bool selected = _selectedStyleProfile == i;
+                if (ImGui.Selectable(profiles[i].Name, selected))
                 {
-                    Name       = $"Style {cfg.UiStylePresets.Count + 1}",
-                    Background = cfg.UiColorBackground,
-                    Border     = cfg.UiColorBorder,
-                    Accent     = cfg.UiColorAccent,
-                    Text       = cfg.UiColorText,
-                    Hover      = cfg.UiColorHover,
-                };
-                cfg.UiStylePresets.Add(p);
-                cfg.SaveDebounced();
-            }
-
-            int removeIdx = -1;
-            for (int i = 0; i < cfg.UiStylePresets.Count; i++)
-            {
-                var p = cfg.UiStylePresets[i];
-                ImGui.PushID(i);
-                ImGui.Separator();
-
-                if (_styleRenameIndex == i)
-                {
-                    ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
-                    if (ImGui.InputText("##rename", ref _styleRenameBuf, 64,
-                            ImGuiInputTextFlags.EnterReturnsTrue))
-                    {
-                        p.Name = _styleRenameBuf;
-                        _styleRenameIndex = -1;
-                        cfg.SaveDebounced();
-                    }
-                    ImGui.SameLine();
-                    if (ImGui.Button("OK"))
-                    {
-                        p.Name = _styleRenameBuf;
-                        _styleRenameIndex = -1;
-                        cfg.SaveDebounced();
-                    }
-                }
-                else
-                {
-                    ImGui.Text(p.Name);
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton("Rename"))
-                    {
-                        _styleRenameIndex = i;
-                        _styleRenameBuf = p.Name;
-                    }
-                }
-
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Apply"))
-                {
-                    cfg.UiColorBackground = p.Background;
-                    cfg.UiColorBorder     = p.Border;
-                    cfg.UiColorAccent     = p.Accent;
-                    cfg.UiColorText       = p.Text;
-                    cfg.UiColorHover      = p.Hover;
+                    _selectedStyleProfile = i;
+                    profiles[i].ApplyTo(cfg);
                     cfg.SaveDebounced();
                 }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Update"))
-                {
-                    p.Background = cfg.UiColorBackground;
-                    p.Border     = cfg.UiColorBorder;
-                    p.Accent     = cfg.UiColorAccent;
-                    p.Text       = cfg.UiColorText;
-                    p.Hover      = cfg.UiColorHover;
-                    cfg.SaveDebounced();
-                }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Delete"))
-                    removeIdx = i;
-
-                TpColorPicker("Bg##sp",     ref p.Background);
-                ImGui.SameLine();
-                TpColorPicker("Border##sp", ref p.Border);
-                ImGui.SameLine();
-                TpColorPicker("Accent##sp", ref p.Accent);
-                ImGui.SameLine();
-                TpColorPicker("Text##sp",   ref p.Text);
-                ImGui.SameLine();
-                TpColorPicker("Hover##sp",  ref p.Hover);
-
-                ImGui.PopID();
+                if (selected) ImGui.SetItemDefaultFocus();
             }
+            ImGui.EndCombo();
+        }
 
-            if (removeIdx >= 0)
+        // ── Action buttons ────────────────────────────────────────
+        bool hasProfile = _selectedStyleProfile >= 0 && _selectedStyleProfile < profiles.Count;
+
+        ImGui.PushFont(UiBuilder.IconFont);
+
+        // Save new
+        if (ImGui.Button(FontAwesomeIcon.PlusCircle.ToIconString() + "##StyleNew"))
+        {
+            var p = new UiStylePreset { Name = $"Style {profiles.Count + 1}" };
+            p.CaptureFrom(cfg);
+            profiles.Add(p);
+            _selectedStyleProfile = profiles.Count - 1;
+            cfg.SaveDebounced();
+        }
+        ImGuiEx.SetItemTooltip("Save current colours as new profile");
+
+        ImGui.SameLine();
+
+        // Overwrite selected
+        if (ImGui.Button(FontAwesomeIcon.Save.ToIconString() + "##StyleOverwrite") && hasProfile)
+        {
+            profiles[_selectedStyleProfile].CaptureFrom(cfg);
+            cfg.SaveDebounced();
+        }
+        ImGuiEx.SetItemTooltip("Overwrite selected profile with current colours");
+
+        ImGui.SameLine();
+
+        // Rename
+        if (ImGui.Button(FontAwesomeIcon.Pen.ToIconString() + "##StyleRename") && hasProfile)
+        {
+            _styleRenameIndex = _selectedStyleProfile;
+            _styleRenameBuf = profiles[_selectedStyleProfile].Name;
+        }
+        ImGuiEx.SetItemTooltip("Rename selected profile");
+
+        ImGui.SameLine();
+
+        // Delete
+        if (ImGui.Button(FontAwesomeIcon.TrashAlt.ToIconString() + "##StyleDelete") && hasProfile)
+        {
+            profiles.RemoveAt(_selectedStyleProfile);
+            if (_styleRenameIndex == _selectedStyleProfile) _styleRenameIndex = -1;
+            else if (_styleRenameIndex > _selectedStyleProfile) _styleRenameIndex--;
+            _selectedStyleProfile = Math.Min(_selectedStyleProfile, profiles.Count - 1);
+            cfg.SaveDebounced();
+        }
+        ImGuiEx.SetItemTooltip("Delete selected profile");
+
+        ImGui.PopFont();
+
+        // ── Inline rename ─────────────────────────────────────────
+        if (_styleRenameIndex >= 0 && _styleRenameIndex < profiles.Count)
+        {
+            ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 30 * ImGuiHelpers.GlobalScale);
+            if (ImGui.InputText("##StyleRenameInput", ref _styleRenameBuf, 64,
+                    ImGuiInputTextFlags.EnterReturnsTrue))
             {
-                cfg.UiStylePresets.RemoveAt(removeIdx);
-                if (_styleRenameIndex == removeIdx) _styleRenameIndex = -1;
-                else if (_styleRenameIndex > removeIdx) _styleRenameIndex--;
+                profiles[_styleRenameIndex].Name = _styleRenameBuf;
+                _styleRenameIndex = -1;
                 cfg.SaveDebounced();
             }
-
-            ImGuiEx.EndGroupBox();
+            ImGui.SameLine();
+            if (ImGui.SmallButton("OK##StyleRenameOk"))
+            {
+                profiles[_styleRenameIndex].Name = _styleRenameBuf;
+                _styleRenameIndex = -1;
+                cfg.SaveDebounced();
+            }
         }
+
+        ImGui.Separator();
+
+        // ── Live colour pickers (collapsible groups) ──────────────
+
+        if (ImGui.TreeNode("Global UI"))
+        {
+            TpColorPicker("Background##Ui", ref cfg.UiColorBackground);
+            TpColorPicker("Border##Ui",     ref cfg.UiColorBorder);
+            TpColorPicker("Accent##Ui",     ref cfg.UiColorAccent);
+            TpColorPicker("Text##Ui",       ref cfg.UiColorText);
+            TpColorPicker("Hover##Ui",      ref cfg.UiColorHover);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Teleport Menu"))
+        {
+            TpColorPicker("Background##Tp",   ref cfg.TpColorBackground);
+            TpColorPicker("Border##Tp",       ref cfg.TpColorBorder);
+            TpColorPicker("Title##Tp",        ref cfg.TpColorTitle);
+            TpColorPicker("Separator##Tp",    ref cfg.TpColorSeparator);
+            TpColorPicker("Text##Tp",         ref cfg.TpColorText);
+            TpColorPicker("Cost text##Tp",    ref cfg.TpColorCostText);
+            TpColorPicker("Section label##Tp", ref cfg.TpColorSectionLabel);
+            TpColorPicker("Region label##Tp", ref cfg.TpColorRegionLabel);
+            TpColorPicker("Chevron##Tp",      ref cfg.TpColorChevron);
+            TpColorPicker("Row hover##Tp",    ref cfg.TpColorRowHover);
+            TpColorPicker("Row active##Tp",   ref cfg.TpColorRowActive);
+            TpColorPicker("Row nav HL##Tp",   ref cfg.TpColorRowNavHighlight);
+            TpColorPicker("Search bg##Tp",    ref cfg.TpColorSearchBg);
+            TpColorPicker("Search border##Tp", ref cfg.TpColorSearchBorder);
+            TpColorPicker("Search text##Tp",  ref cfg.TpColorSearchText);
+            TpColorPicker("Search hint##Tp",  ref cfg.TpColorSearchHint);
+            TpColorPicker("FC button##Tp",    ref cfg.TpColorFcButton);
+            TpColorPicker("FC hover##Tp",     ref cfg.TpColorFcButtonHover);
+            TpColorPicker("FC active##Tp",    ref cfg.TpColorFcButtonActive);
+            TpColorPicker("2nd button##Tp",   ref cfg.TpColorSecondaryButton);
+            TpColorPicker("2nd hover##Tp",    ref cfg.TpColorSecondaryButtonHover);
+            TpColorPicker("2nd active##Tp",   ref cfg.TpColorSecondaryButtonActive);
+            TpColorPicker("Scrollbar bg##Tp", ref cfg.TpColorScrollbarBg);
+            TpColorPicker("Scrollbar grab##Tp", ref cfg.TpColorScrollbarGrab);
+            TpColorPicker("Scrollbar hover##Tp", ref cfg.TpColorScrollbarHover);
+            TpColorPicker("Scrollbar active##Tp", ref cfg.TpColorScrollbarActive);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Compass"))
+        {
+            // Compass bar/tick colors are stored as separate R/G/B/A floats
+            // — wrap them with a temp Vector4 for the picker.
+            var barCol = new Vector4(cfg.CompassBarColorR, cfg.CompassBarColorG, cfg.CompassBarColorB, cfg.CompassBarColorA);
+            if (StyleColorPicker4("Bar##Compass", ref barCol))
+            { cfg.CompassBarColorR = barCol.X; cfg.CompassBarColorG = barCol.Y; cfg.CompassBarColorB = barCol.Z; cfg.CompassBarColorA = barCol.W; }
+
+            var tickCol = new Vector4(cfg.CompassTickColorR, cfg.CompassTickColorG, cfg.CompassTickColorB, cfg.CompassTickColorA);
+            if (StyleColorPicker4("Ticks##Compass", ref tickCol))
+            { cfg.CompassTickColorR = tickCol.X; cfg.CompassTickColorG = tickCol.Y; cfg.CompassTickColorB = tickCol.Z; cfg.CompassTickColorA = tickCol.W; }
+
+            TpColorPicker("Party pill##Compass",  ref cfg.CompassPartyPillColor);
+            TpColorPicker("Party text##Compass",  ref cfg.CompassPartyTextColor);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Chat Bubbles"))
+        {
+            var selfCol = new Vector4(cfg.ChatBubblesSelfR, cfg.ChatBubblesSelfG, cfg.ChatBubblesSelfB, cfg.ChatBubblesSelfAlpha);
+            if (StyleColorPicker4("Self bubble##Chat", ref selfCol))
+            { cfg.ChatBubblesSelfR = selfCol.X; cfg.ChatBubblesSelfG = selfCol.Y; cfg.ChatBubblesSelfB = selfCol.Z; cfg.ChatBubblesSelfAlpha = selfCol.W; }
+
+            var otherCol = new Vector4(cfg.ChatBubblesOtherR, cfg.ChatBubblesOtherG, cfg.ChatBubblesOtherB, cfg.ChatBubblesOtherAlpha);
+            if (StyleColorPicker4("Other bubble##Chat", ref otherCol))
+            { cfg.ChatBubblesOtherR = otherCol.X; cfg.ChatBubblesOtherG = otherCol.Y; cfg.ChatBubblesOtherB = otherCol.Z; cfg.ChatBubblesOtherAlpha = otherCol.W; }
+
+            ImGui.TreePop();
+        }
+
+        ImGui.EndChild();
+    }
+
+    /// <summary>ColorEdit4 wrapper that saves on change — for non-Vector4 fields.</summary>
+    private static bool StyleColorPicker4(string label, ref Vector4 color)
+    {
+        const ImGuiColorEditFlags flags =
+              ImGuiColorEditFlags.NoInputs
+            | ImGuiColorEditFlags.AlphaBar
+            | ImGuiColorEditFlags.AlphaPreviewHalf
+            | ImGuiColorEditFlags.DisplayHex;
+        if (ImGui.ColorEdit4($"{label}##StylePicker", ref color, flags))
+        {
+            noWickyXIV.Config.SaveDebounced();
+            return true;
+        }
+        return false;
     }
 
     private static void DrawQuickMenuTab()

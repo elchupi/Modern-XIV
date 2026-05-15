@@ -48,6 +48,40 @@ public static unsafe class TeleportMenu
     public static bool CapturingFcHouse;
     private static uint _captureStartTerritory;
 
+    // ── Safety ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns true only when the game's teleport data structures are
+    /// likely initialised — player is logged in, not in a loading screen,
+    /// and the Telepo singleton itself is non-null.
+    /// Calling <c>Telepo->UpdateAetheryteList()</c> outside these
+    /// conditions can crash (access-violation inside the native func).
+    /// </summary>
+    private static bool IsTelepoSafe()
+    {
+        try
+        {
+            // Not logged in — aetheryte data doesn't exist yet.
+            if (DalamudApi.ObjectTable.LocalPlayer == null) return false;
+
+            // Territory 0 = between zones / loading.
+            if (DalamudApi.ClientState.TerritoryType == 0) return false;
+
+            // Condition flags: BetweenAreas / BetweenAreas51 indicate
+            // the client is mid-zone-transition and game structs may be
+            // partially torn down.
+            if (DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas]
+                || DalamudApi.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas51])
+                return false;
+
+            var telepo = Telepo.Instance();
+            if (telepo == null) return false;
+
+            return true;
+        }
+        catch { return false; }
+    }
+
     // ── Addon intercept ────────────────────────────────────────
     private static bool _hooksRegistered;
 
@@ -149,9 +183,10 @@ public static unsafe class TeleportMenu
         try
         {
             // Refresh Telepo's internal list (picks up housing changes).
-            var telepo = Telepo.Instance();
-            if (telepo != null)
-                telepo->UpdateAetheryteList();
+            // Guard: UpdateAetheryteList dereferences internal pointers
+            // that are null during loading screens / before login.
+            if (IsTelepoSafe())
+                Telepo.Instance()->UpdateAetheryteList();
         }
         catch { }
 
@@ -304,8 +339,8 @@ public static unsafe class TeleportMenu
 
         try
         {
+            if (!IsTelepoSafe()) return false;
             var telepo = Telepo.Instance();
-            if (telepo == null) return false;
 
             // Refresh the internal list before teleporting so IDs are
             // current (housing entries can shift between sessions).
@@ -361,8 +396,8 @@ public static unsafe class TeleportMenu
 
         try
         {
+            if (!IsTelepoSafe()) { DalamudApi.PrintError("Teleport unavailable."); return false; }
             var telepo = Telepo.Instance();
-            if (telepo == null) { DalamudApi.PrintError("Teleport unavailable."); return false; }
             try { telepo->UpdateAetheryteList(); } catch { }
 
             bool ok = telepo->Teleport(cfg.FcHouseAetheryteId, cfg.FcHouseSubIndex);

@@ -80,6 +80,7 @@ public static unsafe class HeadTracker
             if (cfg.CameraHeadLookAutoPrime)
             {
                 cfg.CameraHeadLookMode = 2;
+                try { cfg.Save(); } catch { }
                 _waitingForTarget = true;
             }
         }
@@ -105,6 +106,7 @@ public static unsafe class HeadTracker
             if (_wasEnabled && cfg.CameraHeadLookAutoPrime)
             {
                 cfg.CameraHeadLookMode = 2;
+                try { cfg.Save(); } catch { }
                 _waitingForTarget = true;
                 if (diagThisTick) DiagWrite("REPRIME: Character* changed (redraw/teleport)");
             }
@@ -185,6 +187,7 @@ public static unsafe class HeadTracker
             {
                 _waitingForTarget = false;
                 cfg.CameraHeadLookMode = 1;
+                try { cfg.Save(); } catch { }
                 mode = 1;
                 if (diagThisTick) DiagWrite($"PRIME: target detected ({(ulong)tm.Target.GameObjectId}), switched to mode 1");
             }

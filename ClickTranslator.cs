@@ -938,4 +938,10 @@ public static class ClickTranslator
             dwExtraInfo = SYNTHETIC_TAG
         }}
     };
+
+    internal static void SendKey(int vk)
+    {
+        SendInput(1, new[] { MakeKey(vk, false) }, Marshal.SizeOf<INPUT>());
+        SendInput(1, new[] { MakeKey(vk, true) }, Marshal.SizeOf<INPUT>());
+    }
 }

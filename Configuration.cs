@@ -1443,6 +1443,9 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // Floating pill at top-center that slides down on hover and
     // teleports to the nearest Aetheryte for the current MSQ quest.
     public bool EnableMsqTeleport = false;
+    public ScreenCorner MsqTeleportCorner = ScreenCorner.TopLeft;
+    public float MsqTeleportOffsetX = 0f;
+    public float MsqTeleportOffsetY = 0f;
 
     // ---- Cutscene letterbox removal ----
     // Hides the black cinematic bars during in-game rendered cutscenes
@@ -1569,6 +1572,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float QuickMenuIconGap = 6f;
     public float QuickMenuPadX = 10f;
     public float QuickMenuPadY = 7f;
+    public string[] QuickMenuIconUrls = { "", "", "", "", "" };
 
     // ---- Combat zoom (auto-pull-back during fights) ----
     // When enabled, currentZoom lerps toward CombatZoomDistance while the
@@ -1613,6 +1617,8 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // ID before switching to the user-selected mode. Activates a cold IK so head-look
     // works on plugin reload without requiring manual Mode 2 → target workflow.
     public bool  CameraHeadLookAutoPrime      = true;
+    public float CameraHeadLookSmoothing     = 10f;
+    public float CameraHeadLookSensitivity   = 1f;
 
     // ---- Input Sensitivity (universal — not per-preset) ----
     public float MouseSensitivityMul = 1f;

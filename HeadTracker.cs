@@ -43,6 +43,9 @@ public static unsafe class HeadTracker
 
     private static bool _wasEnabled;
     private static bool _waitingForTarget;
+    private static int  _primeDelayFrames;
+    private static int  _settleFrames;
+    private static bool _wasInEvent;
     // Detect model redraw (teleport / glamour / transformation): when the Character*
     // pointer changes, the LookAt controller has been rebuilt fresh and needs re-prime.
     private static IntPtr _lastCharAddress;
@@ -82,6 +85,7 @@ public static unsafe class HeadTracker
                 cfg.CameraHeadLookMode = 2;
                 try { cfg.Save(); } catch { }
                 _waitingForTarget = true;
+                _primeDelayFrames = 5;
             }
         }
 
@@ -108,9 +112,30 @@ public static unsafe class HeadTracker
                 cfg.CameraHeadLookMode = 2;
                 try { cfg.Save(); } catch { }
                 _waitingForTarget = true;
+                _primeDelayFrames = 5;
                 if (diagThisTick) DiagWrite("REPRIME: Character* changed (redraw/teleport)");
             }
         }
+
+        // NPC dialogue / event resets the game's LookAt IK state.
+        // Re-prime when exiting an event so head tracking resumes.
+        bool inEvent = false;
+        try
+        {
+            inEvent = DalamudApi.Condition[ConditionFlag.OccupiedInEvent]
+                   || DalamudApi.Condition[ConditionFlag.OccupiedInQuestEvent]
+                   || DalamudApi.Condition[ConditionFlag.OccupiedInCutSceneEvent];
+        }
+        catch { }
+        if (_wasInEvent && !inEvent && cfg.CameraHeadLookAutoPrime && !_waitingForTarget)
+        {
+            cfg.CameraHeadLookMode = 2;
+            try { cfg.Save(); } catch { }
+            _waitingForTarget = true;
+            _primeDelayFrames = 5;
+            if (diagThisTick) DiagWrite("REPRIME: exited NPC event");
+        }
+        _wasInEvent = inEvent;
 
         var cam = Common.CameraManager;
         if (cam == null) { if (diagThisTick) DiagWrite("SKIP: CameraManager null"); return; }
@@ -137,13 +162,23 @@ public static unsafe class HeadTracker
             var forward = new Vector3(-sh * cv, ySign * sv, -ch * cv);
 
             var head = new Vector3(lp.Position.X, lp.Position.Y + 1.5f, lp.Position.Z);
-            _cachedPos = head + forward * cfg.CameraHeadLookDistance;
-            _cachedCamPos = new Vector3(wc->viewX, wc->viewY, wc->viewZ);
+
+            // Sensitivity: scale the angular deviation from neutral (player-forward).
+            // sens < 1 = subtler head turns, sens > 1 = exaggerated.
+            float sens = cfg.CameraHeadLookSensitivity;
+            var rawTarget = head + forward * cfg.CameraHeadLookDistance;
 
             // Cone falloff: when camera yaw deviates from player-facing past the limit,
             // fade target toward "look along player-facing" neutral so the IK clamp stops
             // fighting our writes at extreme angles.
             float playerRot = lp.Rotation;
+            var neutral = head + new Vector3(-MathF.Sin(playerRot), 0f, -MathF.Cos(playerRot)) * cfg.CameraHeadLookDistance;
+
+            // Apply sensitivity as a blend between neutral and raw target.
+            var targetPos = Vector3.Lerp(neutral, rawTarget, MathF.Min(sens, 1f));
+            if (sens > 1f)
+                targetPos = rawTarget + (rawTarget - neutral) * (sens - 1f);
+
             float yawDelta  = MathF.Abs(WrapPi(h - (playerRot + MathF.PI)));
             float over = yawDelta - cfg.CameraHeadLookConeLimit;
             if (over <= 0f)
@@ -152,11 +187,22 @@ public static unsafe class HeadTracker
                 _cachedFadeT = MathF.Min(1f, over / MathF.Max(0.05f, cfg.CameraHeadLookConeFalloff));
 
             if (_cachedFadeT > 0f)
+                targetPos = Vector3.Lerp(targetPos, neutral, _cachedFadeT);
+
+            // Smooth: lerp _cachedPos toward targetPos for fluid head movement.
+            // First frame after reload: snap directly (lerp from zero is wrong).
+            if (_cachedPos == Vector3.Zero)
             {
-                var neutral = head + new Vector3(-MathF.Sin(playerRot), 0f, -MathF.Cos(playerRot)) * cfg.CameraHeadLookDistance;
-                _cachedPos = Vector3.Lerp(_cachedPos, neutral, _cachedFadeT);
+                _cachedPos = targetPos;
+            }
+            else
+            {
+                float dt = 1f / 60f;
+                float t = 1f - MathF.Exp(-cfg.CameraHeadLookSmoothing * dt);
+                _cachedPos = Vector3.Lerp(_cachedPos, targetPos, t);
             }
 
+            _cachedCamPos = new Vector3(wc->viewX, wc->viewY, wc->viewZ);
             _lastH = h; _lastV = v;
         }
 
@@ -182,14 +228,36 @@ public static unsafe class HeadTracker
 
         if (_waitingForTarget)
         {
-            var tm = DalamudApi.TargetManager;
-            if (tm.Target != null)
+            if (_primeDelayFrames > 0)
             {
-                _waitingForTarget = false;
-                cfg.CameraHeadLookMode = 1;
-                try { cfg.Save(); } catch { }
-                mode = 1;
-                if (diagThisTick) DiagWrite($"PRIME: target detected ({(ulong)tm.Target.GameObjectId}), switched to mode 1");
+                _primeDelayFrames--;
+            }
+            else if (_primeDelayFrames == 0)
+            {
+                ClickTranslator.SendKey(0x25); // VK_LEFT — cycle target
+                _primeDelayFrames = -1;
+                if (diagThisTick) DiagWrite("PRIME: sent synthetic VK_LEFT");
+            }
+            else if (_settleFrames > 0)
+            {
+                _settleFrames--;
+                if (_settleFrames == 0)
+                {
+                    _waitingForTarget = false;
+                    cfg.CameraHeadLookMode = 1;
+                    try { cfg.Save(); } catch { }
+                    mode = 1;
+                    if (diagThisTick) DiagWrite("PRIME: settle done, switched to mode 1");
+                }
+            }
+            else
+            {
+                var tm = DalamudApi.TargetManager;
+                if (tm.Target != null)
+                {
+                    _settleFrames = 30;
+                    if (diagThisTick) DiagWrite($"PRIME: target detected ({(ulong)tm.Target.GameObjectId}), settling 30 frames on mode 2");
+                }
             }
         }
 

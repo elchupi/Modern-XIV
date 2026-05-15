@@ -164,11 +164,36 @@ public static unsafe class MsqTeleport
         float homeS = HOME_BTN_SIZE * scale;
         float homeGap = HOME_BTN_GAP * scale;
 
-        // Center the pill (home button sits outside to the right).
-        float posX = (disp.X - pw) * 0.5f;
-        float pillY = -ph + _revealT * (ph + 4f);
+        // Position the pill based on the configured corner + offsets.
+        var cfg = noWickyXIV.Config;
+        float ox = cfg.MsqTeleportOffsetX * scale;
+        float oy = cfg.MsqTeleportOffsetY * scale;
+        float totalW = pw + homeGap + homeS;
 
-        // Home button Y: vertically centered with the pill.
+        float anchorX, anchorY;
+        bool slideFromTop;
+        switch (cfg.MsqTeleportCorner)
+        {
+            default:
+            case ScreenCorner.TopLeft:
+                anchorX = ox; anchorY = oy; slideFromTop = true; break;
+            case ScreenCorner.TopRight:
+                anchorX = disp.X - totalW - ox; anchorY = oy; slideFromTop = true; break;
+            case ScreenCorner.TopCenter:
+                anchorX = (disp.X - totalW) * 0.5f + ox; anchorY = oy; slideFromTop = true; break;
+            case ScreenCorner.BottomLeft:
+                anchorX = ox; anchorY = disp.Y - ph - oy; slideFromTop = false; break;
+            case ScreenCorner.BottomRight:
+                anchorX = disp.X - totalW - ox; anchorY = disp.Y - ph - oy; slideFromTop = false; break;
+            case ScreenCorner.BottomCenter:
+                anchorX = (disp.X - totalW) * 0.5f + ox; anchorY = disp.Y - ph - oy; slideFromTop = false; break;
+        }
+
+        float posX = anchorX;
+        float pillY = slideFromTop
+            ? anchorY - ph + _revealT * (ph + 4f)
+            : anchorY + ph - _revealT * (ph + 4f);
+
         float homeBtnX = posX + pw + homeGap;
         float homeBtnY = pillY + (ph - homeS) * 0.5f;
 
@@ -176,7 +201,9 @@ public static unsafe class MsqTeleport
         // The pill and home button each get their own window so hover
         // detection is independent and clicking one doesn't require
         // the other's window to report hovered.
-        float hitH = MathF.Max(stripH, pillY + ph);
+        float hitTop = slideFromTop ? MathF.Min(0f, pillY) : pillY;
+        float hitBot = slideFromTop ? MathF.Max(pillY + ph, stripH) : MathF.Min(disp.Y, pillY + ph + stripH);
+        float hitH = hitBot - hitTop;
         if (hitH < stripH) hitH = stripH;
 
         var hitFlags = ImGuiWindowFlags.NoDecoration
@@ -187,7 +214,7 @@ public static unsafe class MsqTeleport
                      | ImGuiWindowFlags.NoBringToFrontOnFocus;
 
         // — Pill hit-test (pill only) —
-        ImGui.SetNextWindowPos(new Vector2(posX, 0f));
+        ImGui.SetNextWindowPos(new Vector2(posX, hitTop));
         ImGui.SetNextWindowSize(new Vector2(pw, hitH));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
@@ -202,7 +229,7 @@ public static unsafe class MsqTeleport
         ImGui.PopStyleVar(3);
 
         // — Home button hit-test (independent, same height as pill strip) —
-        ImGui.SetNextWindowPos(new Vector2(homeBtnX, 0f));
+        ImGui.SetNextWindowPos(new Vector2(homeBtnX, hitTop));
         ImGui.SetNextWindowSize(new Vector2(homeS, hitH));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);

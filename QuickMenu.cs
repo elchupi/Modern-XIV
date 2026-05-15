@@ -328,6 +328,24 @@ public static class QuickMenu
 
         try
         {
+            // Config icon URL override — if the user pasted a URL for
+            // this slot, download from it instead of the default path.
+            var urls = noWickyXIV.Config.QuickMenuIconUrls;
+            if (urls != null && slot < urls.Length && !string.IsNullOrWhiteSpace(urls[slot]))
+            {
+                var cacheDir = Path.Combine(
+                    DalamudApi.PluginInterface.GetPluginConfigDirectory(),
+                    "quickmenu_icons");
+                var cacheFile = Path.Combine(cacheDir, $"custom_{slot}.png");
+                if (File.Exists(cacheFile)) { _iconPaths[slot] = cacheFile; return; }
+                if (!_fetchInFlight[slot])
+                {
+                    _fetchInFlight[slot] = true;
+                    _ = FetchIconAsync(urls[slot], cacheDir, cacheFile, slot);
+                }
+                return;
+            }
+
             switch (entry.Kind)
             {
                 case IconKind.SelfPlugin:
@@ -466,6 +484,19 @@ public static class QuickMenu
             _resolveAttempted[i] = false;
             _iconPaths[i] = null;
         }
+        // Clear custom icon cache so re-resolve picks up new URLs.
+        try
+        {
+            var cacheDir = Path.Combine(
+                DalamudApi.PluginInterface.GetPluginConfigDirectory(),
+                "quickmenu_icons");
+            for (int i = 0; i < Entries.Length; i++)
+            {
+                var f = Path.Combine(cacheDir, $"custom_{i}.png");
+                if (File.Exists(f)) File.Delete(f);
+            }
+        }
+        catch { }
     }
 
     private static uint PackRgba(float r, float g, float b, float a)

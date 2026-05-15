@@ -90,10 +90,10 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Quick Menu"))
+            if (ImGui.BeginTabItem("Quick Menus"))
             {
-                if (ImGui.BeginChild("##quickmenu_scroll"))
-                    DrawQuickMenuTab();
+                if (ImGui.BeginChild("##quickmenus_scroll"))
+                    DrawQuickMenusTab();
                 ImGui.EndChild();
                 ImGui.EndTabItem();
             }
@@ -102,14 +102,6 @@ public static class PluginUI
             {
                 if (ImGui.BeginChild("##chat_scroll"))
                     DrawChatTab();
-                ImGui.EndChild();
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Teleport"))
-            {
-                if (ImGui.BeginChild("##teleport_scroll"))
-                    DrawTeleportTab();
                 ImGui.EndChild();
                 ImGui.EndTabItem();
             }
@@ -1825,6 +1817,10 @@ public static class PluginUI
             ConfigCheckbox("Invert V (flip if head looks wrong vertically)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookInvertV);
             ConfigSliderFloat("Pitch baseline (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookPitchOffset, -1.2f, 0.5f, -0.30f, "%.2f");
             ImGui.TextDisabled("V at this value = head horizontal. FFXIV's default camera sits below 0; tune until \"forward\" feels level.");
+            ConfigSliderFloat("Smoothing##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookSmoothing, 1f, 30f, 10f, "%.1f");
+            ImGui.TextDisabled("Higher = faster response. Lower = smoother, more gradual head turns.");
+            ConfigSliderFloat("Sensitivity##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookSensitivity, 0.1f, 2f, 1f, "%.2f");
+            ImGui.TextDisabled("< 1 = subtler head turns, 1 = matches camera angle, > 1 = exaggerated.");
             ConfigSliderFloat("Cone limit (rad)##CameraHeadLook",   ref noWickyXIV.Config.CameraHeadLookConeLimit,   0.5f, 3.14f, 2.20f, "%.2f");
             ConfigSliderFloat("Cone falloff (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookConeFalloff, 0.05f, 1.5f, 0.40f, "%.2f");
             ImGui.TextDisabled("Past the cone limit, the override fades toward player-facing-neutral over the falloff band to stop the IK from fighting itself.");
@@ -1876,16 +1872,6 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // MSQ teleport overlay (floating pill at top-center of screen).
-        if (ImGuiEx.BeginGroupBox("MSQ Teleport overlay"))
-        {
-            ConfigCheckbox("Enable##MsqTeleport", ref noWickyXIV.Config.EnableMsqTeleport);
-            ImGui.TextDisabled(
-                "Floating pill at the top-center of the screen. Hover the\n" +
-                "area to slide it down; click to teleport to the nearest\n" +
-                "Aetheryte for your current Main Scenario Quest objective.");
-            ImGuiEx.EndGroupBox();
-        }
 
         // Cutscene letterbox removal.
         if (ImGuiEx.BeginGroupBox("Cutscene letterbox"))
@@ -4613,54 +4599,168 @@ public static class PluginUI
         return false;
     }
 
-    private static void DrawQuickMenuTab()
+    private static void DrawQuickMenusTab()
     {
-        if (ImGuiEx.BeginGroupBox("Quick menu launcher"))
+        var cfg = noWickyXIV.Config;
+
+        // ── Mods (quick-launch icons) ─────────────────────────────
+        if (ImGuiEx.BeginGroupBox("Mods"))
         {
-            ConfigCheckbox("Enable##QuickMenu", ref noWickyXIV.Config.EnableQuickMenu);
-            DrawScreenCornerCombo("Anchor##QuickMenuCorner",
-                ref noWickyXIV.Config.QuickMenuCorner);
+            ConfigCheckbox("Enable##QuickMenu", ref cfg.EnableQuickMenu);
+            DrawScreenCornerCombo("Anchor##QuickMenuCorner", ref cfg.QuickMenuCorner);
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Offset X (px)##QuickMenuOffsetX",
-                    ref noWickyXIV.Config.QuickMenuOffsetX, 0f, 200f, "%.0f"))
-                noWickyXIV.Config.SaveDebounced();
+                    ref cfg.QuickMenuOffsetX, 0f, 200f, "%.0f"))
+                cfg.SaveDebounced();
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Offset Y (px)##QuickMenuOffsetY",
-                    ref noWickyXIV.Config.QuickMenuOffsetY, 0f, 200f, "%.0f"))
-                noWickyXIV.Config.SaveDebounced();
+                    ref cfg.QuickMenuOffsetY, 0f, 200f, "%.0f"))
+                cfg.SaveDebounced();
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Icon size (px)##QmIconSize",
-                    ref noWickyXIV.Config.QuickMenuIconSize, 16f, 64f, "%.0f"))
-                noWickyXIV.Config.SaveDebounced();
+                    ref cfg.QuickMenuIconSize, 16f, 64f, "%.0f"))
+                cfg.SaveDebounced();
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Icon gap (px)##QmIconGap",
-                    ref noWickyXIV.Config.QuickMenuIconGap, 0f, 20f, "%.0f"))
-                noWickyXIV.Config.SaveDebounced();
+                    ref cfg.QuickMenuIconGap, 0f, 20f, "%.0f"))
+                cfg.SaveDebounced();
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Pad X (px)##QmPadX",
-                    ref noWickyXIV.Config.QuickMenuPadX, 2f, 24f, "%.0f"))
-                noWickyXIV.Config.SaveDebounced();
+                    ref cfg.QuickMenuPadX, 2f, 24f, "%.0f"))
+                cfg.SaveDebounced();
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Pad Y (px)##QmPadY",
-                    ref noWickyXIV.Config.QuickMenuPadY, 2f, 24f, "%.0f"))
-                noWickyXIV.Config.SaveDebounced();
-            ImGui.TextDisabled(
-                "Floating pill anchored to the chosen screen corner.\n" +
-                "Hover the corner to slide it in; click an icon to fire\n" +
-                "its slash command. Icons match the ones in /xlplugins:\n" +
-                "  Dalamud logo  → /xlplugins\n" +
-                "  this plugin   → /nowickyxiv\n" +
-                "  Glamourer     → /glamourer\n" +
-                "  Penumbra      → /penumbra\n" +
-                "  VFXEditor     → /vfxedit\n" +
-                "Third-party icons download once from each plugin's\n" +
-                "manifest IconUrl and are cached locally.");
+                    ref cfg.QuickMenuPadY, 2f, 24f, "%.0f"))
+                cfg.SaveDebounced();
+
+            ImGui.Separator();
+            ImGui.TextDisabled("Icon overrides — paste a URL to replace the default icon.");
+            var cmds = QuickMenu.Commands;
+            if (cfg.QuickMenuIconUrls == null || cfg.QuickMenuIconUrls.Length < cmds.Count)
+                cfg.QuickMenuIconUrls = new string[cmds.Count];
+            for (int i = 0; i < cmds.Count; i++)
+            {
+                cfg.QuickMenuIconUrls[i] ??= "";
+                ImGui.SetNextItemWidth(300f * ImGuiHelpers.GlobalScale);
+                if (ImGui.InputText($"{cmds[i]}##QmIconUrl{i}", ref cfg.QuickMenuIconUrls[i], 512))
+                    cfg.SaveDebounced();
+            }
 
             if (ImGui.Button("Re-resolve icons##QuickMenu"))
                 QuickMenu.ReresolveAllIcons();
             ImGui.SameLine();
-            ImGui.TextDisabled("(use after installing a missing plugin)");
+            ImGui.TextDisabled("(downloads icon URLs and refreshes cache)");
 
+            ImGuiEx.EndGroupBox();
+        }
+
+        // ── MSQ Teleport overlay ──────────────────────────────────
+        if (ImGuiEx.BeginGroupBox("MSQ Teleport overlay"))
+        {
+            ConfigCheckbox("Enable##MsqTeleport", ref cfg.EnableMsqTeleport);
+            DrawScreenCornerCombo("Anchor##MsqTpCorner", ref cfg.MsqTeleportCorner);
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset X (px)##MsqTpOffsetX",
+                    ref cfg.MsqTeleportOffsetX, 0f, 400f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset Y (px)##MsqTpOffsetY",
+                    ref cfg.MsqTeleportOffsetY, 0f, 400f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.TextDisabled(
+                "Floating pill that slides in on hover. Click to teleport\n" +
+                "to the nearest Aetheryte for your current MSQ objective.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        // ── Teleport menu ─────────────────────────────────────────
+        DrawTeleportSection();
+    }
+
+    private static void DrawTeleportSection()
+    {
+        var cfg = noWickyXIV.Config;
+
+        if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
+        {
+            ConfigCheckbox("Enable##CustomTeleportMenu", ref cfg.EnableCustomTeleportMenu);
+            ImGui.TextDisabled(
+                "Replaces the game's native Teleport window with a\n" +
+                "custom searchable list. Colors are driven by the\n" +
+                "Global UI palette in Style Profiles.");
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Teleport — Placement"))
+        {
+            DrawScreenCornerCombo("Anchor##TpCorner", ref cfg.TeleportMenuCorner);
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset X (px)##TpOffsetX",
+                    ref cfg.TeleportMenuOffsetX, 0f, 200f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset Y (px)##TpOffsetY",
+                    ref cfg.TeleportMenuOffsetY, 0f, 200f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Teleport — Typography"))
+        {
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Heading / region (px)##TpHeadingSize",
+                    ref cfg.TpHeadingFontSizePx, 8f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Aetheryte rows (px)##TpBodySize",
+                    ref cfg.TpBodyFontSizePx, 8f, 36f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Search bar (px)##TpSearchSize",
+                    ref cfg.TpSearchFontSizePx, 8f, 36f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Weight##TpFontWeight",
+                    ref cfg.TpFontWeight, 0f, 1f, "%.2f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Teleport — Layout"))
+        {
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Width##TpWidth",
+                    ref cfg.TpWidth, 200f, 800f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Fade size##TpFadeSize",
+                    ref cfg.TpFadeSize, 0f, 80f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
+        }
+
+        if (ImGuiEx.BeginGroupBox("Teleport — Padding"))
+        {
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Top##TpPadTop",
+                    ref cfg.TpPadTop, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Bottom##TpPadBottom",
+                    ref cfg.TpPadBottom, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Left##TpPadLeft",
+                    ref cfg.TpPadLeft, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Right##TpPadRight",
+                    ref cfg.TpPadRight, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Scrollbar gap##TpScrollRightPad",
+                    ref cfg.TpScrollRightPad, 0f, 32f, "%.0f"))
+                cfg.SaveDebounced();
             ImGuiEx.EndGroupBox();
         }
     }
@@ -4769,101 +4869,6 @@ public static class PluginUI
         ImGui.EndChild();
     }
 
-    private static void DrawTeleportTab()
-    {
-        var cfg = noWickyXIV.Config;
-
-        if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
-        {
-            ConfigCheckbox("Enable##CustomTeleportMenu",
-                ref cfg.EnableCustomTeleportMenu);
-            ImGui.TextDisabled(
-                "Replaces the game's native Teleport window with a\n" +
-                "custom searchable list. Hover the chosen corner of\n" +
-                "the screen to slide it in; FC house shortcut,\n" +
-                "recently visited, and region-grouped aetherytes.\n" +
-                "Colors are driven by the Global UI palette in Style Profiles.");
-            ImGuiEx.EndGroupBox();
-        }
-
-        if (ImGuiEx.BeginGroupBox("Placement"))
-        {
-            DrawScreenCornerCombo("Anchor##TpCorner", ref cfg.TeleportMenuCorner);
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Offset X (px)##TpOffsetX",
-                    ref cfg.TeleportMenuOffsetX, 0f, 200f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Offset Y (px)##TpOffsetY",
-                    ref cfg.TeleportMenuOffsetY, 0f, 200f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGuiEx.EndGroupBox();
-        }
-
-        if (ImGuiEx.BeginGroupBox("Typography"))
-        {
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Heading / region (px)##TpHeadingSize",
-                    ref cfg.TpHeadingFontSizePx, 8f, 48f, "%.0f"))
-                cfg.SaveDebounced();
-
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Aetheryte rows (px)##TpBodySize",
-                    ref cfg.TpBodyFontSizePx, 8f, 36f, "%.0f"))
-                cfg.SaveDebounced();
-
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Search bar (px)##TpSearchSize",
-                    ref cfg.TpSearchFontSizePx, 8f, 36f, "%.0f"))
-                cfg.SaveDebounced();
-
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Weight##TpFontWeight",
-                    ref cfg.TpFontWeight, 0f, 1f, "%.2f"))
-                cfg.SaveDebounced();
-            ImGuiEx.EndGroupBox();
-        }
-
-        if (ImGuiEx.BeginGroupBox("Layout"))
-        {
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Width##TpWidth",
-                    ref cfg.TpWidth, 200f, 800f, "%.0f"))
-                cfg.SaveDebounced();
-
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Fade size##TpFadeSize",
-                    ref cfg.TpFadeSize, 0f, 80f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGuiEx.EndGroupBox();
-        }
-
-        if (ImGuiEx.BeginGroupBox("Padding"))
-        {
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Top##TpPadTop",
-                    ref cfg.TpPadTop, 0f, 48f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Bottom##TpPadBottom",
-                    ref cfg.TpPadBottom, 0f, 48f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Left##TpPadLeft",
-                    ref cfg.TpPadLeft, 0f, 48f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Right##TpPadRight",
-                    ref cfg.TpPadRight, 0f, 48f, "%.0f"))
-                cfg.SaveDebounced();
-
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Scrollbar gap##TpScrollRightPad",
-                    ref cfg.TpScrollRightPad, 0f, 32f, "%.0f"))
-                cfg.SaveDebounced();
-            ImGuiEx.EndGroupBox();
-        }
-    }
 
     // Compact combo for picking a screen corner anchor (used by the
     // teleport menu + QuickMenu placement settings).

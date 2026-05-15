@@ -514,9 +514,6 @@ public static unsafe class AnimationSwap
                         if (key.StartsWith("mon_") || key.StartsWith("demi_human/")
                             || key.StartsWith("weapon/") || key.StartsWith("bg/")) continue;
 
-                        // Skip idle animations — only swap walk/run/movement.
-                        if (key.Contains("idle", StringComparison.OrdinalIgnoreCase)) continue;
-
                         TryAddSwap(swaps, tried, srcCode, tgtCode, $"a0001/bt_common/{key}");
                     }
                     catch { }
@@ -527,9 +524,11 @@ public static unsafe class AnimationSwap
 
         // 2. Also try known resident/nonresident sub-paths that may
         //    not appear as ActionTimeline keys.
-        // Known movement/action paths — idle excluded (only walk/run swaps).
         string[] knownPaths =
         {
+            "resident/idle", "resident/idle_a", "resident/idle_b",
+            "resident/idle_c", "resident/idle_d",
+            "resident/b_idle", "resident/battle_idle",
             "resident/move", "resident/move_a", "resident/move_b",
             "resident/move_c", "resident/move_d", "resident/run", "resident/walk",
             "resident/sprint", "resident/sprint_a", "resident/sprint_b",
@@ -557,8 +556,9 @@ public static unsafe class AnimationSwap
 
         try
         {
+            string tgtPath = $"chara/human/{tgtCode}/animation/{relPath}.pap";
             if (DalamudApi.DataManager.FileExists(srcPath))
-                swaps[srcPath] = $"chara/human/{tgtCode}/animation/{relPath}.pap";
+                swaps[srcPath] = ResolvePenumbraPath(tgtPath);
         }
         catch { }
     }

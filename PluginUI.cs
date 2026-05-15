@@ -1821,6 +1821,14 @@ public static class PluginUI
             ImGui.TextDisabled("Higher = faster response. Lower = smoother, more gradual head turns.");
             ConfigSliderFloat("Sensitivity##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookSensitivity, 0.1f, 2f, 1f, "%.2f");
             ImGui.TextDisabled("< 1 = subtler head turns, 1 = matches camera angle, > 1 = exaggerated.");
+            ImGui.Separator();
+            ConfigCheckbox("Face camera when facing it##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookFacingCamera);
+            ImGui.TextDisabled("When the character faces the camera, look at the camera.\nWhen facing away, look where the camera points.");
+            ConfigSliderFloat("Facing threshold (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookFacingThreshold, 0.5f, 2.5f, 1.57f, "%.2f");
+            ConfigSliderFloat("Facing fade (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookFacingFade, 0.05f, 1.5f, 0.5f, "%.2f");
+            ConfigCheckbox("Eyes always lock to camera##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookEyesLockCamera);
+            ImGui.TextDisabled("Eyes always track the camera regardless of body orientation.");
+            ImGui.Separator();
             ConfigSliderFloat("Cone limit (rad)##CameraHeadLook",   ref noWickyXIV.Config.CameraHeadLookConeLimit,   0.5f, 3.14f, 2.20f, "%.2f");
             ConfigSliderFloat("Cone falloff (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookConeFalloff, 0.05f, 1.5f, 0.40f, "%.2f");
             ImGui.TextDisabled("Past the cone limit, the override fades toward player-facing-neutral over the falloff band to stop the IK from fighting itself.");
@@ -4602,79 +4610,81 @@ public static class PluginUI
     private static void DrawQuickMenusTab()
     {
         var cfg = noWickyXIV.Config;
+        float colW = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X * 2f) / 3f;
 
-        // ── Mods (quick-launch icons) ─────────────────────────────
+        // ── Column 1: Mods ────────────────────────────────────────
+        ImGui.BeginChild("##qm_col1", new Vector2(colW, 0f), false);
         if (ImGuiEx.BeginGroupBox("Mods"))
         {
             ConfigCheckbox("Enable##QuickMenu", ref cfg.EnableQuickMenu);
             DrawScreenCornerCombo("Anchor##QuickMenuCorner", ref cfg.QuickMenuCorner);
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Offset X (px)##QuickMenuOffsetX",
-                    ref cfg.QuickMenuOffsetX, 0f, 200f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset X##QmOX", ref cfg.QuickMenuOffsetX, 0f, 200f, "%.0f"))
                 cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Offset Y (px)##QuickMenuOffsetY",
-                    ref cfg.QuickMenuOffsetY, 0f, 200f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset Y##QmOY", ref cfg.QuickMenuOffsetY, 0f, 200f, "%.0f"))
                 cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Icon size (px)##QmIconSize",
-                    ref cfg.QuickMenuIconSize, 16f, 64f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Icon size##QmIS", ref cfg.QuickMenuIconSize, 16f, 64f, "%.0f"))
                 cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Icon gap (px)##QmIconGap",
-                    ref cfg.QuickMenuIconGap, 0f, 20f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Icon gap##QmIG", ref cfg.QuickMenuIconGap, 0f, 20f, "%.0f"))
                 cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Pad X (px)##QmPadX",
-                    ref cfg.QuickMenuPadX, 2f, 24f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Pad X##QmPX", ref cfg.QuickMenuPadX, 2f, 24f, "%.0f"))
                 cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Pad Y (px)##QmPadY",
-                    ref cfg.QuickMenuPadY, 2f, 24f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Pad Y##QmPY", ref cfg.QuickMenuPadY, 2f, 24f, "%.0f"))
                 cfg.SaveDebounced();
 
             ImGui.Separator();
-            ImGui.TextDisabled("Icon overrides — paste a URL to replace the default icon.");
+            ImGui.TextDisabled("Icon URL overrides");
             var cmds = QuickMenu.Commands;
             if (cfg.QuickMenuIconUrls == null || cfg.QuickMenuIconUrls.Length < cmds.Count)
                 cfg.QuickMenuIconUrls = new string[cmds.Count];
             for (int i = 0; i < cmds.Count; i++)
             {
                 cfg.QuickMenuIconUrls[i] ??= "";
-                ImGui.SetNextItemWidth(300f * ImGuiHelpers.GlobalScale);
-                if (ImGui.InputText($"{cmds[i]}##QmIconUrl{i}", ref cfg.QuickMenuIconUrls[i], 512))
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+                if (ImGui.InputText($"{cmds[i]}##QmUrl{i}", ref cfg.QuickMenuIconUrls[i], 512))
                     cfg.SaveDebounced();
             }
 
-            if (ImGui.Button("Re-resolve icons##QuickMenu"))
+            if (ImGui.Button("Re-resolve icons##QM"))
                 QuickMenu.ReresolveAllIcons();
-            ImGui.SameLine();
-            ImGui.TextDisabled("(downloads icon URLs and refreshes cache)");
 
             ImGuiEx.EndGroupBox();
         }
+        ImGui.EndChild();
 
-        // ── MSQ Teleport overlay ──────────────────────────────────
-        if (ImGuiEx.BeginGroupBox("MSQ Teleport overlay"))
+        ImGui.SameLine();
+
+        // ── Column 2: MSQ Teleport ────────────────────────────────
+        ImGui.BeginChild("##qm_col2", new Vector2(colW, 0f), false);
+        if (ImGuiEx.BeginGroupBox("MSQ Teleport"))
         {
-            ConfigCheckbox("Enable##MsqTeleport", ref cfg.EnableMsqTeleport);
-            DrawScreenCornerCombo("Anchor##MsqTpCorner", ref cfg.MsqTeleportCorner);
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Offset X (px)##MsqTpOffsetX",
-                    ref cfg.MsqTeleportOffsetX, 0f, 400f, "%.0f"))
+            ConfigCheckbox("Enable##MsqTp", ref cfg.EnableMsqTeleport);
+            DrawScreenCornerCombo("Anchor##MsqTpC", ref cfg.MsqTeleportCorner);
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset X##MsqX", ref cfg.MsqTeleportOffsetX, 0f, 400f, "%.0f"))
                 cfg.SaveDebounced();
-            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-            if (ImGui.SliderFloat("Offset Y (px)##MsqTpOffsetY",
-                    ref cfg.MsqTeleportOffsetY, 0f, 400f, "%.0f"))
+            ImGui.SetNextItemWidth(130f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset Y##MsqY", ref cfg.MsqTeleportOffsetY, 0f, 400f, "%.0f"))
                 cfg.SaveDebounced();
             ImGui.TextDisabled(
-                "Floating pill that slides in on hover. Click to teleport\n" +
-                "to the nearest Aetheryte for your current MSQ objective.");
+                "Floating pill that slides in on\n" +
+                "hover. Click to teleport to the\n" +
+                "nearest Aetheryte for your MSQ.");
             ImGuiEx.EndGroupBox();
         }
+        ImGui.EndChild();
 
-        // ── Teleport menu ─────────────────────────────────────────
+        ImGui.SameLine();
+
+        // ── Column 3: Teleport menu ───────────────────────────────
+        ImGui.BeginChild("##qm_col3", new Vector2(colW, 0f), false);
         DrawTeleportSection();
+        ImGui.EndChild();
     }
 
     private static void DrawTeleportSection()

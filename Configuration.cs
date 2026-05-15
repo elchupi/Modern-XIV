@@ -1619,6 +1619,13 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  CameraHeadLookAutoPrime      = true;
     public float CameraHeadLookSmoothing     = 10f;
     public float CameraHeadLookSensitivity   = 1f;
+    // When the character faces the camera, blend the look-at target toward the
+    // camera position so the character looks at "us" instead of away.
+    public bool  CameraHeadLookFacingCamera    = true;
+    public float CameraHeadLookFacingThreshold = 1.57f; // radians — angle at which blend starts (π/2 = 90°)
+    public float CameraHeadLookFacingFade      = 0.5f;  // radians — blend-in width past threshold
+    // Eyes always track the camera position regardless of facing direction.
+    public bool  CameraHeadLookEyesLockCamera  = false;
 
     // ---- Input Sensitivity (universal — not per-preset) ----
     public float MouseSensitivityMul = 1f;

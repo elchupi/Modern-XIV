@@ -38,8 +38,10 @@ public static unsafe class HeadTracker
     private static float   _lastH = float.NaN;
     private static float   _lastV = float.NaN;
     private static Vector3 _cachedPos;     // world point projected from player head along camera-forward
+    private static Vector3 _cachedEyePos;  // eye-specific target (may differ when EyesLockCamera)
     private static Vector3 _cachedCamPos;  // world camera position (for BannerFollow / IsFacingCamera)
     private static float   _cachedFadeT;   // 0=full override, 1=neutral (cone-falloff)
+    private static float   _facingCamT;    // 0=facing away, 1=facing camera
 
     private static bool _wasEnabled;
     private static bool _waitingForTarget;
@@ -189,20 +191,45 @@ public static unsafe class HeadTracker
             if (_cachedFadeT > 0f)
                 targetPos = Vector3.Lerp(targetPos, neutral, _cachedFadeT);
 
+            // Camera world position (needed before facing-camera blend).
+            _cachedCamPos = new Vector3(wc->viewX, wc->viewY, wc->viewZ);
+
+            // Facing-camera blend: when the character faces toward the camera,
+            // redirect the look-at target to the camera position so the character
+            // looks at "us" instead of away.
+            // facingAngle: 0 = same direction (back to camera), π = facing camera.
+            float facingAngle = MathF.Abs(WrapPi(h - playerRot));
+            if (cfg.CameraHeadLookFacingCamera && facingAngle > cfg.CameraHeadLookFacingThreshold)
+            {
+                float fOver = facingAngle - cfg.CameraHeadLookFacingThreshold;
+                _facingCamT = MathF.Min(1f, fOver / MathF.Max(0.05f, cfg.CameraHeadLookFacingFade));
+            }
+            else
+            {
+                _facingCamT = 0f;
+            }
+
+            if (_facingCamT > 0f)
+                targetPos = Vector3.Lerp(targetPos, _cachedCamPos, _facingCamT);
+
+            // Eye target: either follows the head target or locks to camera.
+            var eyeTarget = cfg.CameraHeadLookEyesLockCamera ? _cachedCamPos : targetPos;
+
             // Smooth: lerp _cachedPos toward targetPos for fluid head movement.
             // First frame after reload: snap directly (lerp from zero is wrong).
             if (_cachedPos == Vector3.Zero)
             {
                 _cachedPos = targetPos;
+                _cachedEyePos = eyeTarget;
             }
             else
             {
                 float dt = 1f / 60f;
                 float t = 1f - MathF.Exp(-cfg.CameraHeadLookSmoothing * dt);
                 _cachedPos = Vector3.Lerp(_cachedPos, targetPos, t);
+                _cachedEyePos = Vector3.Lerp(_cachedEyePos, eyeTarget, t);
             }
 
-            _cachedCamPos = new Vector3(wc->viewX, wc->viewY, wc->viewZ);
             _lastH = h; _lastV = v;
         }
 
@@ -281,7 +308,7 @@ public static unsafe class HeadTracker
                     if (cfg.CameraHeadLookAffectHead && spanLen > SLOT_HEAD)
                         WriteWorldPos(ref paramsSpan[SLOT_HEAD].TargetParam, type, _cachedPos);
                     if (cfg.CameraHeadLookAffectEyes && spanLen > SLOT_EYES)
-                        WriteWorldPos(ref paramsSpan[SLOT_EYES].TargetParam, type, _cachedPos);
+                        WriteWorldPos(ref paramsSpan[SLOT_EYES].TargetParam, type, _cachedEyePos);
                     break;
                 }
                 case 2:

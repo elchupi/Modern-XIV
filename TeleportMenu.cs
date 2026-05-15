@@ -452,11 +452,18 @@ public static unsafe class TeleportMenu
             uint terrId = DalamudApi.ClientState.TerritoryType;
             if (terrId == 0) return;
 
-            var terrSheet = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
-            var terrRow = terrSheet?.GetRowOrDefault(terrId);
-            if (terrRow == null) return;
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap.Instance();
+            if (agent == null) return;
 
-            uint mapId = terrRow.Value.Map.RowId;
+            uint mapId = agent->CurrentMapId;
+            if (mapId == 0)
+            {
+                var terrSheet = DalamudApi.DataManager.GetExcelSheet<TerritoryType>();
+                var terrRow = terrSheet?.GetRowOrDefault(terrId);
+                if (terrRow == null) return;
+                mapId = terrRow.Value.Map.RowId;
+            }
+
             var mapSheet = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Map>();
             var mapRow = mapSheet?.GetRowOrDefault(mapId);
             if (mapRow == null) return;
@@ -469,9 +476,7 @@ public static unsafe class TeleportMenu
             float mapX = 41.0f / sc * ((player.Position.X + offsetX) * sc + 1024.0f) / 2048.0f + 1.0f;
             float mapZ = 41.0f / sc * ((player.Position.Z + offsetY) * sc + 1024.0f) / 2048.0f + 1.0f;
 
-            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMap.Instance();
-            if (agent != null)
-                agent->SetFlagMapMarker(terrId, mapId, mapX, mapZ);
+            agent->SetFlagMapMarker(terrId, mapId, mapX, mapZ);
 
             ChatSend.Send("<flag>");
         }

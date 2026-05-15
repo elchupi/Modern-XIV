@@ -533,10 +533,6 @@ public class PresetDynamicsState
     public bool  EnableCameraPositionSmoothing = false;
     public float CameraPositionSmoothingRate = 12f;
 
-    // ---- Sensitivity ----
-    public float MouseSensitivityMul = 1f;
-    public bool  InvertMouseY        = false;
-
     // ---- Mouselook (always-on FPS-style) ----
     public bool  EnableMouseLookAlways = false;
     public float MouseLookSensitivity  = 0.005f;
@@ -635,9 +631,6 @@ public class PresetDynamicsState
         s.EnableCameraPositionSmoothing = cfg.EnableCameraPositionSmoothing;
         s.CameraPositionSmoothingRate   = cfg.CameraPositionSmoothingRate;
 
-        s.MouseSensitivityMul = cfg.MouseSensitivityMul;
-        s.InvertMouseY        = cfg.InvertMouseY;
-
         s.EnableMouseLookAlways = cfg.EnableMouseLookAlways;
         s.MouseLookSensitivity  = cfg.MouseLookSensitivity;
         s.MouseLookCenterCursor = cfg.MouseLookCenterCursor;
@@ -720,9 +713,6 @@ public class PresetDynamicsState
         cfg.InputSmoothingRotateRate      = s.InputSmoothingRotateRate;
         cfg.EnableCameraPositionSmoothing = s.EnableCameraPositionSmoothing;
         cfg.CameraPositionSmoothingRate   = s.CameraPositionSmoothingRate;
-
-        cfg.MouseSensitivityMul = s.MouseSensitivityMul;
-        cfg.InvertMouseY        = s.InvertMouseY;
 
         cfg.EnableMouseLookAlways = s.EnableMouseLookAlways;
         cfg.MouseLookSensitivity  = s.MouseLookSensitivity;
@@ -1250,6 +1240,9 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  CompassShowTarget       = true;
     public bool  CompassShowFocusTarget  = true;
     public bool  CompassShowParty        = false;
+    public Vector4 CompassPartyPillColor = new(0f, 1f, 1f, 1f);
+    public Vector4 CompassPartyTextColor = new(0f, 0f, 0f, 1f);
+    public float   CompassPartyFontSize  = 10f;
     public bool  CompassShowFates        = false;
     public bool  CompassShowAetherytes   = false;
     public bool  CompassShowMsqMarkers          = true;
@@ -1259,9 +1252,6 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
 
     // ---- Quest marker hider ----
     public bool  EnableHideQuestMarkers = false;
-
-    // ---- Sensitivity (Phase E — fields added early so panel can show them) ----
-    public float MouseSensitivityMul   = 1f;
 
     // ---- Input smoothing (zoom + yaw + pitch lerps) ----
     // Optional. Each per-frame write to currentZoom/H/VRotation is
@@ -1278,9 +1268,6 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // preset-switch snap (PresetManager calls SnapOffsets to bypass).
     public bool  EnableCameraPositionSmoothing = false;
     public float CameraPositionSmoothingRate   = 12f;  // 1/s, ~80 ms halflife
-    public float GamepadSensitivityMul = 1f;
-    public bool  InvertMouseY          = false;
-    public bool  InvertGamepadY        = false;
 
     // ---- Third-person click translator ----
     // Routes LMB to hotbar-style numeric keys with modifier-driven slot selection.
@@ -1451,6 +1438,10 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public bool  EnableCombatZoom         = false;
     public float CombatZoomDistance       = 12f;   // target distance during combat
     public float CombatZoomTransitionSpeed = 4f;   // exp-lerp rate; bigger = snappier
+
+    // ---- Input Sensitivity (universal — not per-preset) ----
+    public float MouseSensitivityMul = 1f;
+    public bool  InvertMouseY        = false;
 
     // ---- Always-on mouselook (Phase F: FPS-style camera lock) ----
     // When enabled, the mouse drives camera rotation continuously (as if RMB

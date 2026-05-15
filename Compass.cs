@@ -65,7 +65,8 @@ public static unsafe class Compass
         string key,
         ImDrawListPtr dl, Vector2 center, Configuration cfg,
         float camYaw, Vector3 ppos, Vector3 wpos,
-        uint iconId, string labelFallback, uint overrideColor = 0)
+        uint iconId, string labelFallback, uint overrideColor = 0,
+        bool skipDistance = false, uint overrideTextColor = 0, float overrideFontSize = 0f)
     {
         _markerSeenThisFrame.Add(key);
         if (!_markerStates.TryGetValue(key, out var ms))
@@ -80,7 +81,9 @@ public static unsafe class Compass
         ms.Alpha         += (1f - ms.Alpha) * _markerFadeK;
 
         DrawIconAtBearing(dl, center, cfg, camYaw, ppos, wpos, iconId, labelFallback,
-                          overrideColor: overrideColor, alphaMul: ms.Alpha);
+                          overrideColor: overrideColor, alphaMul: ms.Alpha,
+                          skipDistance: skipDistance, overrideTextColor: overrideTextColor,
+                          overrideFontSize: overrideFontSize);
     }
 
     // After all marker passes have run, draw + fade out any tracked
@@ -437,7 +440,9 @@ public static unsafe class Compass
     private static void RenderSelectedHalo(ImDrawListPtr dl, float x, float cy,
                                             float size, uint iconId,
                                             string circleLabel, uint circleColor,
-                                            float a, float hoverLerp)
+                                            float a, float hoverLerp,
+                                            uint textColor = 0xFF000000,
+                                            float fontSize = 10f)
     {
         if (hoverLerp <= 0f) return;
         const float kScaleMax = 1.4f;
@@ -476,7 +481,7 @@ public static unsafe class Compass
         // Pill path (party member etc.) — scaled, with halo ring on
         // top and bottom edges. Width tracks the label so a longer
         // nickname grows the pill horizontally rather than spilling.
-        float labelPxPill = 10f * kScale;
+        float labelPxPill = fontSize * kScale;
         float scalePill = labelPxPill / MathF.Max(1f, ImGui.GetFontSize());
         Vector2 lszPill = string.IsNullOrEmpty(circleLabel)
             ? Vector2.Zero
@@ -484,7 +489,7 @@ public static unsafe class Compass
 
         float pillH   = sz * 0.8f;
         float padX    = 6f * kScale;
-        float pillW   = MathF.Max(pillH, lszPill.X + padX * 2f);
+        float pillW   = MathF.Max(pillH * 1.5f, lszPill.X + padX * 2f);
         float rounding = pillH * 0.5f;
         var pMin = new Vector2(x - pillW * 0.5f, cy - pillH * 0.5f);
         var pMax = new Vector2(x + pillW * 0.5f, cy + pillH * 0.5f);
@@ -503,7 +508,7 @@ public static unsafe class Compass
         {
             var p = new Vector2(x - lszPill.X * 0.5f, cy - lszPill.Y * 0.5f);
             dl.AddText(ImGui.GetFont(), labelPxPill, p,
-                       PackColor(0f, 0f, 0f, a), circleLabel);
+                       MultiplyAlpha(textColor, a), circleLabel);
         }
     }
 
@@ -588,17 +593,44 @@ public static unsafe class Compass
         }
     }
 
-    // Set the player's hard target by EntityId — same effect as clicking
-    // the party member in the party list.
-    private static void TargetByEntityId(uint entityId)
+    private static void TeleportToPartyMember(uint entityId, uint memberTerr)
     {
+        PlayCompassClickSound();
+        ushort selfTerr = 0;
+        try { selfTerr = (ushort)DalamudApi.ClientState.TerritoryType; } catch { }
+
+        if (memberTerr == selfTerr)
+        {
+            try
+            {
+                var go = DalamudApi.ObjectTable?.SearchById(entityId);
+                if (go != null) DalamudApi.TargetManager.Target = go;
+            }
+            catch { }
+            return;
+        }
+
         try
         {
-            var go = DalamudApi.ObjectTable?.SearchById(entityId);
-            if (go == null) return;
-            var tm = DalamudApi.TargetManager;
-            if (tm == null) return;
-            tm.Target = go;
+            var list = TeleportMenu.GetList();
+            if (list == null) return;
+            TeleportMenu.TeleportEntry best = null;
+            foreach (var e in list)
+            {
+                if (e.TerritoryId != (ushort)memberTerr) continue;
+                if (e.SubIndex != 0) continue;
+                best = e;
+                break;
+            }
+            if (best == null)
+            {
+                foreach (var e in list)
+                {
+                    if (e.TerritoryId == (ushort)memberTerr) { best = e; break; }
+                }
+            }
+            if (best != null)
+                TeleportMenu.DoTeleport(best);
         }
         catch { }
     }
@@ -845,38 +877,66 @@ public static unsafe class Compass
         ulong selfId = DalamudApi.ObjectTable?.LocalPlayer?.GameObjectId ?? 0UL;
         ushort selfTerr = 0;
         try { selfTerr = (ushort)DalamudApi.ClientState.TerritoryType; } catch { }
+        int offMapIndex = 0;
+        int offMapCount = 0;
+        foreach (var p in party)
+        {
+            if (p == null) continue;
+            if ((ulong)p.EntityId == selfId) continue;
+            uint mt = 0;
+            try { mt = p.Territory.RowId; } catch { }
+            if (mt != 0 && mt != selfTerr) offMapCount++;
+        }
+
         foreach (var p in party)
         {
             if (p == null) continue;
             if ((ulong)p.EntityId == selfId) continue;
 
-            // Skip party members in a different territory — their
-            // Position is stale (last-known coords from when they were
-            // here, or all zeros) and rendering them on the compass is
-            // misleading. Territory.RowId == 0 happens for members
-            // whose data hasn't loaded yet; skip those too.
             uint memberTerr = 0;
             try { memberTerr = p.Territory.RowId; } catch { }
-            if (memberTerr == 0 || memberTerr != selfTerr) continue;
+            if (memberTerr == 0) continue;
 
-            // Label: nickname if assigned, otherwise the first letter
-            // of the player's name. Keeps the marker readable on a
-            // crowded compass without spelling out full names.
+            bool offMap = memberTerr != selfTerr;
+
             string fullName = p.Name?.TextValue ?? "";
             string label = PlayerNicknames.GetNickname(fullName);
             if (string.IsNullOrEmpty(label))
                 label = string.IsNullOrEmpty(fullName) ? "P" : fullName[..1];
 
-            var pos = p.Position;
-            Vector3 wpos = new(pos.X, pos.Y, pos.Z);
-            // Cyan party color (R=0, G=255, B=255). PackColor is RGBA.
+            Vector3 wpos;
+            if (offMap)
+            {
+                float spread = 0.35f;
+                float baseAngle = camYaw + MathF.PI;
+                float fan = offMapCount > 1
+                    ? baseAngle + spread * (offMapIndex - (offMapCount - 1) * 0.5f)
+                    : baseAngle;
+                offMapIndex++;
+                float dist = 80f;
+                wpos = new Vector3(
+                    ppos.X + MathF.Sin(fan) * dist,
+                    ppos.Y,
+                    ppos.Z + MathF.Cos(fan) * dist);
+            }
+            else
+            {
+                var pos = p.Position;
+                wpos = new(pos.X, pos.Y, pos.Z);
+            }
+            var pillCol = cfg.CompassPartyPillColor;
+            var txtCol  = cfg.CompassPartyTextColor;
             DrawTrackedMarker("party:" + p.EntityId,
                               dl, center, cfg, camYaw, ppos, wpos, 0, label,
-                              overrideColor: 0xFFFFFF00u);
+                              overrideColor: PackColor(pillCol.X, pillCol.Y, pillCol.Z, pillCol.W),
+                              skipDistance: offMap,
+                              overrideTextColor: PackColor(txtCol.X, txtCol.Y, txtCol.Z, txtCol.W),
+                              overrideFontSize: cfg.CompassPartyFontSize);
 
             // Clickable: hard-target this party member (same as clicking
             // their entry in the party list).
             uint entityId = (uint)p.EntityId;
+            uint partyMemberTerr = memberTerr;
             string partyLabel = label;
             if (TryGetCompassIconRect(cfg, center, camYaw, ppos, wpos,
                                        out var pMin, out var pMax))
@@ -884,24 +944,23 @@ public static unsafe class Compass
                 float pCx = (pMin.X + pMax.X) * 0.5f;
                 float pCy = (pMin.Y + pMax.Y) * 0.5f;
                 float pSize = cfg.CompassIconSize;
-                // Extend the hitbox to match the pill width — same
-                // math the renderer uses so the click area covers the
-                // whole nickname, not just the icon center square.
-                float pLabelPx = 10f;
+                float pLabelPx = cfg.CompassPartyFontSize;
                 float pScale = pLabelPx / MathF.Max(1f, ImGui.GetFontSize());
                 Vector2 pSz = string.IsNullOrEmpty(partyLabel)
                     ? Vector2.Zero
                     : ImGui.CalcTextSize(partyLabel) * pScale;
                 float pPillH = pSize * 0.8f;
                 float pPadX  = 6f;
-                float pPillW = MathF.Max(pPillH, pSz.X + pPadX * 2f);
+                float pPillW = MathF.Max(pPillH * 1.5f, pSz.X + pPadX * 2f);
                 pMin = new Vector2(pCx - pPillW * 0.5f, pCy - pPillH * 0.5f);
                 pMax = new Vector2(pCx + pPillW * 0.5f, pCy + pPillH * 0.5f);
                 string pKey = "party:" + p.EntityId;
+                uint haloCol = PackColor(pillCol.X, pillCol.Y, pillCol.Z, pillCol.W);
+                uint haloTxt = PackColor(txtCol.X, txtCol.Y, txtCol.Z, txtCol.W);
                 _compassClicks.Add((pKey, pMin, pMax,
                     (drawList, baseAlpha, hoverLerp) => RenderSelectedHalo(
-                        drawList, pCx, pCy, pSize, 0u, partyLabel, 0xFFFFFF00u, baseAlpha, hoverLerp),
-                    () => TargetByEntityId(entityId)));
+                        drawList, pCx, pCy, pSize, 0u, partyLabel, haloCol, baseAlpha, hoverLerp, haloTxt, cfg.CompassPartyFontSize),
+                    () => TeleportToPartyMember(entityId, partyMemberTerr)));
             }
         }
     }
@@ -1168,12 +1227,15 @@ public static unsafe class Compass
                                            float camYaw, Vector3 ppos, Vector3 wpos,
                                            uint iconId, string? labelFallback,
                                            uint overrideColor = 0,
-                                           float alphaMul = 1f)
+                                           float alphaMul = 1f,
+                                           bool skipDistance = false,
+                                           uint overrideTextColor = 0,
+                                           float overrideFontSize = 0f)
     {
         float distSq = (wpos.X - ppos.X) * (wpos.X - ppos.X)
                      + (wpos.Z - ppos.Z) * (wpos.Z - ppos.Z);
         float maxR = cfg.CompassMaxRangeYalms;
-        if (distSq > maxR * maxR) return;
+        if (!skipDistance && distSq > maxR * maxR) return;
 
         float worldBearing = MathF.Atan2(wpos.X - ppos.X, wpos.Z - ppos.Z);
         float rel = BearingToRel(worldBearing, camYaw);
@@ -1189,13 +1251,8 @@ public static unsafe class Compass
 
         if (overrideColor != 0)
         {
-            // Pill-shaped container so a multi-character label
-            // (party-member nickname) gets padded horizontal space
-            // instead of crashing into the edge of a fixed-radius
-            // circle. Falls back to a circle visually when the label
-            // is empty or a single letter — pillW caps at pillH then.
             uint col = MultiplyAlpha(overrideColor, a);
-            const float labelPx = 10f;
+            float labelPx = overrideFontSize > 0f ? overrideFontSize : 10f;
             float scale = labelPx / MathF.Max(1f, ImGui.GetFontSize());
             Vector2 sz = string.IsNullOrEmpty(labelFallback)
                 ? Vector2.Zero
@@ -1203,7 +1260,7 @@ public static unsafe class Compass
 
             float pillH = size * 0.8f;
             float padX  = 6f;
-            float pillW = MathF.Max(pillH, sz.X + padX * 2f);
+            float pillW = MathF.Max(pillH * 1.5f, sz.X + padX * 2f);
             float rounding = pillH * 0.5f;
             var pMin = new Vector2(x - pillW * 0.5f, center.Y - pillH * 0.5f);
             var pMax = new Vector2(x + pillW * 0.5f, center.Y + pillH * 0.5f);
@@ -1211,12 +1268,14 @@ public static unsafe class Compass
 
             if (!string.IsNullOrEmpty(labelFallback))
             {
+                uint txtCol = overrideTextColor != 0
+                    ? MultiplyAlpha(overrideTextColor, a)
+                    : PackColor(0f, 0f, 0f, a);
                 var p = new Vector2(x - sz.X * 0.5f, center.Y - sz.Y * 0.5f);
-                dl.AddText(ImGui.GetFont(), labelPx, p,
-                           PackColor(0f, 0f, 0f, a), labelFallback);
+                dl.AddText(ImGui.GetFont(), labelPx, p, txtCol, labelFallback);
             }
-            DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
-            DrawDistanceLabel(dl, x, center.Y, size, dist, a);
+            if (!skipDistance) DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+            if (!skipDistance) DrawDistanceLabel(dl, x, center.Y, size, dist, a);
             return;
         }
 
@@ -1228,8 +1287,8 @@ public static unsafe class Compass
                 var tex = wrap.GetWrapOrEmpty();
                 uint tint = PackColor(1f, 1f, 1f, a);
                 dl.AddImage(tex.Handle, tl, br, Vector2.Zero, Vector2.One, tint);
-                DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
-                DrawDistanceLabel(dl, x, center.Y, size, dist, a);
+                if (!skipDistance) DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+                if (!skipDistance) DrawDistanceLabel(dl, x, center.Y, size, dist, a);
                 return;
             }
             catch { }
@@ -1244,8 +1303,8 @@ public static unsafe class Compass
             var p = new Vector2(x - sz.X * 0.5f, center.Y - sz.Y * 0.5f);
             dl.AddText(p, 0xFF000000u, labelFallback);
         }
-        DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
-        DrawDistanceLabel(dl, x, center.Y, size, dist, a);
+        if (!skipDistance) DrawAltitudeArrow(dl, x, center.Y, size, dy, a);
+        if (!skipDistance) DrawDistanceLabel(dl, x, center.Y, size, dist, a);
     }
 
     // Small distance readout sitting just above the icon. Shows yalms

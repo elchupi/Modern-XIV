@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Bindings.ImGui;
@@ -270,17 +270,38 @@ public static class PlayerNicknames
         var entries = noWickyXIV.Config.PlayerNicknames;
         if (entries == null || entries.Count == 0) return null;
 
+        string cleaned = StripPrivateUseChars(playerName).Trim();
+
         foreach (var e in entries)
         {
             if (string.IsNullOrEmpty(e.PlayerName) || string.IsNullOrEmpty(e.Nickname))
                 continue;
             if (string.Equals(e.PlayerName, playerName, StringComparison.OrdinalIgnoreCase))
                 return e.Nickname;
-            // Match FFXIV shorthand: "First L." for "First Last"
+            if (string.Equals(e.PlayerName, cleaned, StringComparison.OrdinalIgnoreCase))
+                return e.Nickname;
+            if (cleaned.StartsWith(e.PlayerName, StringComparison.OrdinalIgnoreCase)
+                && cleaned.Length > e.PlayerName.Length
+                && !char.IsLetterOrDigit(cleaned[e.PlayerName.Length]))
+                return e.Nickname;
             if (ChatBubbles.IsShorthandOf(playerName, e.PlayerName))
+                return e.Nickname;
+            if (ChatBubbles.IsShorthandOf(cleaned, e.PlayerName))
                 return e.Nickname;
         }
         return null;
+    }
+
+    private static string StripPrivateUseChars(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            if (c >= '' && c <= '') continue;
+            sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     /// <summary>

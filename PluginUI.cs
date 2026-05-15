@@ -1069,8 +1069,6 @@ public static class PluginUI
         c.CrosshairColorR = 1f; c.CrosshairColorG = 1f; c.CrosshairColorB = 1f; c.CrosshairColorA = 0.85f;
         c.InstantMode = false;
         c.HeightOffsetStep = 0.1f;   c.GlobalHeightOffset = 0f;
-        c.MouseSensitivityMul = 1f; c.GamepadSensitivityMul = 1f;
-        c.InvertMouseY = false;     c.InvertGamepadY = false;
         c.EnableMouseLookAlways = false;
         c.MouseLookSensitivity = 0.005f; c.MouseLookInvertY = false;
         c.MouseLookCenterCursor = true;
@@ -1203,17 +1201,9 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Section: Sensitivity (Phase E)
-        if (DynamicsSectionMatches("Sensitivity") && ImGuiEx.BeginGroupBox("Input Sensitivity"))
+        // Section: Input Smoothing
+        if (DynamicsSectionMatches("Smoothing") && ImGuiEx.BeginGroupBox("Input Smoothing"))
         {
-            // Min 0.56 — below that the delta-replay code fights the game's
-            // own per-frame camera writes and the camera jitters / "tries to
-            // recenter" while you move it. 0.56 was the user-determined floor.
-            ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.56f, 4f, 1f);
-            ConfigCheckbox("Invert Y axis##Sens", ref noWickyXIV.Config.InvertMouseY);
-            ImGui.TextDisabled("Note: applies to mouse + gamepad uniformly. Per-device split is deferred.");
-
-            ImGui.Separator();
             ConfigCheckbox("Smooth zoom / yaw / pitch input##InputSmooth", ref noWickyXIV.Config.EnableInputSmoothing);
             ImGui.TextDisabled("Each axis exp-lerps toward its target. Higher rate = snappier. RMB-drag bypasses rotation lerp; CombatZoom / ADS bypass zoom lerp so they don't fight the smoother.");
             ConfigSliderFloat("Zoom smoothing rate (1/s)##InputSmooth",   ref noWickyXIV.Config.InputSmoothingZoomRate,   3f, 60f, 12f, "%.1f");
@@ -1766,14 +1756,12 @@ public static class PluginUI
             ConfigSliderFloat("Chevron Y offset##Compass", ref noWickyXIV.Config.CompassChevronOffsetY, -20f, 20f, 0f, "%.0f");
             ConfigSliderFloat("Max range (yalms)##Compass", ref noWickyXIV.Config.CompassMaxRangeYalms, 10f, 100000f, 100000f, "%.0f");
             ImGui.Separator();
-            ConfigSliderFloat("Bar R##Compass",   ref noWickyXIV.Config.CompassBarColorR, 0f, 1f, 0f);
-            ConfigSliderFloat("Bar G##Compass",   ref noWickyXIV.Config.CompassBarColorG, 0f, 1f, 0f);
-            ConfigSliderFloat("Bar B##Compass",   ref noWickyXIV.Config.CompassBarColorB, 0f, 1f, 0f);
-            ConfigSliderFloat("Bar alpha##Compass", ref noWickyXIV.Config.CompassBarColorA, 0f, 1f, 0.45f);
-            ConfigSliderFloat("Tick R##Compass",  ref noWickyXIV.Config.CompassTickColorR, 0f, 1f, 1f);
-            ConfigSliderFloat("Tick G##Compass",  ref noWickyXIV.Config.CompassTickColorG, 0f, 1f, 1f);
-            ConfigSliderFloat("Tick B##Compass",  ref noWickyXIV.Config.CompassTickColorB, 0f, 1f, 1f);
-            ConfigSliderFloat("Tick alpha##Compass", ref noWickyXIV.Config.CompassTickColorA, 0f, 1f, 0.85f);
+            ChatColorPicker("Bar color##Compass",
+                ref noWickyXIV.Config.CompassBarColorR, ref noWickyXIV.Config.CompassBarColorG,
+                ref noWickyXIV.Config.CompassBarColorB, ref noWickyXIV.Config.CompassBarColorA);
+            ChatColorPicker("Tick color##Compass",
+                ref noWickyXIV.Config.CompassTickColorR, ref noWickyXIV.Config.CompassTickColorG,
+                ref noWickyXIV.Config.CompassTickColorB, ref noWickyXIV.Config.CompassTickColorA);
             ImGuiEx.EndGroupBox();
         }
 
@@ -1784,6 +1772,14 @@ public static class PluginUI
             ConfigCheckbox("Show target##Compass",                      ref noWickyXIV.Config.CompassShowTarget);
             ConfigCheckbox("Show focus target##Compass",                ref noWickyXIV.Config.CompassShowFocusTarget);
             ConfigCheckbox("Show party members##Compass",               ref noWickyXIV.Config.CompassShowParty);
+            if (noWickyXIV.Config.CompassShowParty)
+            {
+                ImGui.Indent(20f * ImGuiHelpers.GlobalScale);
+                TpColorPicker("Pill color##CompassParty",  ref noWickyXIV.Config.CompassPartyPillColor);
+                TpColorPicker("Text color##CompassParty",  ref noWickyXIV.Config.CompassPartyTextColor);
+                ConfigSliderFloat("Font size (px)##CompassParty", ref noWickyXIV.Config.CompassPartyFontSize, 6f, 24f, 10f, "%.0f");
+                ImGui.Unindent(20f * ImGuiHelpers.GlobalScale);
+            }
             ConfigCheckbox("Show active FATEs##Compass",                ref noWickyXIV.Config.CompassShowFates);
             ConfigCheckbox("Show nearby aetherytes##Compass",           ref noWickyXIV.Config.CompassShowAetherytes);
             ConfigCheckbox("Show MSQ markers##Compass",                   ref noWickyXIV.Config.CompassShowMsqMarkers);
@@ -1821,6 +1817,14 @@ public static class PluginUI
 
     private static unsafe void DrawMiscTab()
     {
+        if (ImGuiEx.BeginGroupBox("Input Sensitivity"))
+        {
+            ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.56f, 4f, 1f);
+            ConfigCheckbox("Invert Y axis##Sens", ref noWickyXIV.Config.InvertMouseY);
+            ImGui.TextDisabled("Applies to mouse + gamepad uniformly. Universal across all profiles.");
+            ImGuiEx.EndGroupBox();
+        }
+
         // MSQ teleport overlay (floating pill at top-center of screen).
         if (ImGuiEx.BeginGroupBox("MSQ Teleport overlay"))
         {
@@ -1955,10 +1959,9 @@ public static class PluginUI
                 "attacks land without manually clicking the target first.\n" +
                 "Stops the moment a target is set (manual or otherwise).");
             ConfigSliderFloat("Pick radius (px)##XAutoT",   ref noWickyXIV.Config.CrosshairAutoTargetRadius, 16f, 240f, 80f, "%.0f");
-            ConfigSliderFloat("Color R##Crosshair", ref noWickyXIV.Config.CrosshairColorR, 0f, 1f, 1f);
-            ConfigSliderFloat("Color G##Crosshair", ref noWickyXIV.Config.CrosshairColorG, 0f, 1f, 1f);
-            ConfigSliderFloat("Color B##Crosshair", ref noWickyXIV.Config.CrosshairColorB, 0f, 1f, 1f);
-            ConfigSliderFloat("Alpha##Crosshair",   ref noWickyXIV.Config.CrosshairColorA, 0f, 1f, 0.85f);
+            ChatColorPicker("Color##Crosshair",
+                ref noWickyXIV.Config.CrosshairColorR, ref noWickyXIV.Config.CrosshairColorG,
+                ref noWickyXIV.Config.CrosshairColorB, ref noWickyXIV.Config.CrosshairColorA);
             ImGuiEx.EndGroupBox();
         }
 

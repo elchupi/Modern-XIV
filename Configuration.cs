@@ -1589,6 +1589,19 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float CombatZoomDistance       = 12f;   // target distance during combat
     public float CombatZoomTransitionSpeed = 4f;   // exp-lerp rate; bigger = snappier
 
+    // ---- Camera-driven head-look (override game's target-tracking gaze) ----
+    // Writes Character.LookAt every frame so the head/torso aim at a world
+    // point projected along the camera's forward vector. The game's IK cone
+    // still clamps angular range; we just feed it a different target.
+    public bool  EnableCameraHeadLook         = false;
+    public bool  CameraHeadLookDisableInCombat = true;
+    public bool  CameraHeadLookAffectTorso    = true;
+    public bool  CameraHeadLookAffectHead     = true;
+    public bool  CameraHeadLookAffectEyes     = false;
+    public float CameraHeadLookDistance       = 8f;     // meters projected along camera-forward
+    public float CameraHeadLookEpsilon        = 0.005f; // radians; below this, reuse cached target
+    public bool  CameraHeadLookUseUnk3        = false;  // if Unk2 doesn't behave like world-pos, try Unk3
+
     // ---- Input Sensitivity (universal — not per-preset) ----
     public float MouseSensitivityMul = 1f;
     public bool  InvertMouseY        = false;
@@ -1765,7 +1778,7 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // surface "X is typing…" ghost bubbles at the bottom of the
     // column. No-op when rtyping isn't installed or isn't connected
     // to its server.
-    public bool  EnableTypingIndicators           = true;
+    public bool  EnableTypingIndicators           = false;
     // Reserved vertical space at the bottom of the bubble column for
     // typing indicators. Real bubbles start above this band — it
     // stays empty when no one is typing, but the column geometry

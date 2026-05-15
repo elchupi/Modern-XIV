@@ -13,3 +13,6 @@ bin/Debug/*
 !bin/Debug/noWickyXIV.deps.json
 
 Publish/
+
+# Personal settings — never ship these
+noWickyXIV_settings_backup.json

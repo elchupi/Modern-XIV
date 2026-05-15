@@ -1116,15 +1116,8 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Section: Yaw Lag — disabled by default until impl is rewritten as
-        // damped spring (current Wicked impl whiplashes; see project memory).
-        if (DynamicsSectionMatches("Yaw Lag") && ImGuiEx.BeginGroupBox("Yaw Lag (camera trails turns)"))
-        {
-            ImGui.TextColored(new Vector4(1f, 0.7f, 0.2f, 1f), "Reference impl whiplashes; rewrite needed.");
-            ConfigCheckbox("Enable##YawLag", ref noWickyXIV.Config.EnableYawLag);
-            ConfigSliderFloat("Halflife (s)##YawLag", ref noWickyXIV.Config.YawLagHalflife, 0.05f, 3f, 0.8f);
-            ImGuiEx.EndGroupBox();
-        }
+        // Yaw Lag — hidden; current impl whiplashes (see project memory).
+        // Fields kept in preset data for future rewrite.
 
         // Section: Pitch Tilt
         if (DynamicsSectionMatches("Pitch Tilt") && ImGuiEx.BeginGroupBox("Pitch Tilt (look-up at low angle)"))
@@ -1205,21 +1198,8 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Section: Close-zoom pitch cap
-        if (DynamicsSectionMatches("Close Zoom Pitch Cap") && ImGuiEx.BeginGroupBox("Close-Zoom Pitch Cap"))
-        {
-            ConfigCheckbox("Enable##CloseZoomPitch", ref noWickyXIV.Config.EnableCloseZoomPitchCap);
-            ImGui.TextDisabled(
-                "Soft-clamps the camera's pitch floor when zoomed in close so the\n" +
-                "view doesn't pivot overhead and look down at the player. The cap\n" +
-                "engages when currentZoom drops below the threshold and relaxes\n" +
-                "back to the preset's normal MinVRotation past it.");
-            ConfigSliderFloat("Engage when zoom <##CloseZoomPitch",
-                ref noWickyXIV.Config.CloseZoomPitchCapZoom, 0.5f, 8f, 3f, "%.2f m");
-            ConfigSliderFloat("Pitch floor while engaged (rad)##CloseZoomPitch",
-                ref noWickyXIV.Config.CloseZoomPitchCapMinRad, -1.4f, 0f, -0.4f, "%.2f rad");
-            ImGuiEx.EndGroupBox();
-        }
+        // Close-zoom pitch cap — hidden; not user-facing.
+        // Fields kept in preset data for potential future use.
 
         // Section: Always-on Mouselook (FPS-style camera lock)
         if (DynamicsSectionMatches("Mouselook") && ImGuiEx.BeginGroupBox("Always-on Mouselook (FPS-style)"))
@@ -1250,198 +1230,231 @@ public static class PluginUI
     // ---- Effects tab (Job Aura + modular VFX layers) ----
     private static void DrawEffectsTab()
     {
-        if (ImGuiEx.BeginGroupBox("Job Aura (SAM Kenki)"))
+        float fullW  = ImGui.GetContentRegionAvail().X;
+        float colGap = 12f * ImGuiHelpers.GlobalScale;
+        float leftW  = MathF.Min(360f * ImGuiHelpers.GlobalScale, (fullW - colGap) * 0.42f);
+        float rightW = fullW - leftW - colGap;
+
+        // ── Left column: behaviour, anchoring, offsets, fade, audio ──
+        if (ImGui.BeginChild("##FxTabLeft", new Vector2(leftW, 0), false))
         {
-            ConfigCheckbox("Enable##JobAura", ref noWickyXIV.Config.EnableJobAura);
-            ConfigCheckbox("Only when weapon drawn##JobAura", ref noWickyXIV.Config.JobAuraOnlyWeaponDrawn);
-            ConfigCheckbox("Mute SFX##JobAura", ref noWickyXIV.Config.MuteJobAuraSfx);
-
-            ImGui.Separator();
-            ConfigCheckbox("Anchor to target (instead of player)##JobAura", ref noWickyXIV.Config.JobAuraAnchorToTarget);
-            ConfigCheckbox("Anchor to bone##JobAura", ref noWickyXIV.Config.JobAuraAnchorToBone);
-            ConfigSliderInt("Humanoid bone index (self / players / NPCs)##JobAura", ref noWickyXIV.Config.JobAuraBoneIndex,        0, 80, 4);
-            ConfigSliderInt("Hostile combatant bone index##JobAura",                ref noWickyXIV.Config.JobAuraTargetBoneIndex, 0, 80, 1);
-            ImGui.TextDisabled("Two skeleton categories: humanoid (player / NPC body shape) shares one bone index. Hostile combatant BattleNpcs — beasts, dragons, bosses — get their own slot since they may not be humanoid.");
-            ConfigSliderFloat("Group scale##JobAura",  ref noWickyXIV.Config.JobAuraScale,       0.3f, 3f,   1f);
-
-            ImGui.TextDisabled("Humanoid offset (self / player allies / friendly NPCs / pets)");
-            ConfigSliderFloat("Humanoid X (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetX, -2f, 2f,  0f,    "%.2f");
-            ConfigSliderFloat("Humanoid Y (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetY, -2f, 2f,  0.4f,  "%.2f");
-            ConfigSliderFloat("Humanoid Z (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetZ, -2f, 2f, -0.15f, "%.2f");
-
-            ImGui.TextDisabled("Hostile combatant offset (enemy BattleNpcs)");
-            ConfigSliderFloat("Combatant X (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetX, -2f, 2f, 0f,   "%.2f");
-            ConfigSliderFloat("Combatant Y (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetY, -2f, 2f, 0.4f, "%.2f");
-            ConfigSliderFloat("Combatant Z (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetZ, -2f, 2f, 0f,   "%.2f");
-
-            ImGui.Separator();
-            ConfigSliderFloat("Sen marker padding##JobAura", ref noWickyXIV.Config.JobAuraSenPadding, 0.8f, 2.0f, 1.18f, "%.2f");
-            ConfigSliderFloat("Sen marker scale##JobAura",   ref noWickyXIV.Config.JobAuraSenScale,   0.3f, 3.0f, 1.0f);
-            ConfigSliderFloat("Sen cascade delay (s)##JobAura", ref noWickyXIV.Config.JobAuraSenCascadeDelay, 0f, 2f, 0.4f, "%.2f");
-            ImGui.TextDisabled("Sen markers wait this long after the overlay first becomes visible before fading in.");
-
-            ImGui.Separator();
-            ConfigCheckbox("Show HP rings on party members##JobAura", ref noWickyXIV.Config.JobAuraPartyHpRings);
-            ImGui.TextDisabled("Mirrors the primary HP indicator (without text) on every party member.");
-
-            ImGui.Separator();
-            ImGui.TextUnformatted("Kenki tier rings (33% / 66% / 100%)");
-            // ---- Tier 1 (33%) ----
-            ImGui.TextDisabled("Tier 1 — Kenki ≥ 33%");
-            ChatColorPicker("Tier1 color##JobAuraTier",
-                ref noWickyXIV.Config.JobAuraTier1ColorR,
-                ref noWickyXIV.Config.JobAuraTier1ColorG,
-                ref noWickyXIV.Config.JobAuraTier1ColorB,
-                ref noWickyXIV.Config.JobAuraTier1Alpha);
-            // ---- Tier 2 (66%) ----
-            ImGui.TextDisabled("Tier 2 — Kenki ≥ 66%");
-            ChatColorPicker("Tier2 color##JobAuraTier",
-                ref noWickyXIV.Config.JobAuraTier2ColorR,
-                ref noWickyXIV.Config.JobAuraTier2ColorG,
-                ref noWickyXIV.Config.JobAuraTier2ColorB,
-                ref noWickyXIV.Config.JobAuraTier2Alpha);
-            // ---- Tier 3 (100%) ----
-            ImGui.TextDisabled("Tier 3 — Kenki = 100% (pulses)");
-            ChatColorPicker("Tier3 color##JobAuraTier",
-                ref noWickyXIV.Config.JobAuraTier3ColorR,
-                ref noWickyXIV.Config.JobAuraTier3ColorG,
-                ref noWickyXIV.Config.JobAuraTier3ColorB,
-                ref noWickyXIV.Config.JobAuraTier3Alpha);
-
-            ImGui.Separator();
-            ImGui.TextUnformatted("HP indicator rings (3-layer composite around target/player)");
-            // ---- Outer (backdrop) ring ----
-            ImGui.TextDisabled("Outer ring — persistent backdrop");
-            ConfigSliderFloat("Outer radius (× base)##JobAuraOuter",  ref noWickyXIV.Config.JobAuraHpBackdropRadiusFactor, 0.1f, 3f, 0.7425f, "%.3f");
-            ChatColorPicker("Outer color##JobAuraOuter",
-                ref noWickyXIV.Config.JobAuraHpBackdropColorR,
-                ref noWickyXIV.Config.JobAuraHpBackdropColorG,
-                ref noWickyXIV.Config.JobAuraHpBackdropColorB,
-                ref noWickyXIV.Config.JobAuraHpBackdropAlpha);
-            // ---- Inner core ----
-            ImGui.TextDisabled("Inner core — radius and alpha both shrink with HP%");
-            ConfigSliderFloat("Inner radius (× base × HP%%)##JobAuraInner", ref noWickyXIV.Config.JobAuraHpInnerRadiusFactor, 0.05f, 2f, 0.55f, "%.3f");
-            ChatColorPicker("Inner color##JobAuraInner",
-                ref noWickyXIV.Config.JobAuraHpInnerColorR,
-                ref noWickyXIV.Config.JobAuraHpInnerColorG,
-                ref noWickyXIV.Config.JobAuraHpInnerColorB,
-                ref noWickyXIV.Config.JobAuraHpInnerAlpha);
-            // ---- Pulse ring ----
-            ImGui.TextDisabled("Pulse ring — expands outward from outer edge, period scales with HP%");
-            ConfigSliderFloat("Pulse expand (× outer radius)##JobAuraPulse", ref noWickyXIV.Config.JobAuraHpPulseExpandFactor, 1f, 4f, 1.95f, "%.2f");
-            ConfigSliderFloat("Pulse thickness##JobAuraPulse",               ref noWickyXIV.Config.JobAuraHpPulseThickness,    0.5f, 12f, 3.5f, "%.1f");
-            ChatColorPicker("Pulse color##JobAuraPulse",
-                ref noWickyXIV.Config.JobAuraHpPulseColorR,
-                ref noWickyXIV.Config.JobAuraHpPulseColorG,
-                ref noWickyXIV.Config.JobAuraHpPulseColorB,
-                ref noWickyXIV.Config.JobAuraHpPulseAlpha);
-
-            ImGui.Separator();
-            ImGui.TextUnformatted("Full-zen (AllSen) overlay rings");
-            ImGui.TextDisabled("Inner ring fades alpha 0→0.5; outer ring then traces clockwise from 12 o'clock as a snake stroke 0.5→1.0.");
-            // ---- AllSen inner ring ----
-            ImGui.TextDisabled("Inner ring");
-            ConfigSliderFloat("AllSen inner thickness##JobAuraAllSenInner", ref noWickyXIV.Config.JobAuraAllSenInnerThickness, 0.5f, 16f, 5.0f, "%.1f");
-            ChatColorPicker("AllSen inner color##JobAuraAllSenInner",
-                ref noWickyXIV.Config.JobAuraAllSenInnerColorR,
-                ref noWickyXIV.Config.JobAuraAllSenInnerColorG,
-                ref noWickyXIV.Config.JobAuraAllSenInnerColorB,
-                ref noWickyXIV.Config.JobAuraAllSenInnerAlpha);
-            // ---- AllSen outer (snake) ring ----
-            ImGui.TextDisabled("Outer ring (snake stroke)");
-            ConfigSliderFloat("AllSen outer radius (× inner)##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterRadiusFactor, 1.0f, 2.0f, 1.10f, "%.2f");
-            ConfigSliderFloat("AllSen outer thickness##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterThickness, 0.5f, 16f, 2.5f, "%.1f");
-            ChatColorPicker("AllSen outer color##JobAuraAllSenOuter",
-                ref noWickyXIV.Config.JobAuraAllSenOuterColorR,
-                ref noWickyXIV.Config.JobAuraAllSenOuterColorG,
-                ref noWickyXIV.Config.JobAuraAllSenOuterColorB,
-                ref noWickyXIV.Config.JobAuraAllSenOuterAlpha);
-
-            ImGui.Separator();
-            ConfigCheckbox("Show HP %% text##JobAura", ref noWickyXIV.Config.JobAuraShowHpText);
-            ImGui.TextDisabled("HP text font (system .ttf/.otf)");
+            if (ImGuiEx.BeginGroupBox("Job Aura"))
             {
-                var fonts = JobAura.EnumerateSystemFonts();
-                string current = noWickyXIV.Config.JobAuraHpFontPath ?? "";
-                string preview = string.IsNullOrEmpty(current) ? "(default ImGui)" : System.IO.Path.GetFileName(current);
-                if (ImGui.BeginCombo("Font##JobAuraHp", preview))
+                ConfigCheckbox("Enable##JobAura", ref noWickyXIV.Config.EnableJobAura);
+                ConfigCheckbox("Only when weapon drawn##JobAura", ref noWickyXIV.Config.JobAuraOnlyWeaponDrawn);
+                ConfigCheckbox("Mute SFX##JobAura", ref noWickyXIV.Config.MuteJobAuraSfx);
+                ImGui.TextDisabled("Visible only when on Samurai.");
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Anchor & Bones"))
+            {
+                ConfigCheckbox("Anchor to target (instead of player)##JobAura", ref noWickyXIV.Config.JobAuraAnchorToTarget);
+                ConfigCheckbox("Anchor to bone##JobAura", ref noWickyXIV.Config.JobAuraAnchorToBone);
+                ConfigSliderInt("Humanoid bone index##JobAura", ref noWickyXIV.Config.JobAuraBoneIndex, 0, 80, 4);
+                ConfigSliderInt("Hostile bone index##JobAura", ref noWickyXIV.Config.JobAuraTargetBoneIndex, 0, 80, 1);
+                ImGui.TextDisabled(
+                    "Humanoid = player/NPC body; hostile =\n" +
+                    "beasts, dragons, bosses. Bone 4 ≈ spine.");
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Scale & Offsets"))
+            {
+                ConfigSliderFloat("Group scale##JobAura", ref noWickyXIV.Config.JobAuraScale, 0.3f, 3f, 1f);
+
+                ImGui.TextDisabled("Humanoid offset");
+                ConfigSliderFloat("X (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetX, -2f, 2f, 0f, "%.2f");
+                ConfigSliderFloat("Y (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetY, -2f, 2f, 0.4f, "%.2f");
+                ConfigSliderFloat("Z (m)##JobAura", ref noWickyXIV.Config.JobAuraOffsetZ, -2f, 2f, -0.15f, "%.2f");
+
+                ImGui.TextDisabled("Hostile combatant offset");
+                ConfigSliderFloat("X (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetX, -2f, 2f, 0f, "%.2f");
+                ConfigSliderFloat("Y (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetY, -2f, 2f, 0.4f, "%.2f");
+                ConfigSliderFloat("Z (m)##JobAuraTE", ref noWickyXIV.Config.JobAuraTargetEnemyOffsetZ, -2f, 2f, 0f, "%.2f");
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Sen Markers"))
+            {
+                ConfigSliderFloat("Padding##JobAuraSen", ref noWickyXIV.Config.JobAuraSenPadding, 0.8f, 2.0f, 1.18f, "%.2f");
+                ConfigSliderFloat("Scale##JobAuraSen", ref noWickyXIV.Config.JobAuraSenScale, 0.3f, 3.0f, 1.0f);
+                ConfigSliderFloat("Cascade delay (s)##JobAuraSen", ref noWickyXIV.Config.JobAuraSenCascadeDelay, 0f, 2f, 0.4f, "%.2f");
+                ImGui.TextDisabled("Wait time before markers fade in.");
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Fade"))
+            {
+                ConfigCheckbox("Fade out of combat##JobAura", ref noWickyXIV.Config.JobAuraFadeOutOfCombat);
+                ConfigSliderFloat("OOC alpha##JobAura", ref noWickyXIV.Config.JobAuraOutOfCombatAlpha, 0f, 1f, 0f, "%.2f");
+                ConfigCheckbox("Fade when no target##JobAura", ref noWickyXIV.Config.JobAuraFadeWhenNoTarget);
+                ConfigSliderFloat("No-target alpha##JobAura", ref noWickyXIV.Config.JobAuraNoTargetAlpha, 0f, 1f, 0f, "%.2f");
+                ConfigSliderFloat("Fade rate##JobAura", ref noWickyXIV.Config.JobAuraFadeRate, 0.5f, 12f, 4f);
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Audio"))
+            {
+                ConfigSliderFloat("Volume max-focus##JobAura", ref noWickyXIV.Config.JobAuraVolMax, 0f, 1f, 1f);
+                ConfigSliderFloat("Volume pt1##JobAura", ref noWickyXIV.Config.JobAuraVolPt1, 0f, 1f, 1f);
+                ConfigSliderFloat("Volume pt2##JobAura", ref noWickyXIV.Config.JobAuraVolPt2, 0f, 1f, 1f);
+                if (ImGui.Button("Test SFX sequence##JobAura"))
+                    JobAura.TestPlaySequence();
+                ImGui.SameLine();
+                ImGui.TextDisabled("(verify audio)");
+                ImGui.TextDisabled(
+                    "100% Kenki → burst ring + max-focus SFX.\n" +
+                    "1s after cap, pt1+pt2 play together.");
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("HP Text"))
+            {
+                ConfigCheckbox("Show HP %% text##JobAura", ref noWickyXIV.Config.JobAuraShowHpText);
+                ConfigCheckbox("Show HP rings on party##JobAura", ref noWickyXIV.Config.JobAuraPartyHpRings);
+                ImGui.TextDisabled("HP text font (system .ttf/.otf)");
                 {
-                    bool isDefault = string.IsNullOrEmpty(current);
-                    if (ImGui.Selectable("(default ImGui)", isDefault))
+                    var fonts = JobAura.EnumerateSystemFonts();
+                    string current = noWickyXIV.Config.JobAuraHpFontPath ?? "";
+                    string preview = string.IsNullOrEmpty(current) ? "(default ImGui)" : System.IO.Path.GetFileName(current);
+                    if (ImGui.BeginCombo("Font##JobAuraHp", preview))
                     {
-                        noWickyXIV.Config.JobAuraHpFontPath = "";
-                        noWickyXIV.Config.Save();
-                    }
-                    foreach (var path in fonts)
-                    {
-                        bool sel = path.Equals(current, StringComparison.OrdinalIgnoreCase);
-                        if (ImGui.Selectable(System.IO.Path.GetFileName(path), sel))
+                        bool isDefault = string.IsNullOrEmpty(current);
+                        if (ImGui.Selectable("(default ImGui)", isDefault))
                         {
-                            noWickyXIV.Config.JobAuraHpFontPath = path;
+                            noWickyXIV.Config.JobAuraHpFontPath = "";
+                            noWickyXIV.Config.Save();
+                        }
+                        foreach (var path in fonts)
+                        {
+                            bool sel = path.Equals(current, StringComparison.OrdinalIgnoreCase);
+                            if (ImGui.Selectable(System.IO.Path.GetFileName(path), sel))
+                            {
+                                noWickyXIV.Config.JobAuraHpFontPath = path;
+                                noWickyXIV.Config.Save();
+                            }
+                        }
+                        ImGui.EndCombo();
+                    }
+                    {
+                        var io = ImGui.GetIO();
+                        if (ImGui.IsItemHovered() && io.KeyCtrl && MathF.Abs(io.MouseWheel) > 0.01f && fonts.Count > 0)
+                        {
+                            int idx = -1;
+                            for (int i = 0; i < fonts.Count; i++)
+                            {
+                                if (fonts[i].Equals(current, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+                            }
+                            int step = io.MouseWheel > 0 ? -1 : 1;
+                            int next = idx < 0 ? (step > 0 ? 0 : fonts.Count - 1)
+                                               : (((idx + step) % fonts.Count) + fonts.Count) % fonts.Count;
+                            noWickyXIV.Config.JobAuraHpFontPath = fonts[next];
                             noWickyXIV.Config.Save();
                         }
                     }
-                    ImGui.EndCombo();
+                    ConfigSliderFloat("Font size (px)##JobAuraHp", ref noWickyXIV.Config.JobAuraHpFontSize, 8f, 96f, 22f, "%.0f");
                 }
-                {
-                    var io = ImGui.GetIO();
-                    if (ImGui.IsItemHovered() && io.KeyCtrl && MathF.Abs(io.MouseWheel) > 0.01f && fonts.Count > 0)
-                    {
-                        int idx = -1;
-                        for (int i = 0; i < fonts.Count; i++)
-                        {
-                            if (fonts[i].Equals(current, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
-                        }
-                        int step = io.MouseWheel > 0 ? -1 : 1;
-                        int next = idx < 0 ? (step > 0 ? 0 : fonts.Count - 1)
-                                           : (((idx + step) % fonts.Count) + fonts.Count) % fonts.Count;
-                        noWickyXIV.Config.JobAuraHpFontPath = fonts[next];
-                        noWickyXIV.Config.Save();
-                    }
-                }
-                ConfigSliderFloat("Font size (px)##JobAuraHp", ref noWickyXIV.Config.JobAuraHpFontSize, 8f, 96f, 22f, "%.0f");
+                ImGuiEx.EndGroupBox();
+            }
+        }
+        ImGui.EndChild();
+
+        ImGui.SameLine(0, colGap);
+
+        // ── Right column: colours & visual tuning ───────────────
+        if (ImGui.BeginChild("##FxTabRight", new Vector2(rightW, 0), false))
+        {
+            if (ImGuiEx.BeginGroupBox("Kenki Tier Rings"))
+            {
+                ImGui.TextDisabled("Tier 1 — Kenki ≥ 33%");
+                ChatColorPicker("Tier1 color##JobAuraTier",
+                    ref noWickyXIV.Config.JobAuraTier1ColorR,
+                    ref noWickyXIV.Config.JobAuraTier1ColorG,
+                    ref noWickyXIV.Config.JobAuraTier1ColorB,
+                    ref noWickyXIV.Config.JobAuraTier1Alpha);
+                ImGui.TextDisabled("Tier 2 — Kenki ≥ 66%");
+                ChatColorPicker("Tier2 color##JobAuraTier",
+                    ref noWickyXIV.Config.JobAuraTier2ColorR,
+                    ref noWickyXIV.Config.JobAuraTier2ColorG,
+                    ref noWickyXIV.Config.JobAuraTier2ColorB,
+                    ref noWickyXIV.Config.JobAuraTier2Alpha);
+                ImGui.TextDisabled("Tier 3 — Kenki = 100% (pulses)");
+                ChatColorPicker("Tier3 color##JobAuraTier",
+                    ref noWickyXIV.Config.JobAuraTier3ColorR,
+                    ref noWickyXIV.Config.JobAuraTier3ColorG,
+                    ref noWickyXIV.Config.JobAuraTier3ColorB,
+                    ref noWickyXIV.Config.JobAuraTier3Alpha);
+                ImGuiEx.EndGroupBox();
             }
 
-            ImGui.Separator();
-            ConfigCheckbox  ("Fade out of combat##JobAura", ref noWickyXIV.Config.JobAuraFadeOutOfCombat);
-            ConfigSliderFloat("OOC alpha##JobAura",  ref noWickyXIV.Config.JobAuraOutOfCombatAlpha, 0f,  1f,  0f,  "%.2f");
-            ConfigCheckbox  ("Fade when no target##JobAura", ref noWickyXIV.Config.JobAuraFadeWhenNoTarget);
-            ConfigSliderFloat("No-target alpha##JobAura", ref noWickyXIV.Config.JobAuraNoTargetAlpha, 0f, 1f, 0f, "%.2f");
-            ConfigSliderFloat("Fade rate##JobAura",  ref noWickyXIV.Config.JobAuraFadeRate,         0.5f, 12f, 4f);
+            if (ImGuiEx.BeginGroupBox("HP Indicator Rings"))
+            {
+                ImGui.TextDisabled("Outer ring — persistent backdrop");
+                ConfigSliderFloat("Outer radius (× base)##JobAuraOuter", ref noWickyXIV.Config.JobAuraHpBackdropRadiusFactor, 0.1f, 3f, 0.7425f, "%.3f");
+                ChatColorPicker("Outer color##JobAuraOuter",
+                    ref noWickyXIV.Config.JobAuraHpBackdropColorR,
+                    ref noWickyXIV.Config.JobAuraHpBackdropColorG,
+                    ref noWickyXIV.Config.JobAuraHpBackdropColorB,
+                    ref noWickyXIV.Config.JobAuraHpBackdropAlpha);
 
-            ImGui.Separator();
-            ConfigSliderFloat("Volume max-focus##JobAura", ref noWickyXIV.Config.JobAuraVolMax, 0f, 1f, 1f);
-            ConfigSliderFloat("Volume pt1##JobAura",       ref noWickyXIV.Config.JobAuraVolPt1, 0f, 1f, 1f);
-            ConfigSliderFloat("Volume pt2##JobAura",       ref noWickyXIV.Config.JobAuraVolPt2, 0f, 1f, 1f);
-            if (ImGui.Button("Test SFX sequence##JobAura"))
-                JobAura.TestPlaySequence();
-            ImGui.SameLine();
-            ImGui.TextDisabled("(plays max-focus + 1s later pt1/pt2 — verify audio)");
+                ImGui.TextDisabled("Inner core — shrinks with HP%");
+                ConfigSliderFloat("Inner radius (× base × HP%%)##JobAuraInner", ref noWickyXIV.Config.JobAuraHpInnerRadiusFactor, 0.05f, 2f, 0.55f, "%.3f");
+                ChatColorPicker("Inner color##JobAuraInner",
+                    ref noWickyXIV.Config.JobAuraHpInnerColorR,
+                    ref noWickyXIV.Config.JobAuraHpInnerColorG,
+                    ref noWickyXIV.Config.JobAuraHpInnerColorB,
+                    ref noWickyXIV.Config.JobAuraHpInnerAlpha);
 
-            ImGui.TextDisabled(
-                "Tiers: 33% / 66% / 100% Kenki.\n" +
-                "100% triggers an explosive burst ring + max-focus SFX.\n" +
-                "1s after cap, pt1+pt2 SFX play together.\n" +
-                "Bone index 4 ≈ upper spine; tweak to taste.\n" +
-                "Visible only when on Samurai.");
-            ImGuiEx.EndGroupBox();
+                ImGui.TextDisabled("Pulse ring — expands outward");
+                ConfigSliderFloat("Pulse expand (× outer)##JobAuraPulse", ref noWickyXIV.Config.JobAuraHpPulseExpandFactor, 1f, 4f, 1.95f, "%.2f");
+                ConfigSliderFloat("Pulse thickness##JobAuraPulse", ref noWickyXIV.Config.JobAuraHpPulseThickness, 0.5f, 12f, 3.5f, "%.1f");
+                ChatColorPicker("Pulse color##JobAuraPulse",
+                    ref noWickyXIV.Config.JobAuraHpPulseColorR,
+                    ref noWickyXIV.Config.JobAuraHpPulseColorG,
+                    ref noWickyXIV.Config.JobAuraHpPulseColorB,
+                    ref noWickyXIV.Config.JobAuraHpPulseAlpha);
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Full-Zen (AllSen) Rings"))
+            {
+                ImGui.TextDisabled("Inner ring fades 0→0.5; outer traces clockwise 0.5→1.0.");
+                ImGui.TextDisabled("Inner ring");
+                ConfigSliderFloat("Inner thickness##JobAuraAllSenInner", ref noWickyXIV.Config.JobAuraAllSenInnerThickness, 0.5f, 16f, 5.0f, "%.1f");
+                ChatColorPicker("Inner color##JobAuraAllSenInner",
+                    ref noWickyXIV.Config.JobAuraAllSenInnerColorR,
+                    ref noWickyXIV.Config.JobAuraAllSenInnerColorG,
+                    ref noWickyXIV.Config.JobAuraAllSenInnerColorB,
+                    ref noWickyXIV.Config.JobAuraAllSenInnerAlpha);
+                ImGui.TextDisabled("Outer ring (snake stroke)");
+                ConfigSliderFloat("Outer radius (× inner)##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterRadiusFactor, 1.0f, 2.0f, 1.10f, "%.2f");
+                ConfigSliderFloat("Outer thickness##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterThickness, 0.5f, 16f, 2.5f, "%.1f");
+                ChatColorPicker("Outer color##JobAuraAllSenOuter",
+                    ref noWickyXIV.Config.JobAuraAllSenOuterColorR,
+                    ref noWickyXIV.Config.JobAuraAllSenOuterColorG,
+                    ref noWickyXIV.Config.JobAuraAllSenOuterColorB,
+                    ref noWickyXIV.Config.JobAuraAllSenOuterAlpha);
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("VFX Replacer (modular layers)"))
+            {
+                ImGui.TextDisabled("Each layer hooks a Kenki/Sen/motion/combat trigger and plays an .avfx.");
+                ConfigCheckbox("Enable real .avfx (advanced — may crash game until sigs verified)##JobAura",
+                    ref noWickyXIV.Config.JobAuraEnableRealVfx);
+                ImGui.TextDisabled("Toggle requires plugin reload. ImGui rings + audio above work either way.");
+                ImGui.Separator();
+                DrawJobAuraVfxLayers();
+
+                ImGui.TextDisabled(
+                    "VFX paths: e.g. \"vfx/common/eff/dk03ht_canc0t.avfx\" (browse with VfxEditor).\n" +
+                    "Chain mode: pick a source path from existing layers via dropdown.\n" +
+                    "Chained mode: type any source path with quick-pick autocomplete adjacent.");
+                ImGuiEx.EndGroupBox();
+            }
         }
-
-        if (ImGuiEx.BeginGroupBox("VFX Replacer (modular layers)"))
-        {
-            ImGui.TextDisabled("Each layer hooks a Kenki/Sen/motion/combat trigger and plays an .avfx.");
-            ConfigCheckbox("Enable real .avfx (advanced — may crash game until sigs verified)##JobAura",
-                ref noWickyXIV.Config.JobAuraEnableRealVfx);
-            ImGui.TextDisabled("Toggle requires plugin reload. ImGui rings + audio above work either way.");
-            ImGui.Separator();
-            DrawJobAuraVfxLayers();
-
-            ImGui.TextDisabled(
-                "VFX paths: e.g. \"vfx/common/eff/dk03ht_canc0t.avfx\" (browse with VfxEditor).\n" +
-                "Chain mode: pick a source path from existing layers via dropdown.\n" +
-                "Chained mode: type any source path with quick-pick autocomplete adjacent.");
-            ImGuiEx.EndGroupBox();
-        }
+        ImGui.EndChild();
     }
 
     // ---- Misc tab (was "Other Settings" + click translator + instant mode) ----
@@ -1796,6 +1809,65 @@ public static class PluginUI
     // ---- Nicknames tab ----
     private static unsafe void DrawMiscTab()
     {
+        if (ImGuiEx.BeginGroupBox("Camera head-look (override gaze)"))
+        {
+            ConfigCheckbox("Enable##CameraHeadLook", ref noWickyXIV.Config.EnableCameraHeadLook);
+            ImGui.TextDisabled(
+                "Drives Character.LookAt every frame so the head/torso aim along\n" +
+                "the camera's forward vector instead of the current target.\n" +
+                "The game's IK cone still limits how far the head can turn.");
+            ConfigCheckbox("Disable in combat##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookDisableInCombat);
+            ConfigCheckbox("Affect torso##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookAffectTorso);
+            ConfigCheckbox("Affect head##CameraHeadLook",  ref noWickyXIV.Config.CameraHeadLookAffectHead);
+            ConfigCheckbox("Affect eyes##CameraHeadLook",  ref noWickyXIV.Config.CameraHeadLookAffectEyes);
+            ConfigSliderFloat("Distance (m)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookDistance, 1f, 30f, 8f, "%.1f");
+            ConfigSliderFloat("Update epsilon (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookEpsilon, 0.0005f, 0.05f, 0.005f, "%.4f");
+            ConfigCheckbox("Invert V (flip if head looks wrong vertically)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookInvertV);
+            ConfigSliderFloat("Pitch baseline (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookPitchOffset, -1.2f, 0.5f, -0.30f, "%.2f");
+            ImGui.TextDisabled("V at this value = head horizontal. FFXIV's default camera sits below 0; tune until \"forward\" feels level.");
+            ConfigSliderFloat("Cone limit (rad)##CameraHeadLook",   ref noWickyXIV.Config.CameraHeadLookConeLimit,   0.5f, 3.14f, 2.20f, "%.2f");
+            ConfigSliderFloat("Cone falloff (rad)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookConeFalloff, 0.05f, 1.5f, 0.40f, "%.2f");
+            ImGui.TextDisabled("Past the cone limit, the override fades toward player-facing-neutral over the falloff band to stop the IK from fighting itself.");
+            ConfigCheckbox("Auto-prime on enable (Mode 2 self for 30 frames)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookAutoPrime);
+            ImGui.TextDisabled("First ~0.5s after enabling, writes player's own ID via GameObjectId to wake the IK controller before switching to your chosen mode.");
+            ImGui.Separator();
+            ImGui.TextDisabled("Probe mode — pick one, watch the head, find which input the IK reads:");
+            string[] modes = {
+                "0: TargetParam Unk2 (dead path)",
+                "1: TargetParam Unk3 (recommended — head IK reads this)",
+                "2: GameObjectId — needs hard/soft target",
+                "3: BannerFollow (banner-editor path; may be dead)",
+            };
+            int modeIdx = noWickyXIV.Config.CameraHeadLookMode;
+            if (modeIdx < 0 || modeIdx >= modes.Length) modeIdx = 0;
+            if (ImGui.BeginCombo("Mode##CameraHeadLook", modes[modeIdx]))
+            {
+                for (int i = 0; i < modes.Length; i++)
+                {
+                    bool sel = i == modeIdx;
+                    if (ImGui.Selectable(modes[i], sel))
+                    {
+                        noWickyXIV.Config.CameraHeadLookMode = i;
+                        noWickyXIV.Config.Save();
+                    }
+                }
+                ImGui.EndCombo();
+            }
+            ImGui.Separator();
+            ConfigCheckbox("Dump diagnostics to head_diag.txt##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookDiag);
+            ConfigCheckbox("Observe only (skip writes; see game's natural state)##CameraHeadLook", ref noWickyXIV.Config.CameraHeadLookObserveOnly);
+            if (ImGui.Button("Reset diag log##CameraHeadLook"))
+                HeadTracker.ResetDiag();
+            ImGui.SameLine();
+            if (ImGui.Button("Open config folder##CameraHeadLook"))
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    { FileName = DalamudApi.PluginInterface.GetPluginConfigDirectory(), UseShellExecute = true }); } catch { }
+            }
+            ImGui.TextDisabled("Samples once per ~30 frames. File: pluginConfigs\\noWickyXIV\\head_diag.txt");
+            ImGuiEx.EndGroupBox();
+        }
+
         if (ImGuiEx.BeginGroupBox("Input Sensitivity"))
         {
             ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.56f, 4f, 1f);
@@ -3730,10 +3802,10 @@ public static class PluginUI
         var max = new Vector2(posX + pw, posY + ph);
 
         // Background.
-        dl.AddRectFilled(min, max, TpCol(cfg.TpColorBackground, alpha), rounding);
+        dl.AddRectFilled(min, max, TpCol(cfg.UiColorBackground, alpha), rounding);
 
         // Border.
-        dl.AddRect(min, max, TpCol(cfg.TpColorBorder, alpha), rounding,
+        dl.AddRect(min, max, TpCol(cfg.UiColorBorder, alpha), rounding,
                    ImDrawFlags.None, TP_BORDER * scale);
 
         // Position content manually (WindowPadding is 0).
@@ -3745,7 +3817,7 @@ public static class PluginUI
             bool headPushed = _tpHeadingFont != null && _tpHeadingFont.Available;
             if (headPushed) _tpHeadingFont.Push();
 
-            ImGui.PushStyleColor(ImGuiCol.Text, TpCol(cfg.TpColorTitle, alpha));
+            ImGui.PushStyleColor(ImGuiCol.Text, TpCol(cfg.UiColorAccent, alpha));
             ImGui.TextUnformatted(placeName);
             ImGui.PopStyleColor();
             float titleH = ImGui.GetItemRectSize().Y;
@@ -3761,7 +3833,7 @@ public static class PluginUI
             ImGui.SameLine();
             ImGui.SetCursorPosX(iconsX);
             ImGui.PushStyleColor(ImGuiCol.Button, 0u);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpCol(cfg.TpColorRowHover, alpha));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpCol(cfg.UiColorHover, alpha));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive,  TpCol(cfg.TpColorRowActive, alpha));
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f * scale);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, Vector2.Zero);
@@ -3773,7 +3845,7 @@ public static class PluginUI
                 float cx = shareRect.X + iconSz * 0.5f;
                 float cy = shareRect.Y + iconSz * 0.5f;
                 float r = iconSz * 0.28f;
-                uint ic = TpCol(cfg.TpColorTitle, alpha);
+                uint ic = TpCol(cfg.UiColorAccent, alpha);
                 float t = 1.5f * scale;
                 dl.AddLine(new Vector2(cx - r, cy + r), new Vector2(cx + r, cy - r), ic, t);
                 dl.AddLine(new Vector2(cx + r, cy - r), new Vector2(cx, cy - r), ic, t);
@@ -3789,7 +3861,7 @@ public static class PluginUI
                 ImGui.SameLine();
                 ImGui.SetCursorPosX(iconsX);
                 ImGui.PushStyleColor(ImGuiCol.Button, 0u);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpCol(cfg.TpColorRowHover, alpha));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TpCol(cfg.UiColorHover, alpha));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive,  TpCol(cfg.TpColorRowActive, alpha));
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f * scale);
                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, Vector2.Zero);
@@ -3801,7 +3873,7 @@ public static class PluginUI
                     float cx = fcRect.X + iconSz * 0.5f;
                     float cy = fcRect.Y + iconSz * 0.5f;
                     float r = iconSz * 0.3f;
-                    uint ic = TpCol(cfg.TpColorTitle, alpha);
+                    uint ic = TpCol(cfg.UiColorAccent, alpha);
                     float t = 1.5f * scale;
                     dl.AddTriangle(
                         new Vector2(cx, cy - r),
@@ -4083,7 +4155,7 @@ public static class PluginUI
         // Draw hover/nav highlight.
         if (ht > 0f)
         {
-            var hc = navSel ? rowCfg.TpColorRowNavHighlight : rowCfg.TpColorRowHover;
+            var hc = navSel ? rowCfg.TpColorRowNavHighlight : rowCfg.UiColorHover;
             uint hlCol = TpCol(new Vector4(hc.X, hc.Y, hc.Z, hc.W * ht), alpha);
             var cdl = ImGui.GetWindowDrawList();
             cdl.AddRectFilled(screenPos,
@@ -4094,7 +4166,7 @@ public static class PluginUI
         // Draw row text on top.
         var textPos = new Vector2(screenPos.X + 6f * scale, screenPos.Y + (rowH - ImGui.GetFontSize()) * 0.5f);
         ImGui.GetWindowDrawList().AddText(textPos,
-            TpCol(rowCfg.TpColorText, alpha), entry.AetheryteName);
+            TpCol(rowCfg.UiColorText, alpha), entry.AetheryteName);
 
         string costText = $"{entry.GilCost} gil";
         float costW = ImGui.CalcTextSize(costText).X;
@@ -4171,7 +4243,7 @@ public static class PluginUI
 
         if (rht > 0f)
         {
-            var hc = cfg.TpColorRowHover;
+            var hc = cfg.UiColorHover;
             dl.AddRectFilled(screenPos,
                 new Vector2(screenPos.X + availW, screenPos.Y + rowH),
                 TpCol(new Vector4(hc.X, hc.Y, hc.Z, hc.W * rht), alpha), 4f * scale);
@@ -4339,7 +4411,7 @@ public static class PluginUI
 
     private static int _styleRenameIndex = -1;
     private static string _styleRenameBuf = "";
-    private static int _selectedStyleProfile = -1;
+    private static int _selectedStyleProfile = 0;
 
     /// <summary>
     /// Style-profiles panel drawn in the left column of the Presets
@@ -4461,35 +4533,32 @@ public static class PluginUI
             TpColorPicker("Accent##Ui",     ref cfg.UiColorAccent);
             TpColorPicker("Text##Ui",       ref cfg.UiColorText);
             TpColorPicker("Hover##Ui",      ref cfg.UiColorHover);
+            ImGui.TextDisabled("Shared by teleport menu, quick menu, and overlays.");
             ImGui.TreePop();
         }
 
         if (ImGui.TreeNode("Teleport Menu"))
         {
-            TpColorPicker("Background##Tp",   ref cfg.TpColorBackground);
-            TpColorPicker("Border##Tp",       ref cfg.TpColorBorder);
-            TpColorPicker("Title##Tp",        ref cfg.TpColorTitle);
-            TpColorPicker("Separator##Tp",    ref cfg.TpColorSeparator);
-            TpColorPicker("Text##Tp",         ref cfg.TpColorText);
-            TpColorPicker("Cost text##Tp",    ref cfg.TpColorCostText);
-            TpColorPicker("Section label##Tp", ref cfg.TpColorSectionLabel);
-            TpColorPicker("Region label##Tp", ref cfg.TpColorRegionLabel);
-            TpColorPicker("Chevron##Tp",      ref cfg.TpColorChevron);
-            TpColorPicker("Row hover##Tp",    ref cfg.TpColorRowHover);
-            TpColorPicker("Row active##Tp",   ref cfg.TpColorRowActive);
-            TpColorPicker("Row nav HL##Tp",   ref cfg.TpColorRowNavHighlight);
-            TpColorPicker("Search bg##Tp",    ref cfg.TpColorSearchBg);
-            TpColorPicker("Search border##Tp", ref cfg.TpColorSearchBorder);
-            TpColorPicker("Search text##Tp",  ref cfg.TpColorSearchText);
-            TpColorPicker("Search hint##Tp",  ref cfg.TpColorSearchHint);
-            TpColorPicker("FC button##Tp",    ref cfg.TpColorFcButton);
-            TpColorPicker("FC hover##Tp",     ref cfg.TpColorFcButtonHover);
-            TpColorPicker("FC active##Tp",    ref cfg.TpColorFcButtonActive);
-            TpColorPicker("2nd button##Tp",   ref cfg.TpColorSecondaryButton);
-            TpColorPicker("2nd hover##Tp",    ref cfg.TpColorSecondaryButtonHover);
-            TpColorPicker("2nd active##Tp",   ref cfg.TpColorSecondaryButtonActive);
-            TpColorPicker("Scrollbar bg##Tp", ref cfg.TpColorScrollbarBg);
-            TpColorPicker("Scrollbar grab##Tp", ref cfg.TpColorScrollbarGrab);
+            ImGui.TextDisabled("Bg / border / text / hover use Global UI above.");
+            TpColorPicker("Cost text##Tp",      ref cfg.TpColorCostText);
+            TpColorPicker("Section label##Tp",   ref cfg.TpColorSectionLabel);
+            TpColorPicker("Region label##Tp",    ref cfg.TpColorRegionLabel);
+            TpColorPicker("Chevron##Tp",         ref cfg.TpColorChevron);
+            TpColorPicker("Row active##Tp",      ref cfg.TpColorRowActive);
+            TpColorPicker("Row nav HL##Tp",      ref cfg.TpColorRowNavHighlight);
+            TpColorPicker("Separator##Tp",       ref cfg.TpColorSeparator);
+            TpColorPicker("Search bg##Tp",       ref cfg.TpColorSearchBg);
+            TpColorPicker("Search border##Tp",   ref cfg.TpColorSearchBorder);
+            TpColorPicker("Search text##Tp",     ref cfg.TpColorSearchText);
+            TpColorPicker("Search hint##Tp",     ref cfg.TpColorSearchHint);
+            TpColorPicker("FC button##Tp",       ref cfg.TpColorFcButton);
+            TpColorPicker("FC hover##Tp",        ref cfg.TpColorFcButtonHover);
+            TpColorPicker("FC active##Tp",       ref cfg.TpColorFcButtonActive);
+            TpColorPicker("2nd button##Tp",      ref cfg.TpColorSecondaryButton);
+            TpColorPicker("2nd hover##Tp",       ref cfg.TpColorSecondaryButtonHover);
+            TpColorPicker("2nd active##Tp",      ref cfg.TpColorSecondaryButtonActive);
+            TpColorPicker("Scrollbar bg##Tp",    ref cfg.TpColorScrollbarBg);
+            TpColorPicker("Scrollbar grab##Tp",  ref cfg.TpColorScrollbarGrab);
             TpColorPicker("Scrollbar hover##Tp", ref cfg.TpColorScrollbarHover);
             TpColorPicker("Scrollbar active##Tp", ref cfg.TpColorScrollbarActive);
             ImGui.TreePop();
@@ -4703,154 +4772,97 @@ public static class PluginUI
     private static void DrawTeleportTab()
     {
         var cfg = noWickyXIV.Config;
-        float fullW = ImGui.GetContentRegionAvail().X;
-        // Left column: behavior + font controls.
-        float colGap = 12f * ImGuiHelpers.GlobalScale;
-        float leftW  = MathF.Min(360f * ImGuiHelpers.GlobalScale, (fullW - colGap) * 0.42f);
-        float rightW = fullW - leftW - colGap;
 
-        if (ImGui.BeginChild("##TpTabLeft", new Vector2(leftW, 0), false))
+        if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
         {
-            if (ImGuiEx.BeginGroupBox("Custom teleport menu"))
-            {
-                ConfigCheckbox("Enable##CustomTeleportMenu",
-                    ref cfg.EnableCustomTeleportMenu);
-                ImGui.TextDisabled(
-                    "Replaces the game's native Teleport window with a\n" +
-                    "custom searchable list. Hover the chosen corner of\n" +
-                    "the screen to slide it in; FC house shortcut,\n" +
-                    "recently visited, and region-grouped aetherytes.");
-                ImGuiEx.EndGroupBox();
-            }
+            ConfigCheckbox("Enable##CustomTeleportMenu",
+                ref cfg.EnableCustomTeleportMenu);
+            ImGui.TextDisabled(
+                "Replaces the game's native Teleport window with a\n" +
+                "custom searchable list. Hover the chosen corner of\n" +
+                "the screen to slide it in; FC house shortcut,\n" +
+                "recently visited, and region-grouped aetherytes.\n" +
+                "Colors are driven by the Global UI palette in Style Profiles.");
+            ImGuiEx.EndGroupBox();
+        }
 
-            if (ImGuiEx.BeginGroupBox("Placement"))
-            {
-                DrawScreenCornerCombo("Anchor##TpCorner", ref cfg.TeleportMenuCorner);
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Offset X (px)##TpOffsetX",
-                        ref cfg.TeleportMenuOffsetX, 0f, 200f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Offset Y (px)##TpOffsetY",
-                        ref cfg.TeleportMenuOffsetY, 0f, 200f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGuiEx.EndGroupBox();
-            }
+        if (ImGuiEx.BeginGroupBox("Placement"))
+        {
+            DrawScreenCornerCombo("Anchor##TpCorner", ref cfg.TeleportMenuCorner);
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset X (px)##TpOffsetX",
+                    ref cfg.TeleportMenuOffsetX, 0f, 200f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Offset Y (px)##TpOffsetY",
+                    ref cfg.TeleportMenuOffsetY, 0f, 200f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
+        }
 
-            if (ImGuiEx.BeginGroupBox("Typography"))
-            {
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Heading / region (px)##TpHeadingSize",
-                        ref cfg.TpHeadingFontSizePx, 8f, 48f, "%.0f"))
-                    cfg.SaveDebounced();
+        if (ImGuiEx.BeginGroupBox("Typography"))
+        {
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Heading / region (px)##TpHeadingSize",
+                    ref cfg.TpHeadingFontSizePx, 8f, 48f, "%.0f"))
+                cfg.SaveDebounced();
 
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Aetheryte rows (px)##TpBodySize",
-                        ref cfg.TpBodyFontSizePx, 8f, 36f, "%.0f"))
-                    cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Aetheryte rows (px)##TpBodySize",
+                    ref cfg.TpBodyFontSizePx, 8f, 36f, "%.0f"))
+                cfg.SaveDebounced();
 
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Search bar (px)##TpSearchSize",
-                        ref cfg.TpSearchFontSizePx, 8f, 36f, "%.0f"))
-                    cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Search bar (px)##TpSearchSize",
+                    ref cfg.TpSearchFontSizePx, 8f, 36f, "%.0f"))
+                cfg.SaveDebounced();
 
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Weight##TpFontWeight",
-                        ref cfg.TpFontWeight, 0f, 1f, "%.2f"))
-                    cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Weight##TpFontWeight",
+                    ref cfg.TpFontWeight, 0f, 1f, "%.2f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
+        }
 
-                TpColorPicker("Font color##TpFontColor", ref cfg.TpColorText);
-                ImGuiEx.EndGroupBox();
-            }
-
+        if (ImGuiEx.BeginGroupBox("Layout"))
+        {
             ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
             if (ImGui.SliderFloat("Width##TpWidth",
                     ref cfg.TpWidth, 200f, 800f, "%.0f"))
                 cfg.SaveDebounced();
 
-            if (ImGuiEx.BeginGroupBox("Padding"))
-            {
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Top##TpPadTop",
-                        ref cfg.TpPadTop, 0f, 48f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Bottom##TpPadBottom",
-                        ref cfg.TpPadBottom, 0f, 48f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Left##TpPadLeft",
-                        ref cfg.TpPadLeft, 0f, 48f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Right##TpPadRight",
-                        ref cfg.TpPadRight, 0f, 48f, "%.0f"))
-                    cfg.SaveDebounced();
-
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Scrollbar gap##TpScrollRightPad",
-                        ref cfg.TpScrollRightPad, 0f, 32f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGuiEx.EndGroupBox();
-            }
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Fade size##TpFadeSize",
+                    ref cfg.TpFadeSize, 0f, 80f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
         }
-        ImGui.EndChild();
 
-        ImGui.SameLine(0, colGap);
-
-        if (ImGui.BeginChild("##TpTabRight", new Vector2(rightW, 0), false))
+        if (ImGuiEx.BeginGroupBox("Padding"))
         {
-            // Section labels avoid restating context in every label.
-            if (ImGuiEx.BeginGroupBox("Container"))
-            {
-                TpColorPicker("Background",     ref cfg.TpColorBackground);
-                TpColorPicker("Border",         ref cfg.TpColorBorder);
-                TpColorPicker("Title",          ref cfg.TpColorTitle);
-                TpColorPicker("Separator",      ref cfg.TpColorSeparator);
-                ImGuiEx.EndGroupBox();
-            }
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Top##TpPadTop",
+                    ref cfg.TpPadTop, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Bottom##TpPadBottom",
+                    ref cfg.TpPadBottom, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Left##TpPadLeft",
+                    ref cfg.TpPadLeft, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Right##TpPadRight",
+                    ref cfg.TpPadRight, 0f, 48f, "%.0f"))
+                cfg.SaveDebounced();
 
-            if (ImGuiEx.BeginGroupBox("Search & buttons"))
-            {
-                TpColorPicker("Search bg",      ref cfg.TpColorSearchBg);
-                TpColorPicker("Search border",  ref cfg.TpColorSearchBorder);
-                TpColorPicker("Search text",    ref cfg.TpColorSearchText);
-                TpColorPicker("Search hint",    ref cfg.TpColorSearchHint);
-                TpColorPicker("FC idle",        ref cfg.TpColorFcButton);
-                TpColorPicker("FC hover",       ref cfg.TpColorFcButtonHover);
-                TpColorPicker("FC active",      ref cfg.TpColorFcButtonActive);
-                TpColorPicker("Secondary idle",   ref cfg.TpColorSecondaryButton);
-                TpColorPicker("Secondary hover",  ref cfg.TpColorSecondaryButtonHover);
-                TpColorPicker("Secondary active", ref cfg.TpColorSecondaryButtonActive);
-                ImGuiEx.EndGroupBox();
-            }
-
-            if (ImGuiEx.BeginGroupBox("Rows & sections"))
-            {
-                TpColorPicker("Section label",  ref cfg.TpColorSectionLabel);
-                TpColorPicker("Region label",   ref cfg.TpColorRegionLabel);
-                TpColorPicker("Row hover",      ref cfg.TpColorRowHover);
-                TpColorPicker("Row active",     ref cfg.TpColorRowActive);
-                TpColorPicker("Nav highlight",  ref cfg.TpColorRowNavHighlight);
-                TpColorPicker("Cost text",      ref cfg.TpColorCostText);
-                TpColorPicker("Chevron",        ref cfg.TpColorChevron);
-                ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
-                if (ImGui.SliderFloat("Fade size##TpFadeSize",
-                        ref cfg.TpFadeSize, 0f, 80f, "%.0f"))
-                    cfg.SaveDebounced();
-                ImGuiEx.EndGroupBox();
-            }
-
-            if (ImGuiEx.BeginGroupBox("Scrollbar"))
-            {
-                TpColorPicker("Track",          ref cfg.TpColorScrollbarBg);
-                TpColorPicker("Grab",           ref cfg.TpColorScrollbarGrab);
-                TpColorPicker("Grab hover",     ref cfg.TpColorScrollbarHover);
-                TpColorPicker("Grab active",    ref cfg.TpColorScrollbarActive);
-                ImGuiEx.EndGroupBox();
-            }
+            ImGui.SetNextItemWidth(180f * ImGuiHelpers.GlobalScale);
+            if (ImGui.SliderFloat("Scrollbar gap##TpScrollRightPad",
+                    ref cfg.TpScrollRightPad, 0f, 32f, "%.0f"))
+                cfg.SaveDebounced();
+            ImGuiEx.EndGroupBox();
         }
-        ImGui.EndChild();
     }
 
     // Compact combo for picking a screen corner anchor (used by the

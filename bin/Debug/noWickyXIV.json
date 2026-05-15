@@ -3,17 +3,20 @@
   "Name": "Modern XIV",
   "InternalName": "noWickyXIV",
   "AssemblyVersion": "2.1.1.1",
-  "Description": "All-in-one plugin: dynamic camera system, race/job animation swaps, Glamourer automation, custom teleport menu, HP vignette, MSQ overlay, and more.",
+  "Description": "All-in-one plugin: dynamic camera system, race/job animation swaps, Glamourer automation, custom teleport menu, compass overlay, HP vignette, MSQ teleport, chat bubbles, and more.",
   "ApplicableVersion": "any",
-  "RepoUrl": "https://github.com/elchupi/ModernXIV",
+  "RepoUrl": "https://github.com/elchupi/Modern-XIV",
   "Tags": [
     "camera",
     "tps",
     "third person",
     "fov",
     "zoom",
-    "cammy",
-    "free cam"
+    "compass",
+    "teleport",
+    "animation",
+    "glamourer",
+    "chat"
   ],
   "CategoryTags": [
     "utility"
@@ -23,7 +26,8 @@
   "LoadSync": false,
   "CanUnloadAsync": false,
   "LoadPriority": 0,
+  "IconUrl": "https://raw.githubusercontent.com/elchupi/Modern-XIV/main/images/icon.png",
   "Punchline": "Camera dynamics, animation swaps, glamour automation, and QoL tools for FFXIV",
-  "Changelog": "Initial fork from Cammy.",
+  "Changelog": "Style profiles with full color capture (teleport, compass, chat bubbles). Compass auto-refreshes quest markers on MSQ progression. Teleport crash guard.",
   "AcceptsFeedback": true
 }

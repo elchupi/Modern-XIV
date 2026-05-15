@@ -87,6 +87,9 @@ public static class QuickMenu
     private static float _revealT;
     private static bool  _hovered;
 
+    // Per-icon hover lerp (smooth transitions instead of hard on/off).
+    private static readonly float[] _iconHoverT = new float[16];
+
     public static void Draw()
     {
         if (!noWickyXIV.Config.EnableQuickMenu) return;
@@ -243,16 +246,23 @@ public static class QuickMenu
                            && mp.X >= boxLeft && mp.X < boxRight
                            && mp.Y >= boxTop  && mp.Y < boxBot;
 
-            if (iconHover)
+            // Smooth hover transition (exp-lerp, same rate as teleport rows).
+            float hTarget = iconHover ? 1f : 0f;
+            float hK = 1f - MathF.Exp(-12f * dt);
+            _iconHoverT[i] += (hTarget - _iconHoverT[i]) * hK;
+            if (_iconHoverT[i] < 0.005f) _iconHoverT[i] = 0f;
+            if (_iconHoverT[i] > 0.995f) _iconHoverT[i] = 1f;
+
+            if (_iconHoverT[i] > 0f)
             {
                 var uiHov = noWickyXIV.Config.UiColorHover;
-                uint hoverBg = PackRgba(uiHov.X, uiHov.Y, uiHov.Z, uiHov.W * 0.26f * alpha);
+                uint hoverBg = PackRgba(uiHov.X, uiHov.Y, uiHov.Z, uiHov.W * 0.35f * alpha * _iconHoverT[i]);
                 dl.AddRectFilled(
                     new Vector2(boxLeft, boxTop),
                     new Vector2(boxRight, boxBot),
                     hoverBg, rounding * 0.5f);
-                if (mouseClicked) clickedIndex = i;
             }
+            if (iconHover && mouseClicked) clickedIndex = i;
 
             var iconTL = new Vector2(boxLeft + iconIns, boxTop + iconIns);
             var iconBR = new Vector2(boxRight - iconIns, boxBot - iconIns);

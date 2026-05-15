@@ -59,6 +59,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
             Config.Save();
         }
 
+
         // One-shot migration: an earlier auto-save pass wrote
         // `cam->lookAtHeightOffset - PitchTiltLastApplied` into
         // preset.LookAtHeightOffset on every frame. The subtraction
@@ -222,6 +223,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         InputHandler.Update();
         HotbarSwap.Update();
         CameraDynamics.Update();
+        HeadTracker.Update();
         Crosshair.Update();
         QuestMarkerHider.Update();
         Compass.Update();

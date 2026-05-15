@@ -81,16 +81,13 @@ public class UiStylePreset
     public Vector4 Text       = new(1.00f, 1.00f, 1.00f, 1.00f);
     public Vector4 Hover      = new(0.38f, 0.50f, 0.48f, 0.85f);
 
-    // ── Teleport menu ─────────────────────────────────────────
-    public Vector4 TpBackground     = new(0.06f, 0.06f, 0.10f, 0.94f);
-    public Vector4 TpBorder         = new(0.75f, 0.60f, 0.20f, 0.65f);
-    public Vector4 TpTitle          = new(1.00f, 0.85f, 0.35f, 1.00f);
+    // ── Teleport menu (only colours unique to the menu — bg/border/text/
+    //    hover/title are consolidated into the 5 Global UI fields above) ──
     public Vector4 TpSeparator      = new(1.00f, 1.00f, 1.00f, 0.08f);
     public Vector4 TpSearchBg       = new(0.12f, 0.12f, 0.18f, 0.90f);
     public Vector4 TpSearchBorder   = new(0.50f, 0.40f, 0.15f, 0.40f);
     public Vector4 TpSearchText     = new(1f, 1f, 1f, 1f);
     public Vector4 TpSearchHint     = new(0.50f, 0.50f, 0.55f, 0.70f);
-    public Vector4 TpText           = new(1.00f, 1.00f, 1.00f, 1.00f);
     public Vector4 TpFcButton       = new(0.55f, 0.35f, 0.12f, 0.85f);
     public Vector4 TpFcButtonHover  = new(0.70f, 0.45f, 0.18f, 0.90f);
     public Vector4 TpFcButtonActive = new(0.85f, 0.55f, 0.22f, 0.95f);
@@ -99,7 +96,6 @@ public class UiStylePreset
     public Vector4 TpSecondaryButtonActive = new(0.40f, 0.40f, 0.55f, 0.95f);
     public Vector4 TpSectionLabel   = new(0.80f, 0.70f, 0.35f, 0.60f);
     public Vector4 TpRegionLabel    = new(0.95f, 0.78f, 0.30f, 1.00f);
-    public Vector4 TpRowHover       = new(0.75f, 0.60f, 0.20f, 0.30f);
     public Vector4 TpRowActive      = new(0.75f, 0.60f, 0.20f, 0.45f);
     public Vector4 TpRowNavHighlight = new(0.85f, 0.70f, 0.25f, 0.55f);
     public Vector4 TpCostText       = new(0.70f, 0.70f, 0.60f, 0.70f);
@@ -122,23 +118,19 @@ public class UiStylePreset
     /// <summary>Snapshot every color from the live Configuration.</summary>
     public void CaptureFrom(Configuration cfg)
     {
-        // Global
+        // Global (bg/border/text/hover/accent shared across teleport, quick menu, overlays)
         Background = cfg.UiColorBackground;
         Border     = cfg.UiColorBorder;
         Accent     = cfg.UiColorAccent;
         Text       = cfg.UiColorText;
         Hover      = cfg.UiColorHover;
 
-        // Teleport
-        TpBackground     = cfg.TpColorBackground;
-        TpBorder         = cfg.TpColorBorder;
-        TpTitle          = cfg.TpColorTitle;
+        // Teleport-specific
         TpSeparator      = cfg.TpColorSeparator;
         TpSearchBg       = cfg.TpColorSearchBg;
         TpSearchBorder   = cfg.TpColorSearchBorder;
         TpSearchText     = cfg.TpColorSearchText;
         TpSearchHint     = cfg.TpColorSearchHint;
-        TpText           = cfg.TpColorText;
         TpFcButton       = cfg.TpColorFcButton;
         TpFcButtonHover  = cfg.TpColorFcButtonHover;
         TpFcButtonActive = cfg.TpColorFcButtonActive;
@@ -147,7 +139,6 @@ public class UiStylePreset
         TpSecondaryButtonActive = cfg.TpColorSecondaryButtonActive;
         TpSectionLabel   = cfg.TpColorSectionLabel;
         TpRegionLabel    = cfg.TpColorRegionLabel;
-        TpRowHover       = cfg.TpColorRowHover;
         TpRowActive      = cfg.TpColorRowActive;
         TpRowNavHighlight = cfg.TpColorRowNavHighlight;
         TpCostText       = cfg.TpColorCostText;
@@ -171,23 +162,19 @@ public class UiStylePreset
     /// <summary>Write every color back to the live Configuration.</summary>
     public void ApplyTo(Configuration cfg)
     {
-        // Global
+        // Global (bg/border/text/hover/accent shared across teleport, quick menu, overlays)
         cfg.UiColorBackground = Background;
         cfg.UiColorBorder     = Border;
         cfg.UiColorAccent     = Accent;
         cfg.UiColorText       = Text;
         cfg.UiColorHover      = Hover;
 
-        // Teleport
-        cfg.TpColorBackground     = TpBackground;
-        cfg.TpColorBorder         = TpBorder;
-        cfg.TpColorTitle          = TpTitle;
+        // Teleport-specific
         cfg.TpColorSeparator      = TpSeparator;
         cfg.TpColorSearchBg       = TpSearchBg;
         cfg.TpColorSearchBorder   = TpSearchBorder;
         cfg.TpColorSearchText     = TpSearchText;
         cfg.TpColorSearchHint     = TpSearchHint;
-        cfg.TpColorText           = TpText;
         cfg.TpColorFcButton       = TpFcButton;
         cfg.TpColorFcButtonHover  = TpFcButtonHover;
         cfg.TpColorFcButtonActive = TpFcButtonActive;
@@ -196,7 +183,6 @@ public class UiStylePreset
         cfg.TpColorSecondaryButtonActive = TpSecondaryButtonActive;
         cfg.TpColorSectionLabel   = TpSectionLabel;
         cfg.TpColorRegionLabel    = TpRegionLabel;
-        cfg.TpColorRowHover       = TpRowHover;
         cfg.TpColorRowActive      = TpRowActive;
         cfg.TpColorRowNavHighlight = TpRowNavHighlight;
         cfg.TpColorCostText       = TpCostText;
@@ -1507,7 +1493,10 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public Vector4 UiColorAccent     = new(0.24f, 0.90f, 0.46f, 1.00f);
     public Vector4 UiColorText       = new(1.00f, 1.00f, 1.00f, 1.00f);
     public Vector4 UiColorHover      = new(0.38f, 0.50f, 0.48f, 0.85f);
-    public List<UiStylePreset> UiStylePresets = new();
+    public List<UiStylePreset> UiStylePresets = new()
+    {
+        new UiStylePreset { Name = "Default" },  // all fields use their initializer defaults — matches the config defaults above
+    };
 
     // Teleport menu colors (RGBA, 0..1). Edited via the in-plugin
     // color picker on the Teleport tab; default values reproduce the
@@ -1601,6 +1590,29 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float CameraHeadLookDistance       = 8f;     // meters projected along camera-forward
     public float CameraHeadLookEpsilon        = 0.005f; // radians; below this, reuse cached target
     public bool  CameraHeadLookUseUnk3        = false;  // if Unk2 doesn't behave like world-pos, try Unk3
+    public bool  CameraHeadLookDiag           = false;  // dump per-frame state to head_diag.txt
+    public bool  CameraHeadLookObserveOnly    = false;  // skip writes; log only — see what the game does naturally
+    public bool  CameraHeadLookInvertV        = false;  // flip pitch sign on forward.Y if head looks the wrong vertical direction
+    // Mode probe: 0=TargetParam Unk2 (no effect), 1=TargetParam Unk3 (head-IK direct mode),
+    // 2=GameObjectId (uses player's hard/soft target — the activation mode), 3=BannerFollow.
+    // Default 2: on plugin load the auto-prime targets a nearby entity in Mode 2, then
+    // flips to Mode 1 once the IK is warm.
+    public int   CameraHeadLookMode           = 2;
+    // Pitch baseline: V at this radian value produces horizontal head aim. FFXIV's default
+    // camera pitch sits below 0 (camera above player looking down) so without offsetting,
+    // "looking forward" maps to head-down. Tune negative to taste.
+    public float CameraHeadLookPitchOffset    = -0.30f;
+    // Max angle (radians) between target direction and player-facing before we fade out the
+    // override — keeps the head IK from fighting its own clamp at extreme camera angles
+    // (looking-back / behind-shoulder). 2.2 rad ≈ 126° — slightly inside the natural neck cone.
+    public float CameraHeadLookConeLimit      = 2.20f;
+    // Soft-falloff window before the cone limit; within this band the override blends out
+    // toward neutral instead of snapping.
+    public float CameraHeadLookConeFalloff    = 0.40f;
+    // On Enable→true, briefly write Type=GameObjectId with a nearby non-self entity's
+    // ID before switching to the user-selected mode. Activates a cold IK so head-look
+    // works on plugin reload without requiring manual Mode 2 → target workflow.
+    public bool  CameraHeadLookAutoPrime      = true;
 
     // ---- Input Sensitivity (universal — not per-preset) ----
     public float MouseSensitivityMul = 1f;

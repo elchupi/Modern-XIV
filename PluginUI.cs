@@ -58,22 +58,6 @@ public static class PluginUI
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("VFX Replacer"))
-            {
-                if (ImGui.BeginChild("##vfxreplacer_scroll"))
-                    DrawVfxReplacerTab();
-                ImGui.EndChild();
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("HP Ring"))
-            {
-                if (ImGui.BeginChild("##hpring_scroll"))
-                    DrawHpRingTab();
-                ImGui.EndChild();
-                ImGui.EndTabItem();
-            }
-
             if (ImGui.BeginTabItem("Target UI"))
             {
                 if (ImGui.BeginChild("##targetui_scroll"))
@@ -1304,66 +1288,74 @@ public static class PluginUI
             ImGui.TextUnformatted("Kenki tier rings (33% / 66% / 100%)");
             // ---- Tier 1 (33%) ----
             ImGui.TextDisabled("Tier 1 — Kenki ≥ 33%");
-            ConfigSliderFloat("Tier1 R##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier1ColorR, 0f, 1f, 1.00f, "%.2f");
-            ConfigSliderFloat("Tier1 G##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier1ColorG, 0f, 1f, 0.85f, "%.2f");
-            ConfigSliderFloat("Tier1 B##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier1ColorB, 0f, 1f, 0.40f, "%.2f");
-            ConfigSliderFloat("Tier1 alpha##JobAuraTier", ref noWickyXIV.Config.JobAuraTier1Alpha,  0f, 1f, 0.55f, "%.2f");
+            ChatColorPicker("Tier1 color##JobAuraTier",
+                ref noWickyXIV.Config.JobAuraTier1ColorR,
+                ref noWickyXIV.Config.JobAuraTier1ColorG,
+                ref noWickyXIV.Config.JobAuraTier1ColorB,
+                ref noWickyXIV.Config.JobAuraTier1Alpha);
             // ---- Tier 2 (66%) ----
             ImGui.TextDisabled("Tier 2 — Kenki ≥ 66%");
-            ConfigSliderFloat("Tier2 R##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier2ColorR, 0f, 1f, 1.00f, "%.2f");
-            ConfigSliderFloat("Tier2 G##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier2ColorG, 0f, 1f, 0.65f, "%.2f");
-            ConfigSliderFloat("Tier2 B##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier2ColorB, 0f, 1f, 0.20f, "%.2f");
-            ConfigSliderFloat("Tier2 alpha##JobAuraTier", ref noWickyXIV.Config.JobAuraTier2Alpha,  0f, 1f, 0.70f, "%.2f");
+            ChatColorPicker("Tier2 color##JobAuraTier",
+                ref noWickyXIV.Config.JobAuraTier2ColorR,
+                ref noWickyXIV.Config.JobAuraTier2ColorG,
+                ref noWickyXIV.Config.JobAuraTier2ColorB,
+                ref noWickyXIV.Config.JobAuraTier2Alpha);
             // ---- Tier 3 (100%) ----
             ImGui.TextDisabled("Tier 3 — Kenki = 100% (pulses)");
-            ConfigSliderFloat("Tier3 R##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier3ColorR, 0f, 1f, 1.00f, "%.2f");
-            ConfigSliderFloat("Tier3 G##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier3ColorG, 0f, 1f, 0.30f, "%.2f");
-            ConfigSliderFloat("Tier3 B##JobAuraTier",     ref noWickyXIV.Config.JobAuraTier3ColorB, 0f, 1f, 0.10f, "%.2f");
-            ConfigSliderFloat("Tier3 alpha##JobAuraTier", ref noWickyXIV.Config.JobAuraTier3Alpha,  0f, 1f, 0.85f, "%.2f");
+            ChatColorPicker("Tier3 color##JobAuraTier",
+                ref noWickyXIV.Config.JobAuraTier3ColorR,
+                ref noWickyXIV.Config.JobAuraTier3ColorG,
+                ref noWickyXIV.Config.JobAuraTier3ColorB,
+                ref noWickyXIV.Config.JobAuraTier3Alpha);
 
             ImGui.Separator();
             ImGui.TextUnformatted("HP indicator rings (3-layer composite around target/player)");
             // ---- Outer (backdrop) ring ----
             ImGui.TextDisabled("Outer ring — persistent backdrop");
             ConfigSliderFloat("Outer radius (× base)##JobAuraOuter",  ref noWickyXIV.Config.JobAuraHpBackdropRadiusFactor, 0.1f, 3f, 0.7425f, "%.3f");
-            ConfigSliderFloat("Outer alpha##JobAuraOuter",            ref noWickyXIV.Config.JobAuraHpBackdropAlpha, 0f, 1f, 0.65f, "%.2f");
-            ConfigSliderFloat("Outer R##JobAuraOuter",                ref noWickyXIV.Config.JobAuraHpBackdropColorR, 0f, 1f, 0.42f, "%.2f");
-            ConfigSliderFloat("Outer G##JobAuraOuter",                ref noWickyXIV.Config.JobAuraHpBackdropColorG, 0f, 1f, 0.05f, "%.2f");
-            ConfigSliderFloat("Outer B##JobAuraOuter",                ref noWickyXIV.Config.JobAuraHpBackdropColorB, 0f, 1f, 0.06f, "%.2f");
+            ChatColorPicker("Outer color##JobAuraOuter",
+                ref noWickyXIV.Config.JobAuraHpBackdropColorR,
+                ref noWickyXIV.Config.JobAuraHpBackdropColorG,
+                ref noWickyXIV.Config.JobAuraHpBackdropColorB,
+                ref noWickyXIV.Config.JobAuraHpBackdropAlpha);
             // ---- Inner core ----
             ImGui.TextDisabled("Inner core — radius and alpha both shrink with HP%");
             ConfigSliderFloat("Inner radius (× base × HP%%)##JobAuraInner", ref noWickyXIV.Config.JobAuraHpInnerRadiusFactor, 0.05f, 2f, 0.55f, "%.3f");
-            ConfigSliderFloat("Inner alpha##JobAuraInner",                  ref noWickyXIV.Config.JobAuraHpInnerAlpha, 0f, 1f, 0.85f, "%.2f");
-            ConfigSliderFloat("Inner R##JobAuraInner",                      ref noWickyXIV.Config.JobAuraHpInnerColorR, 0f, 1f, 1.0f, "%.2f");
-            ConfigSliderFloat("Inner G##JobAuraInner",                      ref noWickyXIV.Config.JobAuraHpInnerColorG, 0f, 1f, 0.18f, "%.2f");
-            ConfigSliderFloat("Inner B##JobAuraInner",                      ref noWickyXIV.Config.JobAuraHpInnerColorB, 0f, 1f, 0.18f, "%.2f");
+            ChatColorPicker("Inner color##JobAuraInner",
+                ref noWickyXIV.Config.JobAuraHpInnerColorR,
+                ref noWickyXIV.Config.JobAuraHpInnerColorG,
+                ref noWickyXIV.Config.JobAuraHpInnerColorB,
+                ref noWickyXIV.Config.JobAuraHpInnerAlpha);
             // ---- Pulse ring ----
             ImGui.TextDisabled("Pulse ring — expands outward from outer edge, period scales with HP%");
             ConfigSliderFloat("Pulse expand (× outer radius)##JobAuraPulse", ref noWickyXIV.Config.JobAuraHpPulseExpandFactor, 1f, 4f, 1.95f, "%.2f");
-            ConfigSliderFloat("Pulse alpha##JobAuraPulse",                   ref noWickyXIV.Config.JobAuraHpPulseAlpha,        0f, 1f, 0.85f, "%.2f");
             ConfigSliderFloat("Pulse thickness##JobAuraPulse",               ref noWickyXIV.Config.JobAuraHpPulseThickness,    0.5f, 12f, 3.5f, "%.1f");
-            ConfigSliderFloat("Pulse R##JobAuraPulse",                       ref noWickyXIV.Config.JobAuraHpPulseColorR, 0f, 1f, 1.0f, "%.2f");
-            ConfigSliderFloat("Pulse G##JobAuraPulse",                       ref noWickyXIV.Config.JobAuraHpPulseColorG, 0f, 1f, 0.20f, "%.2f");
-            ConfigSliderFloat("Pulse B##JobAuraPulse",                       ref noWickyXIV.Config.JobAuraHpPulseColorB, 0f, 1f, 0.20f, "%.2f");
+            ChatColorPicker("Pulse color##JobAuraPulse",
+                ref noWickyXIV.Config.JobAuraHpPulseColorR,
+                ref noWickyXIV.Config.JobAuraHpPulseColorG,
+                ref noWickyXIV.Config.JobAuraHpPulseColorB,
+                ref noWickyXIV.Config.JobAuraHpPulseAlpha);
 
             ImGui.Separator();
             ImGui.TextUnformatted("Full-zen (AllSen) overlay rings");
             ImGui.TextDisabled("Inner ring fades alpha 0→0.5; outer ring then traces clockwise from 12 o'clock as a snake stroke 0.5→1.0.");
             // ---- AllSen inner ring ----
             ImGui.TextDisabled("Inner ring");
-            ConfigSliderFloat("AllSen inner alpha##JobAuraAllSenInner",     ref noWickyXIV.Config.JobAuraAllSenInnerAlpha,     0f, 1f, 1.0f,  "%.2f");
             ConfigSliderFloat("AllSen inner thickness##JobAuraAllSenInner", ref noWickyXIV.Config.JobAuraAllSenInnerThickness, 0.5f, 16f, 5.0f, "%.1f");
-            ConfigSliderFloat("AllSen inner R##JobAuraAllSenInner",         ref noWickyXIV.Config.JobAuraAllSenInnerColorR,    0f, 1f, 1.0f,  "%.2f");
-            ConfigSliderFloat("AllSen inner G##JobAuraAllSenInner",         ref noWickyXIV.Config.JobAuraAllSenInnerColorG,    0f, 1f, 0.18f, "%.2f");
-            ConfigSliderFloat("AllSen inner B##JobAuraAllSenInner",         ref noWickyXIV.Config.JobAuraAllSenInnerColorB,    0f, 1f, 0.18f, "%.2f");
+            ChatColorPicker("AllSen inner color##JobAuraAllSenInner",
+                ref noWickyXIV.Config.JobAuraAllSenInnerColorR,
+                ref noWickyXIV.Config.JobAuraAllSenInnerColorG,
+                ref noWickyXIV.Config.JobAuraAllSenInnerColorB,
+                ref noWickyXIV.Config.JobAuraAllSenInnerAlpha);
             // ---- AllSen outer (snake) ring ----
             ImGui.TextDisabled("Outer ring (snake stroke)");
             ConfigSliderFloat("AllSen outer radius (× inner)##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterRadiusFactor, 1.0f, 2.0f, 1.10f, "%.2f");
-            ConfigSliderFloat("AllSen outer alpha##JobAuraAllSenOuter",     ref noWickyXIV.Config.JobAuraAllSenOuterAlpha,     0f, 1f, 0.55f, "%.2f");
             ConfigSliderFloat("AllSen outer thickness##JobAuraAllSenOuter", ref noWickyXIV.Config.JobAuraAllSenOuterThickness, 0.5f, 16f, 2.5f, "%.1f");
-            ConfigSliderFloat("AllSen outer R##JobAuraAllSenOuter",         ref noWickyXIV.Config.JobAuraAllSenOuterColorR,    0f, 1f, 0.85f, "%.2f");
-            ConfigSliderFloat("AllSen outer G##JobAuraAllSenOuter",         ref noWickyXIV.Config.JobAuraAllSenOuterColorG,    0f, 1f, 0.05f, "%.2f");
-            ConfigSliderFloat("AllSen outer B##JobAuraAllSenOuter",         ref noWickyXIV.Config.JobAuraAllSenOuterColorB,    0f, 1f, 0.05f, "%.2f");
+            ChatColorPicker("AllSen outer color##JobAuraAllSenOuter",
+                ref noWickyXIV.Config.JobAuraAllSenOuterColorR,
+                ref noWickyXIV.Config.JobAuraAllSenOuterColorG,
+                ref noWickyXIV.Config.JobAuraAllSenOuterColorB,
+                ref noWickyXIV.Config.JobAuraAllSenOuterAlpha);
 
             ImGui.Separator();
             ConfigCheckbox("Show HP %% text##JobAura", ref noWickyXIV.Config.JobAuraShowHpText);
@@ -1431,25 +1423,16 @@ public static class PluginUI
                 "100% triggers an explosive burst ring + max-focus SFX.\n" +
                 "1s after cap, pt1+pt2 SFX play together.\n" +
                 "Bone index 4 ≈ upper spine; tweak to taste.\n" +
-                "Visible only when on Samurai.\n" +
-                "Modular per-trigger VFX layers now live in the dedicated VFX Replacer tab.");
+                "Visible only when on Samurai.");
             ImGuiEx.EndGroupBox();
         }
-    }
 
-    // ---- VFX Replacer tab (modular per-trigger layer editor) ----
-    // Pulled out of the Effects tab so the layer list and its quickly-
-    // growing per-row controls (path, sound, chain source, end trigger,
-    // delay, debounce, ordering arrows, …) get their own scroll region
-    // and don't crowd the JobAura ring/sound settings above.
-    private static void DrawVfxReplacerTab()
-    {
         if (ImGuiEx.BeginGroupBox("VFX Replacer (modular layers)"))
         {
             ImGui.TextDisabled("Each layer hooks a Kenki/Sen/motion/combat trigger and plays an .avfx.");
             ConfigCheckbox("Enable real .avfx (advanced — may crash game until sigs verified)##JobAura",
                 ref noWickyXIV.Config.JobAuraEnableRealVfx);
-            ImGui.TextDisabled("Toggle requires plugin reload. ImGui rings + audio in the Effects tab work either way.");
+            ImGui.TextDisabled("Toggle requires plugin reload. ImGui rings + audio above work either way.");
             ImGui.Separator();
             DrawJobAuraVfxLayers();
 
@@ -1524,6 +1507,9 @@ public static class PluginUI
     // ---- Target UI tab (target name + cast bar + spell name) ----
     private static void DrawTargetUITab()
     {
+        // ----- HP Ring (standalone overlay) -----
+        DrawHpRingTab();
+
         // ----- Enemy HP rings -----
         // Iterates ALL hostile enemies in the world and draws the
         // JobAura HP ring (backdrop + pulse + inner core + emanating
@@ -1800,19 +1786,6 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
-        // Player nicknames.
-        if (ImGuiEx.BeginGroupBox("Player nicknames"))
-        {
-            ConfigCheckbox("Enable##PlayerNicknames", ref noWickyXIV.Config.EnablePlayerNicknames);
-            ImGui.TextDisabled(
-                "Right-click a player to assign a nickname.\n" +
-                "/w Nickname message  ->  /tell RealName@World message\n" +
-                "Chat displays nicknames instead of real names.");
-            if (noWickyXIV.Config.EnablePlayerNicknames)
-                PlayerNicknames.DrawManagementUI();
-            ImGuiEx.EndGroupBox();
-        }
-
         if (ImGuiEx.BeginGroupBox("Waymark quick-place"))
         {
             ImGui.TextDisabled("Middle-click the AreaMap to open a waymark picker.\nWaymarks are placed at the clicked map position.");
@@ -1820,6 +1793,7 @@ public static class PluginUI
         }
     }
 
+    // ---- Nicknames tab ----
     private static unsafe void DrawMiscTab()
     {
         if (ImGuiEx.BeginGroupBox("Input Sensitivity"))
@@ -4625,79 +4599,105 @@ public static class PluginUI
     private static void DrawChatTab()
     {
         var cfg = noWickyXIV.Config;
+        float fullW = ImGui.GetContentRegionAvail().X;
+        float colGap = 12f * ImGuiHelpers.GlobalScale;
+        float leftW  = (fullW - colGap) * 0.5f;
+        float rightW = fullW - leftW - colGap;
 
-        if (ImGuiEx.BeginGroupBox("Chat bubbles"))
+        if (ImGui.BeginChild("##ChatTabLeft", new Vector2(leftW, 0), false))
         {
-            ConfigCheckbox("Enable##ChatBubbles", ref cfg.EnableChatBubbles);
-            ConfigSliderFloat("Anchor X (px)##ChatBubbles",  ref cfg.ChatBubblesX,            0f,    3840f, 960f, "%.0f");
-            ConfigSliderFloat("Anchor Y (px, bottom)##ChatBubbles", ref cfg.ChatBubblesY,    0f,    2160f, 700f, "%.0f");
-            ConfigSliderFloat("Column width (px)##ChatBubbles",  ref cfg.ChatBubblesColumnWidth, 200f,  1400f, 700f, "%.0f");
-            ConfigSliderFloat("Bubble max width (px)##ChatBubbles", ref cfg.ChatBubblesMaxWidth, 100f, 800f, 360f, "%.0f");
-            ConfigSliderFloat("Max age (s)##ChatBubbles",   ref cfg.ChatBubblesMaxAgeSeconds,   5f,    300f, 30f, "%.0f");
-            ConfigSliderFloat("Max column height (px)##ChatBubbles", ref cfg.ChatBubblesMaxColumnHeight, 200f, 2000f, 600f, "%.0f");
-            ConfigSliderFloat("Top-fade height (px)##ChatBubbles", ref cfg.ChatBubblesTopFadeHeight, 0f, 400f, 100f, "%.0f");
-            ConfigSliderFloat("Hover-reveal height (px)##ChatBubbles", ref cfg.ChatBubblesHoverRevealHeight, 100f, 2160f, 800f, "%.0f");
-            ConfigSliderFloat("Hover hold (s)##ChatBubbles", ref cfg.ChatBubblesHoverHoldSeconds, 0f, 5f, 1.5f, "%.1f");
-            ImGui.Separator();
-            ConfigCheckbox("Show typing indicators (rtyping)##ChatBubbles", ref cfg.EnableTypingIndicators);
-            ConfigSliderFloat("Typing band height (px)##ChatBubbles", ref cfg.ChatBubblesTypingReserveHeight, 0f, 200f, 30f, "%.0f");
-            ImGui.Separator();
-            ConfigCheckbox("Backfill chat history on load##ChatBubbles", ref cfg.ChatBubblesBackfillOnLoad);
-            ConfigCheckbox("Show channel tag##ChatBubbles", ref cfg.ChatBubblesShowChannelTag);
-            ImGui.Separator();
-            ChatColorPicker("Self bubble##ChatBubbles",
-                ref cfg.ChatBubblesSelfR, ref cfg.ChatBubblesSelfG,
-                ref cfg.ChatBubblesSelfB, ref cfg.ChatBubblesSelfAlpha);
-            ChatColorPicker("Other bubble##ChatBubbles",
-                ref cfg.ChatBubblesOtherR, ref cfg.ChatBubblesOtherG,
-                ref cfg.ChatBubblesOtherB, ref cfg.ChatBubblesOtherAlpha);
-            ImGui.Separator();
-            DrawFontPicker("Font##ChatBubblesFont", ref cfg.ChatBubblesFontPath);
-            ConfigSliderFloat("Body font size (px)##ChatBubbles",   ref cfg.ChatBubblesFontSize,       8f, 72f, 16f, "%.0f");
-            ConfigSliderFloat("Sender font size (px)##ChatBubbles", ref cfg.ChatBubblesSenderFontSize, 6f, 48f, 12f, "%.0f");
-            ImGuiEx.EndGroupBox();
-        }
-
-        if (ImGuiEx.BeginGroupBox("Typing emote"))
-        {
-            ConfigCheckbox("Play typing emote##ChatTypingEmote", ref cfg.EnableTypingEmote);
-            string cmd = cfg.ChatTypingEmoteCommand ?? "";
-            if (ImGui.InputText("Emote command##ChatTypingEmote", ref cmd, 64))
+            if (ImGuiEx.BeginGroupBox("Chat bubbles"))
             {
-                cfg.ChatTypingEmoteCommand = cmd;
-                cfg.Save();
+                ConfigCheckbox("Enable##ChatBubbles", ref cfg.EnableChatBubbles);
+                ConfigSliderFloat("Anchor X (px)##ChatBubbles",  ref cfg.ChatBubblesX,            0f,    3840f, 960f, "%.0f");
+                ConfigSliderFloat("Anchor Y (px, bottom)##ChatBubbles", ref cfg.ChatBubblesY,    0f,    2160f, 700f, "%.0f");
+                ConfigSliderFloat("Column width (px)##ChatBubbles",  ref cfg.ChatBubblesColumnWidth, 200f,  1400f, 700f, "%.0f");
+                ConfigSliderFloat("Bubble max width (px)##ChatBubbles", ref cfg.ChatBubblesMaxWidth, 100f, 800f, 360f, "%.0f");
+                ConfigSliderFloat("Max age (s)##ChatBubbles",   ref cfg.ChatBubblesMaxAgeSeconds,   5f,    300f, 30f, "%.0f");
+                ConfigSliderFloat("Max column height (px)##ChatBubbles", ref cfg.ChatBubblesMaxColumnHeight, 200f, 2000f, 600f, "%.0f");
+                ConfigSliderFloat("Top-fade height (px)##ChatBubbles", ref cfg.ChatBubblesTopFadeHeight, 0f, 400f, 100f, "%.0f");
+                ConfigSliderFloat("Hover-reveal height (px)##ChatBubbles", ref cfg.ChatBubblesHoverRevealHeight, 100f, 2160f, 800f, "%.0f");
+                ConfigSliderFloat("Hover hold (s)##ChatBubbles", ref cfg.ChatBubblesHoverHoldSeconds, 0f, 5f, 1.5f, "%.1f");
+                ImGui.Separator();
+                ConfigCheckbox("Show typing indicators (rtyping)##ChatBubbles", ref cfg.EnableTypingIndicators);
+                ConfigSliderFloat("Typing band height (px)##ChatBubbles", ref cfg.ChatBubblesTypingReserveHeight, 0f, 200f, 30f, "%.0f");
+                ImGui.Separator();
+                ConfigCheckbox("Backfill chat history on load##ChatBubbles", ref cfg.ChatBubblesBackfillOnLoad);
+                ConfigCheckbox("Show channel tag##ChatBubbles", ref cfg.ChatBubblesShowChannelTag);
+                ImGui.Separator();
+                ChatColorPicker("Self bubble##ChatBubbles",
+                    ref cfg.ChatBubblesSelfR, ref cfg.ChatBubblesSelfG,
+                    ref cfg.ChatBubblesSelfB, ref cfg.ChatBubblesSelfAlpha);
+                ChatColorPicker("Other bubble##ChatBubbles",
+                    ref cfg.ChatBubblesOtherR, ref cfg.ChatBubblesOtherG,
+                    ref cfg.ChatBubblesOtherB, ref cfg.ChatBubblesOtherAlpha);
+                ImGui.Separator();
+                DrawFontPicker("Font##ChatBubblesFont", ref cfg.ChatBubblesFontPath);
+                ConfigSliderFloat("Body font size (px)##ChatBubbles",   ref cfg.ChatBubblesFontSize,       8f, 72f, 16f, "%.0f");
+                ConfigSliderFloat("Sender font size (px)##ChatBubbles", ref cfg.ChatBubblesSenderFontSize, 6f, 48f, 12f, "%.0f");
+                ImGuiEx.EndGroupBox();
             }
-            string cancelCmd = cfg.ChatTypingEmoteCancelCommand ?? "";
-            if (ImGui.InputText("Cancel command##ChatTypingEmote", ref cancelCmd, 64))
+        }
+        ImGui.EndChild();
+
+        ImGui.SameLine(0, colGap);
+
+        if (ImGui.BeginChild("##ChatTabRight", new Vector2(rightW, 0), false))
+        {
+            if (ImGuiEx.BeginGroupBox("Player nicknames"))
             {
-                cfg.ChatTypingEmoteCancelCommand = cancelCmd;
-                cfg.Save();
+                ConfigCheckbox("Enable##PlayerNicknames", ref cfg.EnablePlayerNicknames);
+                ImGui.TextDisabled(
+                    "Right-click a player to assign a nickname.\n" +
+                    "/w Nickname message  ->  /tell RealName@World message\n" +
+                    "Chat displays nicknames instead of real names.");
+                if (cfg.EnablePlayerNicknames)
+                    PlayerNicknames.DrawManagementUI();
+                ImGuiEx.EndGroupBox();
             }
-            ConfigSliderFloat("Re-fire interval (s)##ChatTypingEmote", ref cfg.ChatTypingEmoteRetriggerSeconds, 0.5f, 10f, 2.0f, "%.1f");
-            ImGuiEx.EndGroupBox();
-        }
 
-        if (ImGuiEx.BeginGroupBox("Typing prompt"))
-        {
-            ConfigCheckbox("Enable##ChatPrompt", ref cfg.EnableChatPrompt);
-            ConfigSliderFloat("X (center, px)##ChatPrompt", ref cfg.ChatPromptX, 0f, 3840f, 960f, "%.0f");
-            ConfigSliderFloat("Y (center, px)##ChatPrompt", ref cfg.ChatPromptY, 0f, 2160f, 540f, "%.0f");
-            ConfigSliderFloat("Width (px)##ChatPrompt",     ref cfg.ChatPromptWidth,    100f, 1600f, 600f, "%.0f");
-            ConfigSliderFloat("Font size (px)##ChatPrompt", ref cfg.ChatPromptFontSize,  10f, 96f,  22f,  "%.0f");
-            ChatColorPicker("Background##ChatPrompt",
-                ref cfg.ChatPromptBgR, ref cfg.ChatPromptBgG,
-                ref cfg.ChatPromptBgB, ref cfg.ChatPromptBgAlpha);
-            ChatColorPicker("Text##ChatPrompt",
-                ref cfg.ChatPromptTextR, ref cfg.ChatPromptTextG,
-                ref cfg.ChatPromptTextB, ref cfg.ChatPromptTextAlpha);
-            ImGuiEx.EndGroupBox();
-        }
+            if (ImGuiEx.BeginGroupBox("Typing emote"))
+            {
+                ConfigCheckbox("Play typing emote##ChatTypingEmote", ref cfg.EnableTypingEmote);
+                string cmd = cfg.ChatTypingEmoteCommand ?? "";
+                if (ImGui.InputText("Emote command##ChatTypingEmote", ref cmd, 64))
+                {
+                    cfg.ChatTypingEmoteCommand = cmd;
+                    cfg.Save();
+                }
+                string cancelCmd = cfg.ChatTypingEmoteCancelCommand ?? "";
+                if (ImGui.InputText("Cancel command##ChatTypingEmote", ref cancelCmd, 64))
+                {
+                    cfg.ChatTypingEmoteCancelCommand = cancelCmd;
+                    cfg.Save();
+                }
+                ConfigSliderFloat("Re-fire interval (s)##ChatTypingEmote", ref cfg.ChatTypingEmoteRetriggerSeconds, 0.5f, 10f, 2.0f, "%.1f");
+                ImGuiEx.EndGroupBox();
+            }
 
-        if (ImGuiEx.BeginGroupBox("Diagnostics"))
-        {
-            ConfigCheckbox("Log combat hit details##CombatDiag", ref cfg.LogCombatHitDiagnostics);
-            ImGuiEx.EndGroupBox();
+            if (ImGuiEx.BeginGroupBox("Typing prompt"))
+            {
+                ConfigCheckbox("Enable##ChatPrompt", ref cfg.EnableChatPrompt);
+                ConfigSliderFloat("X (center, px)##ChatPrompt", ref cfg.ChatPromptX, 0f, 3840f, 960f, "%.0f");
+                ConfigSliderFloat("Y (center, px)##ChatPrompt", ref cfg.ChatPromptY, 0f, 2160f, 540f, "%.0f");
+                ConfigSliderFloat("Width (px)##ChatPrompt",     ref cfg.ChatPromptWidth,    100f, 1600f, 600f, "%.0f");
+                ConfigSliderFloat("Font size (px)##ChatPrompt", ref cfg.ChatPromptFontSize,  10f, 96f,  22f,  "%.0f");
+                ChatColorPicker("Background##ChatPrompt",
+                    ref cfg.ChatPromptBgR, ref cfg.ChatPromptBgG,
+                    ref cfg.ChatPromptBgB, ref cfg.ChatPromptBgAlpha);
+                ChatColorPicker("Text##ChatPrompt",
+                    ref cfg.ChatPromptTextR, ref cfg.ChatPromptTextG,
+                    ref cfg.ChatPromptTextB, ref cfg.ChatPromptTextAlpha);
+                ImGuiEx.EndGroupBox();
+            }
+
+            if (ImGuiEx.BeginGroupBox("Diagnostics"))
+            {
+                ConfigCheckbox("Log combat hit details##CombatDiag", ref cfg.LogCombatHitDiagnostics);
+                ImGuiEx.EndGroupBox();
+            }
         }
+        ImGui.EndChild();
     }
 
     private static void DrawTeleportTab()

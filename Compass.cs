@@ -112,7 +112,52 @@ public static unsafe class Compass
             foreach (var k in toRemove) _markerStates.Remove(k);
     }
 
-    public static void Update() { }
+    // ── Quest-state change detection ────────────────────────────
+    // AgentMap.EventMarkers is only rebuilt by the game when the map
+    // UI is interacted with. Without a nudge, the compass shows stale
+    // quest icons after MSQ progression until the player opens the map.
+    //
+    // Fix: snapshot the current MSQ id + sequence every Update(). When
+    // they change (quest turned in, new step accepted), call
+    // UpdateEventMapMarkers once to rebuild the list — same path the
+    // game takes when you open the map. Zero cost on frames where
+    // nothing changed.
+    private static ushort _prevMsqId;
+    private static byte   _prevMsqSeq;
+
+    public static void Update()
+    {
+        try
+        {
+            var scenarioAgent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentScenarioTree.Instance();
+            if (scenarioAgent == null || scenarioAgent->Data == null) return;
+
+            ushort msqId = 0;
+            for (int i = 0; i < 3; i++)
+            {
+                ushort id = scenarioAgent->Data->MainScenarioQuestIds[i];
+                if (id != 0) { msqId = id; break; }
+            }
+            if (msqId == 0) return;
+
+            byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
+
+            if (msqId == _prevMsqId && seq == _prevMsqSeq) return;
+
+            _prevMsqId  = msqId;
+            _prevMsqSeq = seq;
+
+            // Quest state changed — refresh EventMarkers so the compass
+            // picks up the new icons without the player opening the map.
+            // Same path the game takes when you open the map UI.
+            var agent = AgentMap.Instance();
+            if (agent == null) return;
+            var ptr = (FFXIVClientStructs.STD.StdVector<FFXIVClientStructs.Interop.Pointer<FFXIVClientStructs.FFXIV.Client.Game.UI.MapMarkerData>>*)
+                System.Runtime.CompilerServices.Unsafe.AsPointer(ref agent->EventMarkersPtrs);
+            agent->UpdateEventMapMarkers(ptr);
+        }
+        catch { /* defensive — struct layouts can shift between patches */ }
+    }
 
     public static void Draw()
     {

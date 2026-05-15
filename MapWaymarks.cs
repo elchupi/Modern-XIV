@@ -94,6 +94,8 @@ public static unsafe class MapWaymarks
 
     private static void DetectMapClick()
     {
+        // DISABLED: middle-click map waymark quick-place picker. Code kept for reference.
+        return;
         bool mmbDown = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
         if (mmbDown && !_mmbWasDown)
@@ -127,6 +129,8 @@ public static unsafe class MapWaymarks
 
     private static void OnMenuOpened(IMenuOpenedArgs args)
     {
+        // DISABLED: waymark context menu items on AreaMap/_MiniMap. Code kept for reference.
+        return;
         if (args.AddonName != "AreaMap" && args.AddonName != "_MiniMap") return;
 
         args.AddMenuItem(new MenuItem

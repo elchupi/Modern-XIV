@@ -51,6 +51,9 @@ public static unsafe class HeadTracker
     // Detect model redraw (teleport / glamour / transformation): when the Character*
     // pointer changes, the LookAt controller has been rebuilt fresh and needs re-prime.
     private static IntPtr _lastCharAddress;
+    // Grace period after a successful prime: suppress Character* reprimes so AnimSwap's
+    // double draw (DisableDraw+EnableDraw) doesn't clobber mode 1 back to mode 2.
+    private static int _primeGrace;
 
     // Banner-follow state: we restore the original flag value when probing flips off,
     // so toggling modes mid-session doesn't leave stale flags.
@@ -104,18 +107,25 @@ public static unsafe class HeadTracker
         var chr = (Character*)lp.Address;
         if (chr == null) { if (diagThisTick) DiagWrite("SKIP: Character* null"); return; }
 
+        if (_primeGrace > 0) _primeGrace--;
+
         // Redraw detection: Character* swaps after teleport / glamour / certain
         // transformations — the LookAt controller is rebuilt fresh and needs re-prime.
+        // Suppressed during grace period so AnimSwap's double draw doesn't clobber mode 1.
         if (lp.Address != _lastCharAddress)
         {
             _lastCharAddress = lp.Address;
-            if (_wasEnabled && cfg.CameraHeadLookAutoPrime)
+            if (_wasEnabled && cfg.CameraHeadLookAutoPrime && _primeGrace <= 0)
             {
                 cfg.CameraHeadLookMode = 2;
                 try { cfg.Save(); } catch { }
                 _waitingForTarget = true;
                 _primeDelayFrames = 5;
                 if (diagThisTick) DiagWrite("REPRIME: Character* changed (redraw/teleport)");
+            }
+            else if (_primeGrace > 0 && diagThisTick)
+            {
+                DiagWrite($"SKIP REPRIME: Character* changed but grace={_primeGrace}");
             }
         }
 
@@ -274,6 +284,7 @@ public static unsafe class HeadTracker
                     cfg.CameraHeadLookMode = 1;
                     try { cfg.Save(); } catch { }
                     mode = 1;
+                    _primeGrace = 180;
                     if (diagThisTick) DiagWrite("PRIME: settle done, switched to mode 1");
                 }
             }

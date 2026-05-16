@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Dalamud.NET.Sdk/15.0.0">
 
     <PropertyGroup>
-        <Version>2.1.2.0</Version>
+        <Version>2.2.0.0</Version>
         <Nullable>disable</Nullable>
         <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
     </PropertyGroup>
@@ -20,6 +20,7 @@
              cruise / decel) and pitch-shift the cruise loop with speed.
              Standard NuGet, no DRM, ships as a single managed assembly
              that Dalamud's loader handles fine. -->
+        <PackageReference Include="LiteNetLib" Version="2.1.3" />
         <PackageReference Include="NAudio" Version="2.2.1" />
         <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
         <!-- Nefarius.ViGEm.Client = virtual XInput gamepad. Used by
@@ -30,6 +31,7 @@
              ViGEmBus driver installed by user (one-time setup,
              free + signed, used by Steam controller emulation). -->
         <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
+        <PackageReference Include="Open.NAT.Core" Version="2.1.0.5" />
     </ItemGroup>
 
 </Project>

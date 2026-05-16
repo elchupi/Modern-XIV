@@ -241,6 +241,10 @@ public static unsafe class HeadTracker
             }
 
             _lastH = h; _lastV = v;
+
+            // Broadcast our look-at state to synced peers
+            if (cfg.SyncEnabled)
+                SyncRelay.SendState(_cachedPos, _cachedEyePos, _facingCamT);
         }
 
         var ctrl = &chr->LookAt.Controller;
@@ -493,6 +497,28 @@ public static unsafe class HeadTracker
         _diagFrames = 0;
         _diagWriteCount = 0;
         _diagTick = 0;
+    }
+
+    // Public entry point for SyncRelay: write received peer look-at targets onto
+    // an arbitrary Character* (found by name in ObjectTable).
+    public static void WritePeerLookAt(Character* chr, Vector3 headTarget, Vector3 eyeTarget)
+    {
+        if (chr == null) return;
+        var ctrl = &chr->LookAt.Controller;
+        var paramsSpan = ctrl->Params;
+        int spanLen = paramsSpan.Length;
+        if (spanLen <= 0) return;
+
+        chr->LookAt.BannerCameraFollowFlag = LookAtContainer.BannerCameraFollowFlags.None;
+        chr->LookAt.IsFacingCamera = false;
+
+        var type = CharacterLookAtTargetParam.TargetInfoType.Unk3;
+        if (spanLen > SLOT_TORSO)
+            WriteWorldPos(ref paramsSpan[SLOT_TORSO].TargetParam, type, headTarget);
+        if (spanLen > SLOT_HEAD)
+            WriteWorldPos(ref paramsSpan[SLOT_HEAD].TargetParam, type, headTarget);
+        if (spanLen > SLOT_EYES)
+            WriteWorldPos(ref paramsSpan[SLOT_EYES].TargetParam, type, eyeTarget);
     }
 
     private static float WrapPi(float a)

@@ -1627,6 +1627,10 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     // Eyes always track the camera position regardless of facing direction.
     public bool  CameraHeadLookEyesLockCamera  = false;
 
+    // ---- Sync (P2P head-tracking via LiteNetLib + Lightless auto-discovery) ----
+    public bool SyncEnabled = false;
+    public int  SyncPort    = 7779;
+
     // ---- Input Sensitivity (universal — not per-preset) ----
     public float MouseSensitivityMul = 1f;
     public bool  InvertMouseY        = false;

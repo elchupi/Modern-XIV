@@ -124,32 +124,55 @@ public static unsafe class Compass
     // nothing changed.
     private static ushort _prevMsqId;
     private static byte   _prevMsqSeq;
+    private static int    _periodicRefreshCounter;
+    private const  int    PERIODIC_REFRESH_INTERVAL = 90; // ~1.5 seconds
 
     public static void Update()
     {
         try
         {
+            bool needsRefresh = false;
+
             var scenarioAgent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentScenarioTree.Instance();
-            if (scenarioAgent == null || scenarioAgent->Data == null) return;
-
-            ushort msqId = 0;
-            for (int i = 0; i < 3; i++)
+            if (scenarioAgent != null && scenarioAgent->Data != null)
             {
-                ushort id = scenarioAgent->Data->MainScenarioQuestIds[i];
-                if (id != 0) { msqId = id; break; }
+                ushort msqId = 0;
+                for (int i = 0; i < 3; i++)
+                {
+                    ushort id = scenarioAgent->Data->MainScenarioQuestIds[i];
+                    if (id != 0) { msqId = id; break; }
+                }
+
+                if (msqId != 0)
+                {
+                    byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
+                    if (msqId != _prevMsqId || seq != _prevMsqSeq)
+                    {
+                        _prevMsqId  = msqId;
+                        _prevMsqSeq = seq;
+                        needsRefresh = true;
+                    }
+                }
             }
-            if (msqId == 0) return;
 
-            byte seq = FFXIVClientStructs.FFXIV.Client.Game.QuestManager.GetQuestSequence(msqId);
+            // Periodic fallback: catches side quest / unlock quest completions
+            // that don't change MSQ state. Cheap — same call the game makes on map open.
+            if (!needsRefresh)
+            {
+                _periodicRefreshCounter++;
+                if (_periodicRefreshCounter >= PERIODIC_REFRESH_INTERVAL)
+                {
+                    _periodicRefreshCounter = 0;
+                    needsRefresh = true;
+                }
+            }
+            else
+            {
+                _periodicRefreshCounter = 0;
+            }
 
-            if (msqId == _prevMsqId && seq == _prevMsqSeq) return;
+            if (!needsRefresh) return;
 
-            _prevMsqId  = msqId;
-            _prevMsqSeq = seq;
-
-            // Quest state changed — refresh EventMarkers so the compass
-            // picks up the new icons without the player opening the map.
-            // Same path the game takes when you open the map UI.
             var agent = AgentMap.Instance();
             if (agent == null) return;
             var ptr = (FFXIVClientStructs.STD.StdVector<FFXIVClientStructs.Interop.Pointer<FFXIVClientStructs.FFXIV.Client.Game.UI.MapMarkerData>>*)

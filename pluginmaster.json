@@ -3,7 +3,7 @@
     "Author": "elchupi",
     "Name": "Modern XIV",
     "InternalName": "noWickyXIV",
-    "AssemblyVersion": "2.1.2.0",
+    "AssemblyVersion": "2.2.0.0",
     "Description": "All-in-one plugin: dynamic camera system, race/job animation swaps, Glamourer automation, custom teleport menu, compass overlay, HP vignette, MSQ teleport, chat bubbles, and more.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/elchupi/Modern-XIV",
@@ -32,7 +32,7 @@
     "DownloadLinkInstall": "https://github.com/elchupi/Modern-XIV/releases/latest/download/latest.zip",
     "DownloadLinkUpdate": "https://github.com/elchupi/Modern-XIV/releases/latest/download/latest.zip",
     "DownloadLinkTesting": "https://github.com/elchupi/Modern-XIV/releases/latest/download/latest.zip",
-    "Changelog": "HeadTracker: facing-camera blend, eyes lock-to-camera, grace period for AnimSwap redraws. AnimSwap: idle pose passthrough from Penumbra, race swap targets resolve through Penumbra. Quick Menus three-column layout.",
+    "Changelog": "P2P head-tracking sync: auto-discovers Lightless-paired players and shares bone IK state via LiteNetLib. Compass: periodic quest marker refresh for completed quests.",
     "AcceptsFeedback": true
   }
 ]

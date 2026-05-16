@@ -1872,6 +1872,14 @@ public static class PluginUI
             ImGuiEx.EndGroupBox();
         }
 
+        if (ImGuiEx.BeginGroupBox("Sync"))
+        {
+            ConfigCheckbox("Enable##SyncRelay", ref noWickyXIV.Config.SyncEnabled);
+            ImGui.TextDisabled("Auto-sync head tracking with Lightless-paired players.");
+            ImGui.Text($"Status: {SyncRelay.Status}  |  Peers: {SyncRelay.PeerCount}");
+            ImGuiEx.EndGroupBox();
+        }
+
         if (ImGuiEx.BeginGroupBox("Input Sensitivity"))
         {
             ConfigSliderFloat("Sensitivity multiplier##Sens", ref noWickyXIV.Config.MouseSensitivityMul, 0.56f, 4f, 1f);

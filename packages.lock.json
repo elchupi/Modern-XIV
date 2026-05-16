@@ -14,6 +14,12 @@
         "resolved": "1.2.39",
         "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
       },
+      "LiteNetLib": {
+        "type": "Direct",
+        "requested": "[2.1.3, )",
+        "resolved": "2.1.3",
+        "contentHash": "QWZ2/ODTsEHfRltgU1LVYvXzMYC5LhsE+UKz2Sd1f59CWYKo0a6oJ+8FGG+y664UbjzltoI5z2byfpI6LTvd2Q=="
+      },
       "NAudio": {
         "type": "Direct",
         "requested": "[2.2.1, )",
@@ -43,6 +49,12 @@
         "requested": "[1.21.256, )",
         "resolved": "1.21.256",
         "contentHash": "VJMO6hkalOZ7YdXTwcR881aTgPZlN7thEs3x6CWE/kEu7SdE5bY7QuDXkR2eqXfPAee4NrxInIAqa45PorpTsA=="
+      },
+      "Open.NAT.Core": {
+        "type": "Direct",
+        "requested": "[2.1.0.5, )",
+        "resolved": "2.1.0.5",
+        "contentHash": "F/4WoNK1rYCMGZM6B1LVlgxf2wLogJc2ohMZxwmJw7Aky2Hc1IgFZvEj/cxcv5QQSFTvPN5AWYKomFXHukOUIg=="
       },
       "NAudio.Asio": {
         "type": "Transitive",

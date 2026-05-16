@@ -30,6 +30,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         GlamourerBridge.Initialize();
         TeleportMenu.Initialize();
         PlayerNicknames.Initialize();
+        SyncRelay.Initialize();
         MapWaymarks.Initialize();
         // MountMomentum DISABLED — ViGEm-emitted analog stick was
         // observed pushing the character / camera continuously even
@@ -224,6 +225,8 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         HotbarSwap.Update();
         CameraDynamics.Update();
         HeadTracker.Update();
+        SyncRelay.Update();
+        SyncRelay.ApplyPeerStates();
         Crosshair.Update();
         QuestMarkerHider.Update();
         Compass.Update();
@@ -340,6 +343,7 @@ public class noWickyXIV(IDalamudPluginInterface pluginInterface) : DalamudPlugin
         try { TeleportMenu.Dispose(); } catch { }
         try { EnemySizeClamp.Dispose(); } catch { }
         try { CharacterRollHook.Dispose(); } catch { }
+        try { SyncRelay.Dispose(); } catch { }
         try { Compass.Dispose(); } catch { }
         try { MapWaymarks.Dispose(); } catch { }
         PresetManager.DefaultPreset.Apply();

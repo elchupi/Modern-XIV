@@ -2,7 +2,7 @@
   "Author": "elchupi",
   "Name": "Modern XIV",
   "InternalName": "noWickyXIV",
-  "AssemblyVersion": "2.1.1.1",
+  "AssemblyVersion": "2.2.0.0",
   "Description": "All-in-one plugin: dynamic camera system, race/job animation swaps, Glamourer automation, custom teleport menu, compass overlay, HP vignette, MSQ teleport, chat bubbles, and more.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/elchupi/Modern-XIV",
@@ -28,6 +28,6 @@
   "LoadPriority": 0,
   "IconUrl": "https://raw.githubusercontent.com/elchupi/Modern-XIV/main/images/icon.png",
   "Punchline": "Camera dynamics, animation swaps, glamour automation, and QoL tools for FFXIV",
-  "Changelog": "Style profiles with full color capture (teleport, compass, chat bubbles). Compass auto-refreshes quest markers on MSQ progression. Teleport crash guard.",
+  "Changelog": "P2P head-tracking sync: auto-discovers Lightless-paired players and shares bone IK state via LiteNetLib. Compass: periodic quest marker refresh for completed quests.",
   "AcceptsFeedback": true
 }
